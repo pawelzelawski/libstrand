@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-06
 **Current Phase**: Phase 2 — Layer 1: Execution Contexts
-**Next Task**: Phase 2 — Task 2.4
+**Next Task**: Phase 2 — Task 2.5
 
 ### Phase Summary
 
@@ -211,7 +211,7 @@ switch in isolation.
   - Return via restored lr
 - Complete CFI annotations throughout
 
-**2.4 — C wrapper: strand_context.c**
+**2.4 — C wrapper: strand_context.c** ✓ DONE
 - Implement `strand_context_switch(strand_fiber_t *from, strand_fiber_t *to)`:
   - Save errno before switch: `int saved_errno = errno`
   - Save MXCSR (x86_64) via `_mm_getcsr()` or `stmxcsr` inline asm; or

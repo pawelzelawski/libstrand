@@ -97,5 +97,17 @@ typedef struct strand_context {
  *                           src/arch/arm64/strand_context.S  (AArch64)
  */
 void strand_context_swap(strand_context_t *old, strand_context_t *new);
-
+/*
+ * strand_context_switch(from, to) — the public Layer 1 interface.
+ *
+ * Wraps strand_context_swap with:
+ *   - errno save and restore
+ *   - MXCSR (x86_64) or FPCR/FPSR (AArch64) save and restore
+ *   - ASan fiber stack switching hooks
+ *   - TSan fiber switching hook
+ *
+ * All sanitizer hooks are no-ops in non-sanitizer builds.
+ * See ARCHITECTURE.md §3.4, ARCHITECTURE.md §3.7.
+ */
+void strand_context_switch(strand_fiber_t *from, strand_fiber_t *to);
 #endif /* STRAND_CONTEXT_H */
