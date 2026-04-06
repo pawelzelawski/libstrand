@@ -99,6 +99,31 @@ strand_scheduler_t *strand_scheduler_create(const strand_sched_config_t *cfg);
  * All fibers must be finished before calling this.
  */
 void strand_scheduler_destroy(strand_scheduler_t *sched);
+
+/*
+ * sched_result_t — return value of strand_scheduler_advance.
+ *
+ * SCHED_PROGRESS — at least one timer fired or fiber ran this call.
+ * SCHED_IDLE     — nothing ran; next_deadline_ns holds the next timer
+ *                  deadline as a nanosecond timestamp (UINT64_MAX = none).
+ * See ARCHITECTURE.md §4.2.
+ */
+typedef enum { SCHED_PROGRESS = 0, SCHED_IDLE = 1 } sched_result_t;
+
+/*
+ * strand_scheduler_advance — perform one nonblocking scheduler pass.
+ * Steps (per ARCHITECTURE.md §4.2):
+ *   1. Drain inject queue (stub in Phase 3).
+ *   2. Expire timers whose deadline <= now_ns; move to run queue.
+ *   3. Drain wakeup fd — bytes are control signals, not fiber events.
+ *   4. Poll I/O with zero timeout (stub in Phase 3).
+ *   5. Run up to sched->budget fibers from the run queue.
+ * Returns SCHED_PROGRESS if any fibers ran or any timer fired.
+ * Returns SCHED_IDLE with *next_deadline_ns set otherwise.
+ * next_deadline_ns may be NULL if the caller does not need it.
+ */
+sched_result_t strand_scheduler_advance(strand_scheduler_t *sched,
+                                        uint64_t *next_deadline_ns);
 /* Function declarations added in later phases. */
 
 #endif /* STRAND_H */

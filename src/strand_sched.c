@@ -7,11 +7,12 @@
 #include "strand_internal.h"
 #include "strand_sched.h"
 
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdatomic.h>
+#include <time.h> /* clock_gettime, CLOCK_MONOTONIC */
 
 #ifdef STRAND_LINUX
 #include <sys/eventfd.h>
@@ -19,10 +20,11 @@
 #endif
 
 #ifdef STRAND_OPENBSD
-#include <unistd.h>
 #include <fcntl.h>
+#include <unistd.h>
 #endif
 
+#include "strand_context.h"
 #include "strand_fiber.h"
 
 /* Initial capacity for the timer min-heap (grows by doubling). */
@@ -237,4 +239,249 @@ strand_scheduler_destroy(strand_scheduler_t *sched)
 	}
 
 	free(sched);
+}
+
+/* ---------------------------------------------------------------------------
+ * Timer min-heap helpers.
+ * Binary heap keyed on deadline_ns (ascending).  Parent at (i-1)/2,
+ * children at 2*i+1 and 2*i+2.
+ * ---------------------------------------------------------------------------
+ */
+
+/*
+ * now_ns -- return a CLOCK_MONOTONIC timestamp in nanoseconds.
+ *
+ * STRAND_TEST_CLOCK: in test builds, reads the global strand_test_clock_ns
+ * instead of calling clock_gettime so tests can advance time without sleeping.
+ * See TESTING.md section 2.3.
+ */
+#ifdef STRAND_TEST_CLOCK
+uint64_t strand_test_clock_ns;
+static uint64_t
+now_ns(void)
+{
+	return (strand_test_clock_ns);
+}
+#else
+static uint64_t
+now_ns(void)
+{
+	struct timespec ts;
+	/* CLOCK_MONOTONIC is declared in <time.h>; clang-tidy cannot resolve
+	 * it through glibc's private <bits/time.h> indirection. */
+	// NOLINTNEXTLINE(misc-include-cleaner)
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts); /* cannot fail in practice */
+	return ((uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec);
+}
+#endif /* STRAND_TEST_CLOCK */
+
+/*
+ * heap_swap -- exchange two entries in the timer heap.
+ */
+static void
+heap_swap(strand_timer_entry_t *a, strand_timer_entry_t *b)
+{
+	strand_timer_entry_t tmp = *a;
+	*a = *b;
+	*b = tmp;
+}
+
+/*
+ * heap_sift_up -- restore heap property after inserting at index i.
+ */
+static void
+heap_sift_up(strand_scheduler_t *sched, size_t i)
+{
+	strand_timer_entry_t *h = sched->timer_heap;
+	while (i > 0) {
+		size_t parent = (i - 1) / 2;
+		if (h[parent].deadline_ns <= h[i].deadline_ns)
+			break;
+		heap_swap(&h[parent], &h[i]);
+		i = parent;
+	}
+}
+
+/*
+ * heap_sift_down -- restore heap property after replacing root.
+ */
+static void
+heap_sift_down(strand_scheduler_t *sched, size_t i)
+{
+	strand_timer_entry_t *h = sched->timer_heap;
+	size_t n = sched->timer_heap_len;
+	for (;;) {
+		size_t smallest = i;
+		size_t left = 2 * i + 1;
+		size_t right = 2 * i + 2;
+		if (left < n && h[left].deadline_ns < h[smallest].deadline_ns)
+			smallest = left;
+		if (right < n && h[right].deadline_ns < h[smallest].deadline_ns)
+			smallest = right;
+		if (smallest == i)
+			break;
+		heap_swap(&h[i], &h[smallest]);
+		i = smallest;
+	}
+}
+
+/*
+ * timer_heap_push -- insert (deadline_ns, fiber) into the min-heap.
+ * Grows the heap array by doubling when full.
+ * Returns 0 on success, -1 on allocation failure.
+ */
+int
+timer_heap_push(strand_scheduler_t *sched, uint64_t deadline_ns,
+                strand_fiber_t *f)
+{
+	if (sched->timer_heap_len == sched->timer_heap_cap) {
+		strand_timer_entry_t *new_heap;
+		size_t new_cap = sched->timer_heap_cap * 2;
+		new_heap = realloc(sched->timer_heap,
+		                   new_cap * sizeof(*sched->timer_heap));
+		if (new_heap == NULL)
+			return (-1);
+		sched->timer_heap = new_heap;
+		sched->timer_heap_cap = new_cap;
+	}
+	sched->timer_heap[sched->timer_heap_len].deadline_ns = deadline_ns;
+	sched->timer_heap[sched->timer_heap_len].fiber = f;
+	heap_sift_up(sched, sched->timer_heap_len);
+	sched->timer_heap_len++;
+	return (0);
+}
+
+/*
+ * timer_heap_pop_min -- remove and return the entry with the smallest
+ * deadline_ns.  Caller must ensure timer_heap_len > 0.
+ */
+strand_timer_entry_t
+timer_heap_pop_min(strand_scheduler_t *sched)
+{
+	strand_timer_entry_t min = sched->timer_heap[0];
+	sched->timer_heap_len--;
+	if (sched->timer_heap_len > 0) {
+		sched->timer_heap[0] = sched->timer_heap[sched->timer_heap_len];
+		heap_sift_down(sched, 0);
+	}
+	return (min);
+}
+
+/*
+ * timer_heap_peek_deadline -- return the smallest deadline_ns without
+ * removing it, or UINT64_MAX if the heap is empty.
+ */
+uint64_t
+timer_heap_peek_deadline(const strand_scheduler_t *sched)
+{
+	if (sched->timer_heap_len == 0)
+		return (UINT64_MAX);
+	return (sched->timer_heap[0].deadline_ns);
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_scheduler_advance -- one nonblocking scheduler pass.
+ * See ARCHITECTURE.md section 4.2 for the five-step specification.
+ * ---------------------------------------------------------------------------
+ */
+
+/*
+ * wakeup_drain -- drain all bytes from the wakeup fd/pipe and discard them.
+ *
+ * SAFETY: the bytes written to the wakeup fd by strand_scheduler_stop (or
+ * cross-worker signals) are plain control signals.  They carry no data about
+ * which fiber to run and must NOT be interpreted as fd readiness events.
+ * All bytes are read here and thrown away.  See ARCHITECTURE.md section 4.2
+ * Step 3.
+ */
+static void
+wakeup_drain(strand_scheduler_t *sched)
+{
+#ifdef STRAND_LINUX
+	uint64_t buf;
+	while (read(sched->wakeup_fd, &buf, sizeof(buf)) > 0)
+		;
+	/* EAGAIN / EWOULDBLOCK is expected when the fd is empty. */
+#endif
+#ifdef STRAND_OPENBSD
+	char buf[64];
+	while (read(sched->wakeup_pipe[0], buf, sizeof(buf)) > 0)
+		;
+#endif
+	(void)sched; /* suppress unused-parameter in neutral builds */
+}
+
+sched_result_t
+strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
+{
+	int progress = 0;
+	uint64_t t;
+	size_t ran;
+	strand_fiber_t *f;
+
+	/*
+	 * Step 1: drain inject queue.
+	 * Phase 3 stub -- the inject queue carries no real items yet.
+	 * Real drain implemented in Phase 5 (Task 5.1).
+	 */
+	(void)(sched->inject_queue._placeholder);
+
+	/*
+	 * Step 2: expire timers.
+	 * Pop every heap entry whose deadline <= now and move the fiber to
+	 * the run queue tail.  Each expiry counts as progress.
+	 */
+	t = now_ns();
+	while (sched->timer_heap_len > 0 &&
+	       timer_heap_peek_deadline(sched) <= t) {
+		strand_timer_entry_t entry = timer_heap_pop_min(sched);
+		atomic_store_explicit(&entry.fiber->state, FIBER_RUNNABLE,
+		                      memory_order_relaxed);
+		run_queue_push(sched, entry.fiber);
+		progress = 1;
+	}
+
+	/*
+	 * Step 3: drain wakeup fd.
+	 * SAFETY: bytes written here are control signals from
+	 * strand_scheduler_stop, not fiber waiter events.  They are read and
+	 * discarded; no fiber is woken as a result.  See ARCHITECTURE.md
+	 * section 4.2 Step 3.
+	 */
+	wakeup_drain(sched);
+
+	/*
+	 * Step 4: poll I/O with zero timeout.
+	 * Phase 3 stub -- poller is NULL until Phase 4 (Task 4.1).
+	 */
+	(void)(sched->poller);
+
+	/*
+	 * Step 5: run up to budget fibers.
+	 * Set current_fiber before the context switch so that functions called
+	 * from within the fiber (yield, sleep_until, etc.) can find the running
+	 * fiber.  Clear it immediately when the fiber suspends or finishes and
+	 * control returns here.
+	 */
+	for (ran = 0; ran < sched->budget; ran++) {
+		f = run_queue_pop(sched);
+		if (f == NULL)
+			break;
+		atomic_store_explicit(&f->state, FIBER_RUNNING,
+		                      memory_order_relaxed);
+		sched->current_fiber = f;
+		strand_context_switch(&sched->scheduler_ctx, f);
+		sched->current_fiber = NULL;
+		progress = 1;
+	}
+
+	if (progress) {
+		if (next_deadline_ns != NULL)
+			*next_deadline_ns = timer_heap_peek_deadline(sched);
+		return (SCHED_PROGRESS);
+	}
+
+	if (next_deadline_ns != NULL)
+		*next_deadline_ns = timer_heap_peek_deadline(sched);
+	return (SCHED_IDLE);
 }

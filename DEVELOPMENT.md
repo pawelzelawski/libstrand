@@ -380,7 +380,7 @@ the poller is stubbed out for scheduler-only testing.
 - Implement `run_queue_push(sched, f)` — append to tail
 - Implement `run_queue_pop(sched)` — remove from head, return NULL if empty
 
-**3.3 — strand_scheduler_advance**
+**3.3 — strand_scheduler_advance** ✓ DONE
 - Implement the five-step advance per ARCHITECTURE.md §4.2:
   - Step 1: inject queue drain (no-op stub in Phase 3 — real in Phase 5)
   - Step 2: timer heap — expire all fibers whose `deadline_ns <= now_ns`,
