@@ -109,11 +109,16 @@ state.
 All assembly stubs carry correct DWARF CFI annotations:
 
 ```asm
-strand_context_switch:
-    .cfi_startproc
-    /* ... register saves with matching .cfi_offset directives ... */
-    .cfi_endproc
+strand_context_swap:
+  .cfi_startproc
+  /* ... context switch body ... */
+  .cfi_endproc
 ```
+
+For functions that save registers to the current stack frame, include matching
+`.cfi_offset` and `.cfi_def_cfa_offset` directives. For context-switch stubs
+that save state to explicit context structs, those stack-relative directives
+may not apply, but the emitted FDE/unwind metadata must still be valid.
 
 This ensures that stack unwinding, backtraces, gdb, perf, and crash
 reporters all produce correct output on fiber stacks. Incorrect or missing

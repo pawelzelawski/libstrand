@@ -45,7 +45,7 @@ fp_ctrl_set(uint64_t ctrl)
 	__asm__ volatile("ldmxcsr %0" : : "m"(mxcsr));
 }
 
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 
 static inline uint64_t
 fp_ctrl_get(void)
@@ -96,14 +96,18 @@ void
 strand_context_switch(strand_fiber_t *from, strand_fiber_t *to)
 {
 	int saved_errno;
+	int asan_track;
 
 	saved_errno = errno;
 	from->fp_ctrl = fp_ctrl_get();
+	asan_track = (from->stack_base == NULL || from->stack_size == 0);
 
-	STRAND_ASAN_SWITCH_START(to->stack_base, to->stack_size, NULL, 0);
+	if (asan_track)
+		STRAND_ASAN_SWITCH_START(to->stack_base, to->stack_size);
 	STRAND_TSAN_SWITCH(to);
 	strand_context_swap(&from->context, &to->context);
-	STRAND_ASAN_SWITCH_FINISH();
+	if (asan_track)
+		STRAND_ASAN_SWITCH_FINISH();
 
 	/* Restore our own FP control state — see note above. */
 	fp_ctrl_set(from->fp_ctrl);
@@ -162,18 +166,26 @@ strand_context_init(strand_context_t *ctx, void *stack_top,
 	ctx->r15 = 0;
 }
 
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 
 void
 strand_context_init(strand_context_t *ctx, void *stack_top,
                     strand_fiber_fn_t entry, void *arg)
 {
+	uint64_t sp;
+
 	/*
 	 * Align sp to 16 bytes — AAPCS64 requires 16-byte alignment at all
 	 * times.  The caller should provide an aligned stack_top; we enforce
 	 * the alignment defensively.
+	 *
+	 * Leave one 16-byte slot below stack_top so the first callee prologue
+	 * push (stp x29, x30, [sp, #-16]!) always lands inside writable stack
+	 * memory on platforms with stricter stack-boundary handling.
 	 */
-	ctx->sp = (uint64_t)(uintptr_t)stack_top & ~(uint64_t)15;
+	sp = (uint64_t)(uintptr_t)stack_top & ~(uint64_t)15;
+	sp -= 16;
+	ctx->sp = sp;
 
 	/*
 	 * x30 (lr): trampoline address — strand_context_swap's ret branches

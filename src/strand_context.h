@@ -42,7 +42,7 @@ typedef struct strand_context {
 
 #define STRAND_CONTEXT_SIZE 56 /* 7 * 8 bytes */
 
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 
 /*
  * AAPCS64 callee-saved GPRs: x19-x28, x29 (fp), x30 (lr), sp.

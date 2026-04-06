@@ -185,8 +185,13 @@ corrupting adjacent memory.
 
 ### 3.6 CFI Annotations
 
-All assembly stubs carry correct DWARF CFI annotations using
-`.cfi_startproc`, `.cfi_offset`, `.cfi_def_cfa_offset`, and `.cfi_endproc`.
+All assembly stubs carry correct DWARF CFI annotations. At minimum this means
+`.cfi_startproc` / `.cfi_endproc` with a valid FDE. Where registers are
+saved to the current stack frame, matching `.cfi_offset` /
+`.cfi_def_cfa_offset` directives are required. For context-switch stubs that
+save registers into explicit context structs (not CFA-relative stack slots),
+CFI must still emit valid unwind metadata but `.cfi_offset` entries may not be
+applicable.
 Correct annotations are required for:
 - Stack unwinding in gdb and lldb
 - `perf` profiling with frame pointers

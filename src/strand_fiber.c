@@ -4,6 +4,7 @@
  */
 
 #include <stddef.h>
+#include <stdint.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -19,9 +20,16 @@ size_t
 page_size(void)
 {
 	static size_t cached;
+	long v;
 
-	if (cached == 0)
-		cached = (size_t)sysconf(_SC_PAGESIZE);
+	if (cached != 0)
+		return cached;
+
+	v = sysconf(_SC_PAGESIZE);
+	if (v <= 0)
+		return 0;
+
+	cached = (size_t)v;
 	return cached;
 }
 
@@ -46,11 +54,26 @@ void *
 stack_alloc(size_t stack_size, unsigned long *vg_id_out)
 {
 	size_t pgsz = page_size();
-	size_t total = stack_size + pgsz;
+	size_t total;
 	void *base;
+	int mmap_flags;
 
-	base = mmap(NULL, total, PROT_READ | PROT_WRITE,
-	            MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	if (vg_id_out == NULL || pgsz == 0 || stack_size == 0)
+		return NULL;
+	if (SIZE_MAX - pgsz < stack_size)
+		return NULL;
+	total = stack_size + pgsz;
+	mmap_flags = MAP_ANONYMOUS | MAP_PRIVATE;
+#ifdef MAP_STACK
+	/*
+	 * Some kernels (notably OpenBSD arm64) enforce additional checks for
+	 * SP-backed mappings. Marking the region as MAP_STACK avoids faults
+	 * when this mapping is used as an execution stack.
+	 */
+	mmap_flags |= MAP_STACK;
+#endif
+
+	base = mmap(NULL, total, PROT_READ | PROT_WRITE, mmap_flags, -1, 0);
 	if (base == MAP_FAILED)
 		return NULL;
 
@@ -79,32 +102,62 @@ stack_alloc(size_t stack_size, unsigned long *vg_id_out)
 void
 stack_free(void *base, size_t stack_size, unsigned long vg_id)
 {
+	size_t pgsz = page_size();
+
+	if (base == NULL || pgsz == 0 || stack_size == 0)
+		return;
+	if (SIZE_MAX - pgsz < stack_size)
+		return;
+
 	STRAND_VG_STACK_DEREGISTER(vg_id);
-	munmap(base, stack_size + page_size());
+	munmap(base, stack_size + pgsz);
 }
 /*
- * fiber_init — initialise the TSan fiber handle on a newly allocated
- * strand_fiber_t.  Must be called once per descriptor before any context
- * switch involving this fiber.  In non-TSan builds the macro is a no-op.
+ * strand_fiber_tsan_init — initialise the TSan fiber handle on a newly
+ * allocated strand_fiber_t.  Must be called once per descriptor before any
+ * context switch involving this fiber.  In non-TSan builds the macro is a
+ * no-op.
  * See ARCHITECTURE.md §3.7 and TECH_STACK.md §7.3.
  */
-static void __attribute__((unused))
-fiber_init(strand_fiber_t *f)
+void
+strand_fiber_tsan_init(strand_fiber_t *f)
 {
+	if (f == NULL)
+		return;
+
 	f->tsan_fiber = NULL;
 	STRAND_TSAN_CREATE(f);
 }
 
 /*
- * fiber_destroy — destroy the TSan fiber handle when a strand_fiber_t is
+ * strand_fiber_tsan_destroy — destroy the TSan handle when a strand_fiber_t is
  * being freed or returned to the dead pool.  Must be called after the fiber
  * has finished and will never be switched to again.  In non-TSan builds the
  * macro is a no-op.
  * See ARCHITECTURE.md §3.7 and TECH_STACK.md §7.3.
  */
-static void __attribute__((unused))
-fiber_destroy(strand_fiber_t *f)
+void
+strand_fiber_tsan_destroy(strand_fiber_t *f)
 {
-	STRAND_TSAN_DESTROY(f);
+	if (f == NULL)
+		return;
+
+	if (f->tsan_fiber != NULL)
+		STRAND_TSAN_DESTROY(f);
 	f->tsan_fiber = NULL;
+}
+
+/*
+ * strand_fiber_tsan_bind_current — bind descriptor to current thread/fiber
+ * TSan context. This is for scheduler/root contexts that represent the
+ * currently running thread rather than a separately created fiber context.
+ */
+void
+strand_fiber_tsan_bind_current(strand_fiber_t *f)
+{
+	if (f == NULL)
+		return;
+
+	f->tsan_fiber = NULL;
+	STRAND_TSAN_BIND_CURRENT(f);
 }

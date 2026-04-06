@@ -49,6 +49,19 @@ struct test_fiber {
 	unsigned long vg_id;
 };
 
+static void
+set_up_sched_fiber(strand_fiber_t *sched)
+{
+	memset(sched, 0, sizeof(*sched));
+	strand_fiber_tsan_bind_current(sched);
+}
+
+static void
+tear_down_sched_fiber(strand_fiber_t *sched)
+{
+	(void)sched;
+}
+
 /*
  * set_up_fiber — allocate a stack and initialise a fiber context so that
  * the first strand_context_switch to it begins at entry(arg).
@@ -64,9 +77,12 @@ set_up_fiber(struct test_fiber *tf, strand_fiber_fn_t entry, void *arg)
 	tf->stack_base = stack_alloc(tf->stack_size, &tf->vg_id);
 	if (tf->stack_base == NULL)
 		return (-1);
+	tf->fiber.stack_base = (char *)tf->stack_base + page_size();
+	tf->fiber.stack_size = tf->stack_size;
+	strand_fiber_tsan_init(&tf->fiber);
 
 	/* Usable top: one past the highest usable byte. */
-	stack_top = (char *)tf->stack_base + page_size() + tf->stack_size;
+	stack_top = (char *)tf->fiber.stack_base + tf->fiber.stack_size;
 
 	strand_context_init(&tf->fiber.context, stack_top, entry, arg);
 	return (0);
@@ -75,6 +91,7 @@ set_up_fiber(struct test_fiber *tf, strand_fiber_fn_t entry, void *arg)
 static void
 tear_down_fiber(struct test_fiber *tf)
 {
+	strand_fiber_tsan_destroy(&tf->fiber);
 	stack_free(tf->stack_base, tf->stack_size, tf->vg_id);
 }
 
@@ -108,13 +125,14 @@ test_context_switch_returns(void)
 	g_sched_01 = &sched;
 	g_switch_01_entered = 0;
 
-	memset(&sched, 0, sizeof(sched));
+	set_up_sched_fiber(&sched);
 	if (set_up_fiber(&g_tf_01, fiber_01, NULL) != 0)
-		return (1);
+		return (tear_down_sched_fiber(&sched), 1);
 
 	strand_context_switch(&sched, &g_tf_01.fiber);
 
 	tear_down_fiber(&g_tf_01);
+	tear_down_sched_fiber(&sched);
 	return (g_switch_01_entered == 1) ? 0 : 1;
 }
 
@@ -167,9 +185,9 @@ test_context_gpr_preserved(void)
 	strand_fiber_t sched;
 
 	g_sched_02 = &sched;
-	memset(&sched, 0, sizeof(sched));
+	set_up_sched_fiber(&sched);
 	if (set_up_fiber(&g_tf_02, fiber_02, NULL) != 0)
-		return (1);
+		return (tear_down_sched_fiber(&sched), 1);
 
 	int result =
 	    do_gpr_switch(0xAA00000000000001ULL, 0xBB00000000000002ULL,
@@ -177,6 +195,7 @@ test_context_gpr_preserved(void)
 	                  0xEE00000000000005ULL, 0xFF00000000000006ULL, &sched);
 
 	tear_down_fiber(&g_tf_02);
+	tear_down_sched_fiber(&sched);
 	return result;
 }
 
@@ -207,15 +226,16 @@ test_context_errno_preserved(void)
 	int saved;
 
 	g_sched_03 = &sched;
-	memset(&sched, 0, sizeof(sched));
+	set_up_sched_fiber(&sched);
 	if (set_up_fiber(&g_tf_03, fiber_03, NULL) != 0)
-		return (1);
+		return (tear_down_sched_fiber(&sched), 1);
 
 	errno = EPERM; /* sentinel */
 	strand_context_switch(&sched, &g_tf_03.fiber);
 	saved = errno;
 
 	tear_down_fiber(&g_tf_03);
+	tear_down_sched_fiber(&sched);
 	return (saved == EPERM) ? 0 : 1;
 }
 
@@ -264,9 +284,9 @@ test_context_mxcsr_preserved(void)
 	uint32_t before, after;
 
 	g_sched_04 = &sched;
-	memset(&sched, 0, sizeof(sched));
+	set_up_sched_fiber(&sched);
 	if (set_up_fiber(&g_tf_04, fiber_04, NULL) != 0)
-		return (1);
+		return (tear_down_sched_fiber(&sched), 1);
 
 	before = read_mxcsr();
 	/* Ensure FTZ is cleared in our own context before the switch. */
@@ -280,10 +300,11 @@ test_context_mxcsr_preserved(void)
 	write_mxcsr(before);
 
 	tear_down_fiber(&g_tf_04);
+	tear_down_sched_fiber(&sched);
 	return (after == before) ? 0 : 1;
 }
 
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 
 static uint64_t
 read_fpcr(void)
@@ -316,9 +337,9 @@ test_context_fpcr_preserved(void)
 	uint64_t before, after;
 
 	g_sched_04 = &sched;
-	memset(&sched, 0, sizeof(sched));
+	set_up_sched_fiber(&sched);
 	if (set_up_fiber(&g_tf_04, fiber_04, NULL) != 0)
-		return (1);
+		return (tear_down_sched_fiber(&sched), 1);
 
 	before = read_fpcr();
 	/* Ensure DN bit is clear in our own FPCR. */
@@ -331,6 +352,7 @@ test_context_fpcr_preserved(void)
 	write_fpcr(before); /* restore */
 
 	tear_down_fiber(&g_tf_04);
+	tear_down_sched_fiber(&sched);
 	return (after == before) ? 0 : 1;
 }
 
@@ -369,7 +391,7 @@ fiber_05(void *arg)
 
 #if defined(__x86_64__) || defined(__amd64__)
 	__asm__ volatile("movq %%rsp, %0" : "=r"(sp));
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 	__asm__ volatile("mov %0, sp" : "=r"(sp));
 #else
 	sp = 0;
@@ -386,12 +408,13 @@ test_context_stack_alignment(void)
 
 	g_sched_05 = &sched;
 	g_sp_alignment_05 = 0;
-	memset(&sched, 0, sizeof(sched));
+	set_up_sched_fiber(&sched);
 	if (set_up_fiber(&g_tf_05, fiber_05, NULL) != 0)
-		return (1);
+		return (tear_down_sched_fiber(&sched), 1);
 
 	strand_context_switch(&sched, &g_tf_05.fiber);
 	tear_down_fiber(&g_tf_05);
+	tear_down_sched_fiber(&sched);
 
 	/* sp inside the function body (after prologue) must be 16-byte aligned
 	 * on both x86_64 and AArch64. */
@@ -426,12 +449,13 @@ test_context_init_entry_fires(void)
 
 	g_sched_06 = &sched;
 	g_entry_fired_06 = 0;
-	memset(&sched, 0, sizeof(sched));
+	set_up_sched_fiber(&sched);
 	if (set_up_fiber(&g_tf_06, fiber_06, NULL) != 0)
-		return (1);
+		return (tear_down_sched_fiber(&sched), 1);
 
 	strand_context_switch(&sched, &g_tf_06.fiber);
 	tear_down_fiber(&g_tf_06);
+	tear_down_sched_fiber(&sched);
 	return (g_entry_fired_06 == 1) ? 0 : 1;
 }
 
@@ -463,12 +487,13 @@ test_context_init_arg_delivered(void)
 
 	g_sched_07 = &sched;
 	g_received_arg_07 = NULL;
-	memset(&sched, 0, sizeof(sched));
+	set_up_sched_fiber(&sched);
 	if (set_up_fiber(&g_tf_07, fiber_07, &sentinel) != 0)
-		return (1);
+		return (tear_down_sched_fiber(&sched), 1);
 
 	strand_context_switch(&sched, &g_tf_07.fiber);
 	tear_down_fiber(&g_tf_07);
+	tear_down_sched_fiber(&sched);
 	return (g_received_arg_07 == &sentinel) ? 0 : 1;
 }
 
@@ -606,7 +631,7 @@ run_layer1_tests(void)
 	RUN("context_errno_preserved", test_context_errno_preserved);
 #if defined(__x86_64__) || defined(__amd64__)
 	RUN("context_mxcsr_preserved", test_context_mxcsr_preserved);
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 	RUN("context_fpcr_preserved", test_context_fpcr_preserved);
 #endif
 	RUN("context_stack_alignment", test_context_stack_alignment);
