@@ -68,15 +68,14 @@ jobs:
                   -ex "x/16i \$pc" \
                   --args build/tests/run_tests || true
               elif command -v lldb >/dev/null 2>&1; then
-                cat > /tmp/lldb_cmds.txt <<'LLDB_CMDS'
-settings set interpreter.stop-command-source-on-error false
-run
-thread backtrace all
-register read
-disassemble --frame
-memory read --format x --size 8 --count 16 $sp
-quit
-LLDB_CMDS
+                printf '%s\n' \
+                  'settings set interpreter.stop-command-source-on-error false' \
+                  'run' \
+                  'thread backtrace all' \
+                  'register read' \
+                  'disassemble --frame' \
+                  'memory read --format x --size 8 --count 16 $sp' \
+                  'quit' > /tmp/lldb_cmds.txt
                 lldb -b -s /tmp/lldb_cmds.txt -- build/tests/run_tests || true
               fi
               exit 1
@@ -109,15 +108,14 @@ LLDB_CMDS
                   -ex "x/16i \$pc" \
                   --args build/tests/run_tests || true
               elif command -v lldb >/dev/null 2>&1; then
-                cat > /tmp/lldb_cmds.txt <<'LLDB_CMDS'
-settings set interpreter.stop-command-source-on-error false
-run
-thread backtrace all
-register read
-disassemble --frame
-memory read --format x --size 8 --count 16 $sp
-quit
-LLDB_CMDS
+                printf '%s\n' \
+                  'settings set interpreter.stop-command-source-on-error false' \
+                  'run' \
+                  'thread backtrace all' \
+                  'register read' \
+                  'disassemble --frame' \
+                  'memory read --format x --size 8 --count 16 $sp' \
+                  'quit' > /tmp/lldb_cmds.txt
                 lldb -b -s /tmp/lldb_cmds.txt -- build/tests/run_tests || true
               fi
               exit 1
