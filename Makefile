@@ -68,8 +68,6 @@ INCLUDEDIR ?= $(PREFIX)/include
 
 # --- ASM source — selected by architecture ----------------------------------
 #
-# Not compiled in Phase 1 (files do not exist yet).
-# Phase 2 (Task 2.2/2.3) creates these files and adds ASM_SRC to the build.
 # OpenBSD reports x86_64 as "amd64" from uname -m.
 ASM_SRC != if [ "$(ARCH)" = "x86_64" ] || [ "$(ARCH)" = "amd64" ]; then \
                echo "src/arch/x86_64/strand_context.S"; \
@@ -99,6 +97,12 @@ TEST_BIN        = $(BUILD_TESTS_DIR)/run_tests
 TEST_BIN_VG     = $(BUILD_TESTS_DIR)/run_tests_vg
 
 INCLUDES = -I include/
+
+# --- ASM object paths — empty when ASM_SRC is empty ------------------------
+#
+# Defined after BUILD_DIR so $(BUILD_DIR) is available for expansion.
+ASM_OBJ_DEV != if [ -n "$(ASM_SRC)" ]; then echo "$(BUILD_DIR)/strand_context_asm.o"; else echo ""; fi
+ASM_OBJ_REL != if [ -n "$(ASM_SRC)" ]; then echo "$(BUILD_DIR)/rel/strand_context_asm.o"; else echo ""; fi
 
 # --- Phony targets ----------------------------------------------------------
 
@@ -158,7 +162,7 @@ clean:
 
 # --- Development library (explicit per-file compile + ar) -------------------
 
-$(LIB_DEV): $(LIB_SRCS)
+$(LIB_DEV): $(LIB_SRCS) $(ASM_SRC)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS_DEV) $(INCLUDES) -c src/strand_context.c  -o $(BUILD_DIR)/strand_context.o
 	$(CC) $(CFLAGS_DEV) $(INCLUDES) -c src/strand_fiber.c    -o $(BUILD_DIR)/strand_fiber.o
@@ -168,6 +172,7 @@ $(LIB_DEV): $(LIB_SRCS)
 	$(CC) $(CFLAGS_DEV) $(INCLUDES) -c src/strand_runtime.c  -o $(BUILD_DIR)/strand_runtime.o
 	$(CC) $(CFLAGS_DEV) $(INCLUDES) -c src/strand_offload.c  -o $(BUILD_DIR)/strand_offload.o
 	$(CC) $(CFLAGS_DEV) $(INCLUDES) -c src/strand_scope.c    -o $(BUILD_DIR)/strand_scope.o
+	test -z "$(ASM_SRC)" || $(CC) $(CFLAGS_DEV) -c $(ASM_SRC) -o $(ASM_OBJ_DEV)
 	ar rcs $(LIB_DEV)					\
 	    $(BUILD_DIR)/strand_context.o			\
 	    $(BUILD_DIR)/strand_fiber.o				\
@@ -177,10 +182,11 @@ $(LIB_DEV): $(LIB_SRCS)
 	    $(BUILD_DIR)/strand_runtime.o			\
 	    $(BUILD_DIR)/strand_offload.o			\
 	    $(BUILD_DIR)/strand_scope.o
+	test -z "$(ASM_OBJ_DEV)" || ar qs $(LIB_DEV) $(ASM_OBJ_DEV)
 
 # --- Release library (explicit per-file compile + ar) -----------------------
 
-$(LIB_RELEASE): $(LIB_SRCS)
+$(LIB_RELEASE): $(LIB_SRCS) $(ASM_SRC)
 	@mkdir -p $(REL_DIR)
 	$(CC) $(CFLAGS_RELEASE) $(INCLUDES) -c src/strand_context.c  -o $(REL_DIR)/strand_context.o
 	$(CC) $(CFLAGS_RELEASE) $(INCLUDES) -c src/strand_fiber.c    -o $(REL_DIR)/strand_fiber.o
@@ -190,6 +196,7 @@ $(LIB_RELEASE): $(LIB_SRCS)
 	$(CC) $(CFLAGS_RELEASE) $(INCLUDES) -c src/strand_runtime.c  -o $(REL_DIR)/strand_runtime.o
 	$(CC) $(CFLAGS_RELEASE) $(INCLUDES) -c src/strand_offload.c  -o $(REL_DIR)/strand_offload.o
 	$(CC) $(CFLAGS_RELEASE) $(INCLUDES) -c src/strand_scope.c    -o $(REL_DIR)/strand_scope.o
+	test -z "$(ASM_SRC)" || $(CC) $(CFLAGS_RELEASE) -c $(ASM_SRC) -o $(ASM_OBJ_REL)
 	ar rcs $(LIB_RELEASE)					\
 	    $(REL_DIR)/strand_context.o				\
 	    $(REL_DIR)/strand_fiber.o				\
@@ -199,6 +206,7 @@ $(LIB_RELEASE): $(LIB_SRCS)
 	    $(REL_DIR)/strand_runtime.o				\
 	    $(REL_DIR)/strand_offload.o				\
 	    $(REL_DIR)/strand_scope.o
+	test -z "$(ASM_OBJ_REL)" || ar qs $(LIB_RELEASE) $(ASM_OBJ_REL)
 
 # --- Test binary (ASan/UBSan build) -----------------------------------------
 

@@ -79,4 +79,23 @@ typedef struct strand_context {
 #error "Unsupported architecture: strand_context_t not defined for this target"
 #endif
 
+/*
+ * strand_context_swap(old, new) — the core context switch primitive.
+ *
+ * Saves callee-saved registers and rsp into *old, then restores them
+ * from *new and returns — resuming execution on the new stack.
+ *
+ * Must only be called from the C wrapper strand_context_switch, which
+ * handles errno, MXCSR/FPCR, and sanitizer hooks.  Do not call directly.
+ *
+ * WARNING: x87 FP state (including long double) is NOT saved across a
+ * context switch.  Programs that modify x87 state across a fiber yield
+ * point may observe corrupted floating-point behaviour.  See
+ * ARCHITECTURE.md §3.4.
+ *
+ * Implemented in assembly: src/arch/x86_64/strand_context.S (x86_64)
+ *                           src/arch/arm64/strand_context.S  (AArch64)
+ */
+void strand_context_swap(strand_context_t *old, strand_context_t *new);
+
 #endif /* STRAND_CONTEXT_H */

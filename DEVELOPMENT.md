@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-06
 **Current Phase**: Phase 2 — Layer 1: Execution Contexts
-**Next Task**: Phase 2 — Task 2.2
+**Next Task**: Phase 2 — Task 2.3
 
 ### Phase Summary
 
@@ -187,7 +187,7 @@ switch in isolation.
   placeholder until `strand_fiber_t` is defined in Phase 3; note the
   dependency in a comment
 
-**2.2 — x86_64 assembly: strand_context.S**
+**2.2 — x86_64 assembly: strand_context.S** ✓ DONE
 - Implement `strand_context_swap(strand_context_t *old, strand_context_t *new)`
   in `src/arch/x86_64/strand_context.S`:
   - Save callee-saved GPRs to `old`: rbx, rbp, r12, r13, r14, r15
