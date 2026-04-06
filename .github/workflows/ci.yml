@@ -65,15 +65,19 @@ jobs:
                   -ex run \
                   -ex "thread apply all bt full" \
                   -ex "info registers" \
-                  -ex "x/16i $pc" \
+                  -ex "x/16i \$pc" \
                   --args build/tests/run_tests || true
               elif command -v lldb >/dev/null 2>&1; then
-                lldb -b \
-                  -o run \
-                  -o "thread backtrace all" \
-                  -o "register read" \
-                  -o "disassemble --frame" \
-                  -- build/tests/run_tests || true
+                cat > /tmp/lldb_cmds.txt <<'LLDB_CMDS'
+settings set interpreter.stop-command-source-on-error false
+run
+thread backtrace all
+register read
+disassemble --frame
+memory read --format x --size 8 --count 16 $sp
+quit
+LLDB_CMDS
+                lldb -b -s /tmp/lldb_cmds.txt -- build/tests/run_tests || true
               fi
               exit 1
             }
@@ -102,15 +106,19 @@ jobs:
                   -ex run \
                   -ex "thread apply all bt full" \
                   -ex "info registers" \
-                  -ex "x/16i $pc" \
+                  -ex "x/16i \$pc" \
                   --args build/tests/run_tests || true
               elif command -v lldb >/dev/null 2>&1; then
-                lldb -b \
-                  -o run \
-                  -o "thread backtrace all" \
-                  -o "register read" \
-                  -o "disassemble --frame" \
-                  -- build/tests/run_tests || true
+                cat > /tmp/lldb_cmds.txt <<'LLDB_CMDS'
+settings set interpreter.stop-command-source-on-error false
+run
+thread backtrace all
+register read
+disassemble --frame
+memory read --format x --size 8 --count 16 $sp
+quit
+LLDB_CMDS
+                lldb -b -s /tmp/lldb_cmds.txt -- build/tests/run_tests || true
               fi
               exit 1
             }
