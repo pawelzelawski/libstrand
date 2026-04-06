@@ -45,16 +45,24 @@
  * __sanitizer_finish_switch_fiber must be called immediately after.
  * Without these hooks ASan reports valid fiber stack accesses as
  * stack-buffer-overflows. See TECH_STACK.md §7.2 and ARCHITECTURE.md §3.7.
+ *
+ * The save pointer is passed by address to start_switch_fiber so that ASan
+ * preserves the caller's fake-stack frame across the switch.  Using NULL
+ * discards the old fake stack, causing ASan to poison the calling context's
+ * local variables and produce false SIGSEGV when a fiber dereferences a
+ * pointer into the caller's frame (e.g. a user arg passed as a local-var
+ * address).  This save/restore matches the documented correct usage of
+ * __sanitizer_start_switch_fiber for resumable contexts.
  */
 #if defined(__SANITIZE_ADDRESS__) || STRAND_HAS_FEATURE(address_sanitizer)
 #include <sanitizer/asan_interface.h>
-#define STRAND_ASAN_SWITCH_START(new_sp, new_sz)                               \
-	__sanitizer_start_switch_fiber(NULL, (new_sp), (new_sz))
-#define STRAND_ASAN_SWITCH_FINISH()                                            \
-	__sanitizer_finish_switch_fiber(NULL, NULL, NULL)
+#define STRAND_ASAN_SWITCH_START(save, new_sp, new_sz)                         \
+	__sanitizer_start_switch_fiber(&(save), (new_sp), (new_sz))
+#define STRAND_ASAN_SWITCH_FINISH(save)                                        \
+	__sanitizer_finish_switch_fiber((save), NULL, NULL)
 #else
-#define STRAND_ASAN_SWITCH_START(new_sp, new_sz) ((void)0)
-#define STRAND_ASAN_SWITCH_FINISH() ((void)0)
+#define STRAND_ASAN_SWITCH_START(save, new_sp, new_sz) ((void)(save))
+#define STRAND_ASAN_SWITCH_FINISH(save) ((void)(save))
 #endif
 
 /*

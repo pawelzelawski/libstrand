@@ -97,17 +97,25 @@ strand_context_switch(strand_fiber_t *from, strand_fiber_t *to)
 {
 	int saved_errno;
 	int asan_track;
+	/*
+	 * ASan fake-stack save: populated by STRAND_ASAN_SWITCH_START and
+	 * consumed by STRAND_ASAN_SWITCH_FINISH.  In non-ASan builds both
+	 * macros expand to ((void)(save)), so the variable is referenced
+	 * (avoiding unused-variable warnings) but the reference is elided.
+	 */
+	void *asan_save = NULL;
 
 	saved_errno = errno;
 	from->fp_ctrl = fp_ctrl_get();
 	asan_track = (from->stack_base == NULL || from->stack_size == 0);
 
 	if (asan_track)
-		STRAND_ASAN_SWITCH_START(to->stack_base, to->stack_size);
+		STRAND_ASAN_SWITCH_START(asan_save, to->stack_base,
+		                         to->stack_size);
 	STRAND_TSAN_SWITCH(to);
 	strand_context_swap(&from->context, &to->context);
 	if (asan_track)
-		STRAND_ASAN_SWITCH_FINISH();
+		STRAND_ASAN_SWITCH_FINISH(asan_save);
 
 	/* Restore our own FP control state — see note above. */
 	fp_ctrl_set(from->fp_ctrl);

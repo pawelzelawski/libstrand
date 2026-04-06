@@ -404,7 +404,7 @@ the poller is stubbed out for scheduler-only testing.
   Add `SAFETY:` comment on both steps.
 - Implement `strand_scheduler_next_deadline` and `strand_scheduler_get_fd`
 
-**3.5 — strand_fiber_spawn**
+**3.5 — strand_fiber_spawn** ✓ DONE
 - Implement the within-worker path of `strand_fiber_spawn`:
   - Check stop flag — return `STRAND_ERR_SHUTDOWN` if set
   - Check `sched->current_fiber != NULL` — return error if called from host

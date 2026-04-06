@@ -60,6 +60,10 @@ typedef void (*strand_destructor_t)(void *ptr);
 #define STRAND_OK 0
 #define STRAND_HANDLE_INVALID (-1)
 #define STRAND_HANDLE_STALE (-2)
+#define STRAND_ERR_SHUTDOWN (-3) /* scheduler stopped; spawn rejected */
+#define STRAND_ERR_WRONGCTX (-4) /* called from wrong context (host vs fiber)  \
+	                          */
+#define STRAND_ERR_NOMEM (-5)    /* allocation failure */
 /*
  * Default scheduler and stack cache parameters.
  * These are the values used when zero is passed in strand_sched_config_t.
@@ -159,6 +163,28 @@ uint64_t strand_scheduler_next_deadline(const strand_scheduler_t *sched);
  * See ARCHITECTURE.md §4.2 and §4.3.
  */
 int strand_scheduler_get_fd(const strand_scheduler_t *sched);
+
+/*
+ * strand_fiber_spawn — spawn a new fiber on sched.
+ *
+ * In Phase 3 (single-worker), must be called from inside a running fiber
+ * (sched->current_fiber != NULL).  Host-thread spawning is added in
+ * Phase 5 (Task 5.4).  Returns STRAND_ERR_WRONGCTX if called from the
+ * host thread.
+ *
+ * fn       — fiber entry function; called as fn(arg)
+ * arg      — argument passed to fn; ownership is the caller's
+ * stack_sz — usable stack size in bytes; 0 uses STRAND_DEFAULT_STACK_SIZE
+ * out      — if non-NULL, receives the ABA-safe handle on success
+ *
+ * Returns STRAND_OK on success.
+ * Returns STRAND_ERR_SHUTDOWN if the scheduler has been stopped.
+ * Returns STRAND_ERR_WRONGCTX if called from the host thread.
+ * Returns STRAND_ERR_NOMEM on allocation failure.
+ * See ARCHITECTURE.md §4.5 and §4.6.
+ */
+int strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn,
+                       void *arg, size_t stack_sz, strand_fiber_handle_t *out);
 
 /* Function declarations added in later phases. */
 

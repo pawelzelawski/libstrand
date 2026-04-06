@@ -134,8 +134,12 @@ dev: $(LIB_DEV) $(TEST_BIN)
 release: $(LIB_RELEASE)
 
 # Test suite — ASan/UBSan build
+# LSAN (LeakSanitizer) is disabled here: its tracer process uses ptrace to
+# scan all mapped pages and crashes (SIGSEGV in the tracer) when it
+# encounters PROT_NONE fiber guard pages.  Leak checking is covered by the
+# 'valgrind' target which handles guard pages correctly.
 test: $(TEST_BIN)
-	$(TEST_BIN)
+	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN)
 
 # TSan — Clang only, Linux only
 test-tsan:
