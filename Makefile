@@ -106,16 +106,15 @@ INCLUDES = -I include/
 
 all: dev
 
-# Development build — compile stubs with ASan/UBSan
-# Wired to run tests in Task 1.2
-dev: $(LIB_DEV)
+# Development build with ASan/UBSan (Linux) — also builds test binary
+dev: $(LIB_DEV) $(TEST_BIN)
 
 # Release — optimised static library
 release: $(LIB_RELEASE)
 
-# Test suite — wired in Task 1.2
-test: $(LIB_DEV)
-	@echo "0/0 tests passed"
+# Test suite — ASan/UBSan build
+test: $(TEST_BIN)
+	$(TEST_BIN)
 
 # TSan — Clang only, Linux only
 test-tsan:
@@ -124,8 +123,12 @@ test-tsan:
 	@echo "No test binary yet — implement Task 1.2 first"
 
 # Valgrind — Linux only, no sanitizers (ASan + Valgrind conflict)
-valgrind:
-	@echo "No test binary yet — implement Task 1.2 first"
+valgrind: $(TEST_BIN_VG)
+	valgrind --leak-check=full			\
+	         --show-leak-kinds=all			\
+	         --track-origins=yes			\
+	         --error-exitcode=1			\
+	         $(TEST_BIN_VG)
 
 # Benchmarks — Phase 7
 bench:
@@ -196,3 +199,19 @@ $(LIB_RELEASE): $(LIB_SRCS)
 	    $(REL_DIR)/strand_runtime.o				\
 	    $(REL_DIR)/strand_offload.o				\
 	    $(REL_DIR)/strand_scope.o
+
+# --- Test binary (ASan/UBSan build) -----------------------------------------
+
+$(TEST_BIN): $(LIB_DEV) tests/run_tests.c tests/test_harness.h
+	@mkdir -p $(BUILD_TESTS_DIR)
+	$(CC) $(CFLAGS_DEV) $(INCLUDES) -I tests/			\
+	    tests/run_tests.c $(LIB_DEV) $(LDFLAGS)			\
+	    -o $(TEST_BIN)
+
+# --- Valgrind test binary (no sanitizers) -----------------------------------
+
+$(TEST_BIN_VG): $(LIB_DEV) tests/run_tests.c tests/test_harness.h
+	@mkdir -p $(BUILD_TESTS_DIR)
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -I tests/			\
+	    tests/run_tests.c $(LIB_DEV) $(LDFLAGS)			\
+	    -o $(TEST_BIN_VG)

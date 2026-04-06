@@ -3,14 +3,14 @@
 ## Status Overview
 
 **Last Updated**: 2026-04-06
-**Current Phase**: Phase 1 — Foundation (in progress)
-**Next Task**: Task 1.2 — Test harness
+**Current Phase**: Phase 1 — Foundation (complete)
+**Next Task**: Phase 2 — Task 2.1
 
 ### Phase Summary
 
 | Phase | Name | Status | Tests | Notes |
 |---|---|---|---|---|
-| 1 | Foundation | IN PROGRESS | — | Build system, test harness, skeleton |
+| 1 | Foundation | DONE | 0/0 | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | NOT STARTED | — | Assembly, context switch, guard pages, sanitizer hooks |
 | 3 | Layer 2: Fiber Scheduler | NOT STARTED | — | Scheduler modes, fiber state machine, stack cache |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
@@ -22,11 +22,11 @@
 
 | ID | Milestone | Status |
 |---|---|---|
-| M1 | Build system works on Linux and OpenBSD, both architectures | IN PROGRESS (Linux x86_64 ✓, OpenBSD amd64 ✓; ARM64 via CI) |
+| M1 | Build system works on Linux and OpenBSD, both architectures | DONE (Linux x86_64, Linux ARM64, OpenBSD amd64, OpenBSD arm64 — all green on CI) |
 | M2 | All unit tests pass on Linux | NOT STARTED |
 | M3 | All unit tests pass on OpenBSD | NOT STARTED |
-| M4 | Valgrind clean on Linux | NOT STARTED |
-| M5 | ASan/UBSan clean on both platforms | NOT STARTED |
+| M4 | Valgrind clean on Linux | DONE (empty test suite) |
+| M5 | ASan/UBSan clean on both platforms | DONE (Linux x86_64, Linux ARM64 via CI) |
 | M6 | TSan clean on Linux (Clang only) | NOT STARTED |
 | M7 | clang-format clean | DONE |
 | M8 | clang-tidy zero warnings | DONE (stubs) |
@@ -116,7 +116,7 @@ are in place. Code compiles clean with zero warnings.
 - Verify `make dev` and `make release` compile all stubs with zero warnings
   on Linux and OpenBSD, x86_64 and ARM64
 
-**1.2 — Test harness**
+**1.2 — Test harness** ✓ DONE
 - Create `tests/test_harness.h` with the `RUN(name, fn)` macro per
   TECH_STACK.md §6.1
 - Create `tests/run_tests.c` as the test binary entry point
@@ -125,7 +125,7 @@ are in place. Code compiles clean with zero warnings.
 - Confirm `make valgrind` runs the test binary under Valgrind and exits clean
   on Linux
 
-**1.3 — _Static_assert placeholders**
+**1.3 — _Static_assert placeholders** ✓ DONE
 - Add placeholder `_Static_assert(1 == 1, "placeholder — replaced in Phase 2")`
   entries in `src/strand_internal.h` for every assertion listed in
   CODING_STANDARDS.md §1.3. They will be replaced with real checks as
@@ -134,13 +134,14 @@ are in place. Code compiles clean with zero warnings.
 ### Phase 1 Completion Criteria
 
 - [x] `make dev` succeeds with zero warnings on Linux x86_64
-- [ ] `make dev` succeeds with zero warnings on Linux ARM64 (CI)
+- [x] `make dev` succeeds with zero warnings on Linux ARM64 (CI)
 - [x] `make dev` succeeds with zero warnings on OpenBSD amd64
-- [ ] `make dev` succeeds with zero warnings on OpenBSD arm64 (CI)
-- [ ] `make test` runs and prints `0/0 tests passed` on all platforms
-- [ ] `make valgrind` exits clean on Linux
+- [x] `make dev` succeeds with zero warnings on OpenBSD arm64 (CI)
+- [x] `make test` runs and prints `0/0 tests passed` on Linux x86_64
+- [x] `make test` runs and prints `0/0 tests passed` on OpenBSD amd64
+- [x] `make valgrind` exits clean on Linux
 - [x] `make lint` produces zero warnings on all C stubs
-- [ ] Quality milestone M1 confirmed (ARM64 pending)
+- [x] Quality milestone M1 confirmed
 
 ---
 

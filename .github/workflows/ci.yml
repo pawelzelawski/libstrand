@@ -52,6 +52,7 @@ jobs:
           usesh: true
           run: |
             make dev
+            make test
 
   build-and-test-openbsd-arm64:
     name: OpenBSD arm64
@@ -67,3 +68,4 @@ jobs:
           arch: aarch64
           run: |
             make dev
+            make test

@@ -1,0 +1,29 @@
+/*
+ * tests/run_tests.c — test binary entry point
+ *
+ * Runs all test suites in order. Add suite runner calls here as
+ * new test files are introduced in each phase.
+ *
+ * Exit code: 0 if all tests passed, 1 if any test failed.
+ *
+ * See TECH_STACK.md §6.2.
+ */
+
+#include <stdio.h>
+
+#include "test_harness.h"
+
+int tests_run = 0;
+int tests_passed = 0;
+
+int
+main(void)
+{
+	/* Phase 2 onward: add suite runner calls here, e.g.:
+	 *   run_layer1_tests();
+	 *   run_layer2_tests();
+	 */
+
+	printf("%d/%d tests passed\n", tests_passed, tests_run);
+	return (tests_passed == tests_run) ? 0 : 1;
+}
