@@ -57,17 +57,24 @@ strand_context_swap:
 
 	/*
 	 * Save callee-saved GPRs to *old (x0).
-	 * stp stores two 64-bit registers as a pair; each pair is 16 bytes.
 	 * Offsets match strand_context_t definition in strand_context.h.
 	 * STRAND_CONTEXT_SIZE = 168; _Static_assert in strand_internal.h
 	 * verifies the struct layout has not drifted from these offsets.
+	 * Use scalar str/ldr forms to avoid potential strict-alignment traps
+	 * on platforms that enforce stronger alignment for paired accesses.
 	 */
-	stp	x19, x20, [x0, #0]
-	stp	x21, x22, [x0, #16]
-	stp	x23, x24, [x0, #32]
-	stp	x25, x26, [x0, #48]
-	stp	x27, x28, [x0, #64]
-	stp	x29, x30, [x0, #80]	/* fp, lr */
+	str	x19, [x0, #0]
+	str	x20, [x0, #8]
+	str	x21, [x0, #16]
+	str	x22, [x0, #24]
+	str	x23, [x0, #32]
+	str	x24, [x0, #40]
+	str	x25, [x0, #48]
+	str	x26, [x0, #56]
+	str	x27, [x0, #64]
+	str	x28, [x0, #72]
+	str	x29, [x0, #80]	/* fp */
+	str	x30, [x0, #88]	/* lr */
 
 	/*
 	 * Save sp — cannot be used directly as stp/str source in all
@@ -116,12 +123,18 @@ strand_context_swap:
 	 * x29 (fp) and x30 (lr) are restored last so that x1 remains
 	 * valid as the base pointer throughout all the loads above.
 	 */
-	ldp	x19, x20, [x1, #0]
-	ldp	x21, x22, [x1, #16]
-	ldp	x23, x24, [x1, #32]
-	ldp	x25, x26, [x1, #48]
-	ldp	x27, x28, [x1, #64]
-	ldp	x29, x30, [x1, #80]	/* fp, lr */
+	ldr	x19, [x1, #0]
+	ldr	x20, [x1, #8]
+	ldr	x21, [x1, #16]
+	ldr	x22, [x1, #24]
+	ldr	x23, [x1, #32]
+	ldr	x24, [x1, #40]
+	ldr	x25, [x1, #48]
+	ldr	x26, [x1, #56]
+	ldr	x27, [x1, #64]
+	ldr	x28, [x1, #72]
+	ldr	x29, [x1, #80]	/* fp */
+	ldr	x30, [x1, #88]	/* lr */
 
 	/*
 	 * Return — branches to the restored link register (x30).
