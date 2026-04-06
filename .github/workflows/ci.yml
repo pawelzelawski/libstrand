@@ -61,9 +61,19 @@ jobs:
                 pkg_add -I gdb || doas pkg_add -I gdb || true
               fi
               if command -v gdb >/dev/null 2>&1; then
-                gdb -q -batch -ex run -ex bt --args build/tests/run_tests || true
+                gdb -q -batch \
+                  -ex run \
+                  -ex "thread apply all bt full" \
+                  -ex "info registers" \
+                  -ex "x/16i $pc" \
+                  --args build/tests/run_tests || true
               elif command -v lldb >/dev/null 2>&1; then
-                lldb -b -o run -o bt -- build/tests/run_tests || true
+                lldb -b \
+                  -o run \
+                  -o "thread backtrace all" \
+                  -o "register read" \
+                  -o "disassemble --frame" \
+                  -- build/tests/run_tests || true
               fi
               exit 1
             }
@@ -88,9 +98,19 @@ jobs:
                 pkg_add -I gdb || doas pkg_add -I gdb || true
               fi
               if command -v gdb >/dev/null 2>&1; then
-                gdb -q -batch -ex run -ex bt --args build/tests/run_tests || true
+                gdb -q -batch \
+                  -ex run \
+                  -ex "thread apply all bt full" \
+                  -ex "info registers" \
+                  -ex "x/16i $pc" \
+                  --args build/tests/run_tests || true
               elif command -v lldb >/dev/null 2>&1; then
-                lldb -b -o run -o bt -- build/tests/run_tests || true
+                lldb -b \
+                  -o run \
+                  -o "thread backtrace all" \
+                  -o "register read" \
+                  -o "disassemble --frame" \
+                  -- build/tests/run_tests || true
               fi
               exit 1
             }
