@@ -394,7 +394,7 @@ the poller is stubbed out for scheduler-only testing.
 - Return `SCHED_PROGRESS` if any fibers ran or any timer fired; else `SCHED_IDLE`
   with next timer deadline from heap peek, or `UINT64_MAX` if no timers
 
-**3.4 — strand_scheduler_run and strand_scheduler_stop**
+**3.4 — strand_scheduler_run and strand_scheduler_stop** ✓ DONE
 - Implement `strand_scheduler_run`: loop calling `strand_scheduler_advance`;
   when `SCHED_IDLE`, call `epoll_wait`/`kevent` on the wakeup fd only
   (poller stub) with the next deadline timeout; check stop flag after each

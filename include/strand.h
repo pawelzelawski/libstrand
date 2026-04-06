@@ -124,6 +124,42 @@ typedef enum { SCHED_PROGRESS = 0, SCHED_IDLE = 1 } sched_result_t;
  */
 sched_result_t strand_scheduler_advance(strand_scheduler_t *sched,
                                         uint64_t *next_deadline_ns);
+
+/*
+ * strand_scheduler_run — blocking worker-mode loop.
+ * Calls strand_scheduler_advance in a loop.  Blocks in poll on the wakeup
+ * fd when idle, using the next timer deadline as the timeout.  Returns
+ * only after strand_scheduler_stop is called and the stop flag observed.
+ * See ARCHITECTURE.md §4.2.
+ */
+void strand_scheduler_run(strand_scheduler_t *sched);
+
+/*
+ * strand_scheduler_stop — signal worker to stop.
+ * Sets the atomic stop flag AND writes one byte to the wakeup fd so that
+ * a blocked epoll_wait/kevent in strand_scheduler_run is interrupted.
+ * Both steps are required.  Safe to call from any thread.
+ * See ARCHITECTURE.md §4.2.
+ */
+void strand_scheduler_stop(strand_scheduler_t *sched);
+
+/*
+ * strand_scheduler_next_deadline — next pending timer deadline.
+ * Returns a CLOCK_MONOTONIC nanosecond timestamp, or UINT64_MAX if none.
+ * Used by the host loop to compute its own epoll_wait/kevent timeout.
+ * See ARCHITECTURE.md §4.2.
+ */
+uint64_t strand_scheduler_next_deadline(const strand_scheduler_t *sched);
+
+/*
+ * strand_scheduler_get_fd — fd the host loop must monitor.
+ * Returns the eventfd (Linux) or the read end of the wakeup pipe (OpenBSD).
+ * The host loop registers this fd with its own epoll/kqueue instance and
+ * calls strand_scheduler_advance when it fires.
+ * See ARCHITECTURE.md §4.2 and §4.3.
+ */
+int strand_scheduler_get_fd(const strand_scheduler_t *sched);
+
 /* Function declarations added in later phases. */
 
 #endif /* STRAND_H */

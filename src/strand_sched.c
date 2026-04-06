@@ -24,6 +24,9 @@
 #include <unistd.h>
 #endif
 
+#include <limits.h>
+#include <poll.h>
+
 #include "strand_context.h"
 #include "strand_fiber.h"
 
@@ -197,9 +200,12 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	/*
 	 * Bind TSan's current-thread fiber to scheduler_ctx so that context
 	 * switches originating from the scheduler side are properly tracked.
+	 * bind_current is the correct call here — scheduler_ctx IS the OS
+	 * thread, not an independently created fiber.  Do NOT call
+	 * strand_fiber_tsan_init first: init creates a fresh fiber that
+	 * bind_current would immediately overwrite and leak.
 	 * In non-TSan builds this is a no-op.
 	 */
-	strand_fiber_tsan_init(&sched->scheduler_ctx);
 	strand_fiber_tsan_bind_current(&sched->scheduler_ctx);
 
 	return (sched);
@@ -218,7 +224,13 @@ strand_scheduler_destroy(strand_scheduler_t *sched)
 	if (sched == NULL)
 		return;
 
-	strand_fiber_tsan_destroy(&sched->scheduler_ctx);
+	/*
+	 * scheduler_ctx was bound via strand_fiber_tsan_bind_current, NOT
+	 * created via strand_fiber_tsan_init (__tsan_create_fiber).  Calling
+	 * __tsan_destroy_fiber on a fiber returned by __tsan_get_current_fiber
+	 * corrupts TSan's internal state.  Just NULL the pointer.
+	 */
+	sched->scheduler_ctx.tsan_fiber = NULL;
 
 	wakeup_close(sched);
 
@@ -484,4 +496,161 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	if (next_deadline_ns != NULL)
 		*next_deadline_ns = timer_heap_peek_deadline(sched);
 	return (SCHED_IDLE);
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_scheduler_next_deadline -- return next timer deadline (nanoseconds).
+ * Returns UINT64_MAX if no timers are pending.
+ * ---------------------------------------------------------------------------
+ */
+uint64_t
+strand_scheduler_next_deadline(const strand_scheduler_t *sched)
+{
+	return (timer_heap_peek_deadline(sched));
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_scheduler_get_fd -- return the fd the host loop must monitor.
+ *
+ * On Linux this is the eventfd used as the wakeup channel.
+ * On OpenBSD this is the read end of the wakeup pipe.
+ * The host loop should register this fd with its own epoll/kqueue instance
+ * and call strand_scheduler_advance when it fires.
+ * See ARCHITECTURE.md §4.2.
+ * ---------------------------------------------------------------------------
+ */
+int
+strand_scheduler_get_fd(const strand_scheduler_t *sched)
+{
+#ifdef STRAND_LINUX
+	return (sched->wakeup_fd);
+#endif
+#ifdef STRAND_OPENBSD
+	return (sched->wakeup_pipe[0]);
+#endif
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_scheduler_stop -- signal the scheduler to stop.
+ *
+ * SAFETY: atomic_store with release ordering ensures all prior writes
+ * (run queue state, fiber states) are visible to the worker before it
+ * observes stop_flag == 1.  The atomic store alone cannot interrupt a
+ * worker blocked in epoll_wait/kevent — the wakeup fd write below is
+ * required for that.  See ARCHITECTURE.md §4.2.
+ *
+ * SAFETY: writing to the wakeup fd unblocks any thread blocked in poll/
+ * epoll_wait/kevent inside strand_scheduler_run.  The written bytes are
+ * plain control signals; strand_scheduler_advance Step 3 drains and
+ * discards them unconditionally.  Safe to call from any thread.
+ * See ARCHITECTURE.md §4.2.
+ * ---------------------------------------------------------------------------
+ */
+void
+strand_scheduler_stop(strand_scheduler_t *sched)
+{
+	/*
+	 * SAFETY: release ordering pairs with the acquire load in
+	 * strand_scheduler_run, ensuring the stop is visible before the
+	 * next advance call inspects the flag.
+	 */
+	atomic_store_explicit(&sched->stop_flag, 1, memory_order_release);
+
+	/*
+	 * SAFETY: write to the wakeup fd to interrupt a worker blocked in
+	 * poll/epoll_wait/kevent.  Without this write the worker would block
+	 * indefinitely even after the flag is set.  The bytes are control
+	 * signals only; they are drained and discarded in Step 3 of the
+	 * next strand_scheduler_advance call.  See ARCHITECTURE.md §4.2.
+	 */
+#ifdef STRAND_LINUX
+	{
+		uint64_t val = 1;
+		(void)write(sched->wakeup_fd, &val, sizeof(val));
+	}
+#endif
+#ifdef STRAND_OPENBSD
+	{
+		char val = 1;
+		(void)write(sched->wakeup_pipe[1], &val, sizeof(val));
+	}
+#endif
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_scheduler_run -- blocking worker-mode loop.
+ *
+ * Calls strand_scheduler_advance in a loop.  When advance returns
+ * SCHED_IDLE the worker blocks in poll() on the wakeup fd until either
+ * the next timer deadline expires or strand_scheduler_stop writes a byte
+ * to the wakeup fd.  Returns only after stop_flag is set.
+ *
+ * In Phase 4 the idle wait is replaced with the real poller (epoll/kqueue
+ * fd from strand_poller_t) so that I/O readiness also wakes the worker.
+ * See ARCHITECTURE.md §4.2.
+ * ---------------------------------------------------------------------------
+ */
+void
+strand_scheduler_run(strand_scheduler_t *sched)
+{
+	/*
+	 * In Phase 3, no context switches to user fibers happen in this test,
+	 * so no TSan rebinding is needed here.  Multi-worker TSan setup is
+	 * deferred to Phase 5 (Task 5.3) where the worker-thread lifecycle
+	 * is fully defined.
+	 */
+
+	for (;;) {
+		uint64_t next_ns;
+		sched_result_t rc;
+		struct pollfd pfd;
+		int timeout_ms;
+
+		if (atomic_load_explicit(&sched->stop_flag,
+		                         memory_order_acquire))
+			return;
+
+		rc = strand_scheduler_advance(sched, &next_ns);
+
+		if (atomic_load_explicit(&sched->stop_flag,
+		                         memory_order_acquire))
+			return;
+
+		if (rc != SCHED_IDLE)
+			continue;
+
+		/*
+		 * Idle: compute timeout from the next timer deadline, then
+		 * block on the wakeup fd.  A stop signal (or, in Phase 4, I/O
+		 * readiness) will write to the fd and unblock poll early.
+		 *
+		 * Phase 3 stub: poll only the wakeup fd.  Phase 4 (Task 4.3)
+		 * replaces this with the real poller's epoll/kqueue fd so that
+		 * I/O readiness also wakes the worker.
+		 */
+		if (next_ns == UINT64_MAX) {
+			timeout_ms = -1; /* block indefinitely until woken */
+		} else {
+			uint64_t t_now = now_ns();
+			if (t_now >= next_ns) {
+				timeout_ms = 0;
+			} else {
+				uint64_t diff_ms =
+				    (next_ns - t_now) / 1000000ULL;
+				timeout_ms = (diff_ms > (uint64_t)INT_MAX)
+				                 ? INT_MAX
+				                 : (int)diff_ms;
+			}
+		}
+
+#ifdef STRAND_LINUX
+		pfd.fd = sched->wakeup_fd;
+#endif
+#ifdef STRAND_OPENBSD
+		pfd.fd = sched->wakeup_pipe[0];
+#endif
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		(void)poll(&pfd, 1, timeout_ms);
+	}
 }
