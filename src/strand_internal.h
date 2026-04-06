@@ -176,4 +176,131 @@ _Static_assert(offsetof(strand_fiber_t, context) == 0,
 _Static_assert(sizeof(strand_fiber_handle_t) == 16,
                "strand_fiber_handle_t size changed — ptr (8) + generation (8)");
 
+/*
+ * strand_inject_queue_t — Phase 3 stub.
+ * Replaced with a real bounded MPSC ring buffer in Phase 5 (Task 5.1).
+ * The stub has no fields; inject_queue_drain is a no-op in Phase 3.
+ */
+typedef struct strand_inject_queue {
+	int _placeholder; /* zero-size structs are not valid in C11 */
+} strand_inject_queue_t;
+
+/*
+ * strand_stack_slot_t — one entry in the per-scheduler stack cache.
+ *
+ * base       — mmap base (bottom of the allocation, includes guard page).
+ * stack_size — usable stack size (excludes the guard page).
+ * vg_id      — Valgrind stack registration ID; passed to
+ *              STRAND_VG_STACK_DEREGISTER on free.
+ *
+ * The guard page is always PAGE_SIZE bytes at base; usable stack is
+ * base + PAGE_SIZE for stack_size bytes.
+ */
+typedef struct strand_stack_slot {
+	void *base;
+	size_t stack_size;
+	unsigned long vg_id;
+} strand_stack_slot_t;
+
+/*
+ * strand_timer_entry_t — one entry in the per-scheduler timer min-heap.
+ * Keyed on deadline_ns; ties are broken by insertion order (stable).
+ * See ARCHITECTURE.md §4.2 Step 2.
+ */
+typedef struct strand_timer_entry {
+	uint64_t deadline_ns;
+	strand_fiber_t *fiber;
+} strand_timer_entry_t;
+
+/*
+ * strand_scheduler_t — complete single-worker fiber scheduler (Task 3.2).
+ *
+ * Ownership:
+ *   - All strand_fiber_t descriptors on the run queue or timer heap are
+ *     owned by this scheduler.
+ *   - current_fiber is the exclusively-running fiber; all others are parked.
+ *   - The dead pool holds reusable descriptors; generation is incremented
+ *     by fiber_alloc when a descriptor is taken from the pool.
+ *
+ * Thread safety:
+ *   - This struct is NOT thread-safe.  All fields are owned by the worker
+ *     thread that calls strand_scheduler_advance / strand_scheduler_run.
+ *   - stop_flag is the only field modified from other threads; it is
+ *     _Atomic for that reason.
+ *   - The inject queue will have its own memory-ordering protocol in Phase 5.
+ *
+ * Wakeup fd:
+ *   - Linux: eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK) — single int.
+ *   - OpenBSD: pipe2([0]=read, [1]=write, O_CLOEXEC | O_NONBLOCK).
+ *   - strand_scheduler_stop writes one byte to the write side to interrupt
+ *     a blocked epoll_wait/kevent.  Step 3 of advance drains and discards
+ *     all bytes.  See ARCHITECTURE.md §4.2.
+ */
+typedef struct strand_scheduler {
+	/*
+	 * Scheduler's own execution context.  When running inside advance,
+	 * context switches save here and resume the scheduler after the fiber
+	 * returns or yields.  stack_base and stack_size are 0/NULL — the
+	 * scheduler runs on the OS thread stack and does not own a fiber stack.
+	 */
+	strand_fiber_t scheduler_ctx;
+
+	/* Run queue — FIFO intrusive singly-linked list via fiber->next.
+	 * run_head is the next fiber to run; run_tail is where new fibers
+	 * are appended.  Both are NULL when the queue is empty. */
+	strand_fiber_t *run_head;
+	strand_fiber_t *run_tail;
+	size_t run_queue_len;
+
+	/* Budget — max fibers to run per advance call.  Default 64. */
+	size_t budget;
+
+	/* Currently executing fiber.  NULL when control is in the scheduler. */
+	strand_fiber_t *current_fiber;
+
+	/* Timer min-heap — binary heap keyed on deadline_ns (ascending).
+	 * Dynamically allocated; grows by doubling when full. */
+	strand_timer_entry_t *timer_heap;
+	size_t timer_heap_len;
+	size_t timer_heap_cap;
+
+	/* Wakeup fd — used by strand_scheduler_stop to interrupt a blocked
+	 * worker.  Bytes written here are control signals; drained in Step 3
+	 * of strand_scheduler_advance.  See ARCHITECTURE.md §4.2. */
+#ifdef STRAND_LINUX
+	int wakeup_fd;
+#endif
+#ifdef STRAND_OPENBSD
+	int wakeup_pipe[2]; /* [0]=read, [1]=write */
+#endif
+
+	/* SAFETY: stop_flag is written from any thread via
+	 * strand_scheduler_stop. Use atomic_store/atomic_load with the
+	 * appropriate memory order. Reading with acquire and writing with
+	 * release ensures the stop is visible before the next advance call
+	 * inspects the flag. */
+	_Atomic int stop_flag;
+
+	/* Inject queue — Phase 3 stub; no-op drain in Step 1.
+	 * Replaced with real MPSC ring buffer in Phase 5 (Task 5.1). */
+	strand_inject_queue_t inject_queue;
+
+	/* I/O poller — NULL in Phase 3; initialised in Phase 4 (Task 4.1). */
+	strand_poller_t *poller;
+
+	/* Stack cache — LIFO, per-scheduler.  Only stacks of matching size
+	 * are cached; non-matching stacks are munmap'd immediately.
+	 * See ARCHITECTURE.md §13 for cap, floor, and idle reclamation. */
+	strand_stack_slot_t *stack_cache;
+	size_t cache_len;
+	size_t cache_cap;
+	size_t cache_floor;
+	uint64_t cache_idle_ns; /* idle reclamation timeout (ns) */
+	uint64_t last_idle_ns;  /* last observed idle timestamp */
+
+	/* Dead pool — reusable strand_fiber_t descriptors linked via next.
+	 * fiber_alloc pops from here when available; fiber_free pushes here. */
+	strand_fiber_t *dead_pool;
+} strand_scheduler_t;
+
 #endif /* STRAND_INTERNAL_H */

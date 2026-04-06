@@ -173,6 +173,7 @@ valgrind: $(TEST_BIN_VG)
 	         --track-origins=yes			\
 	         --error-exitcode=1			\
 	         $(TEST_BIN_VG)
+	rm -f vgcore.*
 
 # Benchmarks — Phase 7
 bench:

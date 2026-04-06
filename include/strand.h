@@ -23,6 +23,7 @@
 typedef struct strand_scheduler strand_scheduler_t;
 typedef struct strand_runtime strand_runtime_t;
 typedef struct strand_worker strand_worker_t;
+typedef struct strand_poller strand_poller_t;
 typedef struct strand_scope strand_scope_t;
 typedef struct strand_fiber strand_fiber_t;
 
@@ -59,7 +60,45 @@ typedef void (*strand_destructor_t)(void *ptr);
 #define STRAND_OK 0
 #define STRAND_HANDLE_INVALID (-1)
 #define STRAND_HANDLE_STALE (-2)
+/*
+ * Default scheduler and stack cache parameters.
+ * These are the values used when zero is passed in strand_sched_config_t.
+ * See ARCHITECTURE.md §4.4 and §13.
+ */
+#define STRAND_DEFAULT_STACK_SIZE ((size_t)(64 * 1024))
+#define STRAND_DEFAULT_SCHED_BUDGET ((size_t)64)
+#define STRAND_DEFAULT_CACHE_CAP ((size_t)64)
+#define STRAND_DEFAULT_CACHE_FLOOR ((size_t)8)
 
+/*
+ * strand_sched_config_t — scheduler creation parameters.
+ * Pass zero for any field to use the corresponding default.
+ *
+ * budget      — max fibers to run per strand_scheduler_advance call.
+ * inject_cap  — inject queue capacity (Phase 5; ignored in Phase 3).
+ * cache_cap   — stack cache hard cap (stacks per worker).
+ * idle_floor  — stack cache idle reclamation floor.
+ * See ARCHITECTURE.md §4.4, §13.
+ */
+typedef struct strand_sched_config {
+	size_t budget;
+	size_t inject_cap;
+	size_t cache_cap;
+	size_t idle_floor;
+} strand_sched_config_t;
+
+/*
+ * strand_scheduler_create — allocate and initialise a scheduler.
+ * cfg may be NULL to use all defaults.
+ * Returns NULL on allocation failure.
+ */
+strand_scheduler_t *strand_scheduler_create(const strand_sched_config_t *cfg);
+
+/*
+ * strand_scheduler_destroy — tear down and free a scheduler.
+ * All fibers must be finished before calling this.
+ */
+void strand_scheduler_destroy(strand_scheduler_t *sched);
 /* Function declarations added in later phases. */
 
 #endif /* STRAND_H */

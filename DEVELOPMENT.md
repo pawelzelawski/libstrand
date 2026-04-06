@@ -363,7 +363,7 @@ the poller is stubbed out for scheduler-only testing.
   generation counter increment on reuse
 - Implement `fiber_handle_validate()` inline: null check + generation match
 
-**3.2 — strand_scheduler_t and run queue**
+**3.2 — strand_scheduler_t and run queue** ✓ DONE
 - Define `strand_scheduler_t` in `src/strand_internal.h`:
   - Run queue: pointer to head and tail of intrusive linked list
   - `run_queue_len`: current length
