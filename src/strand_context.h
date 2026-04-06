@@ -98,6 +98,32 @@ typedef struct strand_context {
  */
 void strand_context_swap(strand_context_t *old, strand_context_t *new);
 /*
+ * strand_context_init(ctx, stack_top, entry, arg) — fabricate an initial
+ * saved-register state so that the first strand_context_swap to *ctx
+ * begins execution at entry(arg).
+ *
+ * stack_top must be the address one byte past the top of the usable stack
+ * (i.e. the highest valid address + 1) and must be 16-byte aligned.
+ *
+ * On x86_64: writes the address of an internal trampoline as the fabricated
+ * return address at stack_top - 8; stores entry in rbx and arg in r12
+ * (both callee-saved, so strand_context_swap restores them); sets rsp to
+ * stack_top - 8; clears rbp, r13, r14, r15 to zero.  The trampoline moves
+ * arg into rdi (SysV AMD64 first-argument register) and calls entry.
+ *
+ * On AArch64: aligns sp to 16 bytes; stores the trampoline in x30 (lr),
+ * entry in x19, and arg in x20 (all callee-saved); clears remaining
+ * callee-saved registers to zero.  The trampoline moves arg into x0
+ * (AAPCS64 first-argument register) and calls entry.
+ *
+ * The fiber entry function must not return.  It must transfer control back
+ * to the scheduler (or another context) via strand_context_switch before
+ * returning, otherwise behaviour is undefined.
+ */
+void strand_context_init(strand_context_t *ctx, void *stack_top,
+                         strand_fiber_fn_t entry, void *arg);
+
+/*
  * strand_context_switch(from, to) — the public Layer 1 interface.
  *
  * Wraps strand_context_swap with:

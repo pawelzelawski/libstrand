@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-06
 **Current Phase**: Phase 2 — Layer 1: Execution Contexts
-**Next Task**: Phase 2 — Task 2.5
+**Next Task**: Phase 2 — Task 2.6
 
 ### Phase Summary
 
@@ -228,7 +228,7 @@ switch in isolation.
   - All sanitizer hooks wrapped in `#ifdef` guards — no-ops in non-sanitizer
     builds per TECH_STACK.md §7.2 and §7.3
 
-**2.5 — strand_context_init**
+**2.5 — strand_context_init** ✓ DONE
 - Implement `strand_context_init(strand_context_t *ctx, void *stack_top,
   strand_fiber_fn_t entry, void *arg)`:
   - Fabricate the initial saved-register state so that the first

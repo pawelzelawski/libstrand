@@ -90,3 +90,31 @@ strand_context_swap:
 
 	.cfi_endproc
 	.size	strand_context_swap, .-strand_context_swap
+
+/*
+ * strand_fiber_trampoline — first landing point for a newly fabricated
+ * fiber context.  Entered via the ret in strand_context_swap with:
+ *   rbx = fiber entry function pointer (callee-saved, restored by swap)
+ *   r12 = arg pointer              (callee-saved, restored by swap)
+ *   rsp = stack_top  (16-byte aligned — ret popped the fabricated address)
+ *
+ * Moves arg into rdi (the SysV AMD64 first-argument register), then calls
+ * entry(arg) via `call` so that entry observes a correctly aligned stack:
+ * rsp is 16-byte aligned here; `call *%rbx` pushes an 8-byte return
+ * address making rsp%16 == 8 on entry to the fiber function, satisfying
+ * the SysV AMD64 ABI requirement.
+ *
+ * The `ud2` after the call is a guard: the fiber entry function must not
+ * return.  If it does, ud2 raises SIGILL immediately rather than
+ * continuing with a corrupted or empty stack.
+ */
+	.text
+	.globl	strand_fiber_trampoline
+	.type	strand_fiber_trampoline, @function
+strand_fiber_trampoline:
+	.cfi_startproc
+	movq	%r12, %rdi		/* arg -> SysV AMD64 first argument */
+	call	*%rbx			/* call entry(arg) */
+	ud2				/* fiber entry must not return */
+	.cfi_endproc
+	.size	strand_fiber_trampoline, .-strand_fiber_trampoline

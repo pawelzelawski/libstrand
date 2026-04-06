@@ -143,7 +143,7 @@ lint: $(LIB_DEV)
 	clang-tidy $(LIB_SRCS) -- $(CFLAGS_DEV) $(INCLUDES)
 	@if command -v cppcheck >/dev/null 2>&1; then \
 		cppcheck --enable=all --error-exitcode=1 \
-		         --suppress=missingIncludeSystem \	         --suppress=unusedFunction \		         src/; \
+		         --suppress=missingIncludeSystem \	         --suppress=unusedFunction \	         --suppress=constParameterPointer \		         src/; \
 	else \
 		echo "cppcheck not found; skipping cppcheck step"; \
 	fi

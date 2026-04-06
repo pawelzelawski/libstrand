@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <stdint.h>
 
+#include "../include/strand.h"
 #include "strand_context.h"
 #include "strand_internal.h"
 
@@ -108,3 +109,104 @@ strand_context_switch(strand_fiber_t *from, strand_fiber_t *to)
 	fp_ctrl_set(from->fp_ctrl);
 	errno = saved_errno;
 }
+
+/*
+ * strand_fiber_trampoline — defined in the arch-specific strand_context.S.
+ * First landing point for a newly fabricated context. Sets up the
+ * ABI argument register from a callee-saved register, then calls the
+ * fiber entry function.  Not part of the public API.
+ */
+void strand_fiber_trampoline(void);
+
+/*
+ * strand_context_init — fabricate an initial saved-register state.
+ *
+ * After this call, the first strand_context_swap to *ctx will begin
+ * execution at entry(arg).  See strand_context.h for the full contract.
+ */
+
+#if defined(__x86_64__) || defined(__amd64__)
+
+void
+strand_context_init(strand_context_t *ctx, void *stack_top,
+                    strand_fiber_fn_t entry, void *arg)
+{
+	uint64_t *sp;
+
+	/*
+	 * Write the trampoline address as the fabricated return address at
+	 * stack_top - 8.  strand_context_swap's retq pops this value,
+	 * advancing rsp to stack_top before jumping to the trampoline.
+	 *
+	 * stack_top must be 16-byte aligned (caller's responsibility).
+	 * After retq: rsp = stack_top (16-byte aligned).
+	 * After trampoline's `call *%rbx`: rsp = stack_top - 8
+	 * (rsp%16 == 8), satisfying the SysV AMD64 ABI on entry to entry().
+	 */
+	sp = (uint64_t *)stack_top;
+	sp[-1] = (uint64_t)(uintptr_t)strand_fiber_trampoline;
+
+	/*
+	 * rbx: entry — callee-saved; restored by strand_context_swap;
+	 *      read by the trampoline and called via `call *%rbx`.
+	 * r12: arg  — callee-saved; restored by strand_context_swap;
+	 *      moved into rdi (SysV AMD64 first argument) by the trampoline.
+	 * rsp: points at the fabricated return address (stack_top - 8).
+	 */
+	ctx->rbx = (uint64_t)(uintptr_t)entry;
+	ctx->r12 = (uint64_t)(uintptr_t)arg;
+	ctx->rsp = (uint64_t)(uintptr_t)(sp - 1);
+	ctx->rbp = 0;
+	ctx->r13 = 0;
+	ctx->r14 = 0;
+	ctx->r15 = 0;
+}
+
+#elif defined(__aarch64__)
+
+void
+strand_context_init(strand_context_t *ctx, void *stack_top,
+                    strand_fiber_fn_t entry, void *arg)
+{
+	/*
+	 * Align sp to 16 bytes — AAPCS64 requires 16-byte alignment at all
+	 * times.  The caller should provide an aligned stack_top; we enforce
+	 * the alignment defensively.
+	 */
+	ctx->sp = (uint64_t)(uintptr_t)stack_top & ~(uint64_t)15;
+
+	/*
+	 * x30 (lr): trampoline address — strand_context_swap's ret branches
+	 *           here on first context entry.
+	 * x19: entry — callee-saved; read by the trampoline and called via
+	 *      blr x19.
+	 * x20: arg  — callee-saved; moved into x0 (AAPCS64 first argument)
+	 *      by the trampoline before calling entry.
+	 */
+	ctx->x30 = (uint64_t)(uintptr_t)strand_fiber_trampoline;
+	ctx->x19 = (uint64_t)(uintptr_t)entry;
+	ctx->x20 = (uint64_t)(uintptr_t)arg;
+
+	/* Clear remaining callee-saved registers. */
+	ctx->x21 = 0;
+	ctx->x22 = 0;
+	ctx->x23 = 0;
+	ctx->x24 = 0;
+	ctx->x25 = 0;
+	ctx->x26 = 0;
+	ctx->x27 = 0;
+	ctx->x28 = 0;
+	ctx->x29 = 0; /* frame pointer */
+	ctx->d8 = 0;
+	ctx->d9 = 0;
+	ctx->d10 = 0;
+	ctx->d11 = 0;
+	ctx->d12 = 0;
+	ctx->d13 = 0;
+	ctx->d14 = 0;
+	ctx->d15 = 0;
+}
+
+#else
+#error "Unsupported architecture: strand_context_init not defined"
+#endif

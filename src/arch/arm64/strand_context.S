@@ -123,3 +123,31 @@ strand_context_swap:
 
 	.cfi_endproc
 	.size	strand_context_swap, .-strand_context_swap
+
+/*
+ * strand_fiber_trampoline — first landing point for a newly fabricated
+ * fiber context.  Branched to (via ret in strand_context_swap) with:
+ *   x19 = fiber entry function pointer (callee-saved, restored by swap)
+ *   x20 = arg pointer              (callee-saved, restored by swap)
+ *   sp  = stack_top aligned to 16 bytes
+ *
+ * Moves arg into x0 (the AAPCS64 first-argument register) from x20, then
+ * calls entry(arg) via blr so that entry sees a standard function-call
+ * frame.  sp is already 16-byte aligned; blr does not modify sp, so the
+ * AAPCS64 stack-alignment requirement is satisfied on entry to the fiber
+ * function.
+ *
+ * The `brk #0` after blr is a guard: the fiber entry function must not
+ * return.  If it does, brk #0 raises SIGTRAP immediately rather than
+ * continuing with a stale link register.
+ */
+	.text
+	.globl	strand_fiber_trampoline
+	.type	strand_fiber_trampoline, %function
+strand_fiber_trampoline:
+	.cfi_startproc
+	mov	x0, x20			/* arg -> AAPCS64 first argument */
+	blr	x19			/* call entry(arg) */
+	brk	#0			/* fiber entry must not return */
+	.cfi_endproc
+	.size	strand_fiber_trampoline, .-strand_fiber_trampoline
