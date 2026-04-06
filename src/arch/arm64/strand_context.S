@@ -79,11 +79,18 @@ strand_context_swap:
 	/*
 	 * Save callee-saved FP/SIMD lower 64-bit halves (d8-d15) to *old.
 	 * Only the lower 64 bits of v8-v15 are callee-saved under AAPCS64.
+	 * Use scalar str/ldr forms here to avoid potential strict-alignment
+	 * traps on platforms that treat 16-byte paired FP accesses more
+	 * strictly than 8-byte scalar accesses.
 	 */
-	stp	d8,  d9,  [x0, #104]
-	stp	d10, d11, [x0, #120]
-	stp	d12, d13, [x0, #136]
-	stp	d14, d15, [x0, #152]
+	str	d8,  [x0, #104]
+	str	d9,  [x0, #112]
+	str	d10, [x0, #120]
+	str	d11, [x0, #128]
+	str	d12, [x0, #136]
+	str	d13, [x0, #144]
+	str	d14, [x0, #152]
+	str	d15, [x0, #160]
 
 	/*
 	 * Switch stacks: load sp from *new (x1).
@@ -95,10 +102,14 @@ strand_context_swap:
 	/*
 	 * Restore callee-saved FP/SIMD halves from *new.
 	 */
-	ldp	d8,  d9,  [x1, #104]
-	ldp	d10, d11, [x1, #120]
-	ldp	d12, d13, [x1, #136]
-	ldp	d14, d15, [x1, #152]
+	ldr	d8,  [x1, #104]
+	ldr	d9,  [x1, #112]
+	ldr	d10, [x1, #120]
+	ldr	d11, [x1, #128]
+	ldr	d12, [x1, #136]
+	ldr	d13, [x1, #144]
+	ldr	d14, [x1, #152]
+	ldr	d15, [x1, #160]
 
 	/*
 	 * Restore callee-saved GPRs from *new.
