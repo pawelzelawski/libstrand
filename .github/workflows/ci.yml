@@ -36,6 +36,9 @@ jobs:
       - name: Test (ASan/UBSan)
         run: make test
 
+      - name: Test (TSan)
+        run: make test-tsan
+
       - name: Test (Valgrind)
         run: make valgrind
 

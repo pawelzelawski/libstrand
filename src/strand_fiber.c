@@ -7,6 +7,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "strand_fiber.h"
 #include "strand_internal.h"
 
 /*
@@ -14,7 +15,7 @@
  * sysconf(_SC_PAGESIZE) is idempotent; the one-time race in a multi-threaded
  * context is safe because both threads would write the same value.
  */
-static size_t
+size_t
 page_size(void)
 {
 	static size_t cached;
@@ -41,7 +42,7 @@ page_size(void)
  * (suitable for strand_context_init stack_top) is base + PAGE_SIZE +
  * stack_size (one past the top of the usable region).
  */
-static void *__attribute__((unused))
+void *
 stack_alloc(size_t stack_size, unsigned long *vg_id_out)
 {
 	size_t pgsz = page_size();
@@ -75,7 +76,7 @@ stack_alloc(size_t stack_size, unsigned long *vg_id_out)
  * base must be the mmap base returned by stack_alloc (not the usable base).
  * vg_id must be the Valgrind ID returned via stack_alloc's vg_id_out.
  */
-static void __attribute__((unused))
+void
 stack_free(void *base, size_t stack_size, unsigned long vg_id)
 {
 	STRAND_VG_STACK_DEREGISTER(vg_id);

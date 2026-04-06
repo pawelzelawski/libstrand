@@ -101,10 +101,15 @@ LIB_SRCS = src/strand_context.c	\
 BUILD_DIR       = build
 REL_DIR         = $(BUILD_DIR)/rel
 BUILD_TESTS_DIR = $(BUILD_DIR)/tests
+VG_DIR          = $(BUILD_DIR)/vg
 LIB_DEV         = $(BUILD_DIR)/libstrand.a
 LIB_RELEASE     = $(REL_DIR)/libstrand.a
+LIB_VG          = $(VG_DIR)/libstrand.a
 TEST_BIN        = $(BUILD_TESTS_DIR)/run_tests
 TEST_BIN_VG     = $(BUILD_TESTS_DIR)/run_tests_vg
+TSAN_DIR        = $(BUILD_DIR)/tsan
+LIB_TSAN        = $(TSAN_DIR)/libstrand.a
+TEST_BIN_TSAN   = $(BUILD_TESTS_DIR)/run_tests_tsan
 
 INCLUDES = -I include/
 
@@ -113,6 +118,8 @@ INCLUDES = -I include/
 # Defined after BUILD_DIR so $(BUILD_DIR) is available for expansion.
 ASM_OBJ_DEV != if [ -n "$(ASM_SRC)" ]; then echo "$(BUILD_DIR)/strand_context_asm.o"; else echo ""; fi
 ASM_OBJ_REL != if [ -n "$(ASM_SRC)" ]; then echo "$(BUILD_DIR)/rel/strand_context_asm.o"; else echo ""; fi
+ASM_OBJ_VG   != if [ -n "$(ASM_SRC)" ]; then echo "$(VG_DIR)/strand_context_asm.o"; else echo ""; fi
+ASM_OBJ_TSAN != if [ -n "$(ASM_SRC)" ]; then echo "$(TSAN_DIR)/strand_context_asm.o"; else echo ""; fi
 
 # --- Phony targets ----------------------------------------------------------
 
@@ -134,7 +141,30 @@ test: $(TEST_BIN)
 test-tsan:
 	@command -v clang >/dev/null 2>&1 || \
 	    { echo "TSan target requires Clang"; exit 1; }
-	@echo "No test binary yet — implement Task 1.2 first"
+	@mkdir -p $(TSAN_DIR) $(BUILD_TESTS_DIR)
+	clang $(CFLAGS_TSAN) $(INCLUDES) -c src/strand_context.c  -o $(TSAN_DIR)/strand_context.o
+	clang $(CFLAGS_TSAN) $(INCLUDES) -c src/strand_fiber.c    -o $(TSAN_DIR)/strand_fiber.o
+	clang $(CFLAGS_TSAN) $(INCLUDES) -c src/strand_sched.c    -o $(TSAN_DIR)/strand_sched.o
+	clang $(CFLAGS_TSAN) $(INCLUDES) -c src/strand_poller.c   -o $(TSAN_DIR)/strand_poller.o
+	clang $(CFLAGS_TSAN) $(INCLUDES) -c src/strand_inject.c   -o $(TSAN_DIR)/strand_inject.o
+	clang $(CFLAGS_TSAN) $(INCLUDES) -c src/strand_runtime.c  -o $(TSAN_DIR)/strand_runtime.o
+	clang $(CFLAGS_TSAN) $(INCLUDES) -c src/strand_offload.c  -o $(TSAN_DIR)/strand_offload.o
+	clang $(CFLAGS_TSAN) $(INCLUDES) -c src/strand_scope.c    -o $(TSAN_DIR)/strand_scope.o
+	test -z "$(ASM_SRC)" || clang $(CFLAGS_TSAN) -c $(ASM_SRC) -o $(ASM_OBJ_TSAN)
+	ar rcs $(LIB_TSAN)                                              \
+	    $(TSAN_DIR)/strand_context.o                                \
+	    $(TSAN_DIR)/strand_fiber.o                                  \
+	    $(TSAN_DIR)/strand_sched.o                                  \
+	    $(TSAN_DIR)/strand_poller.o                                 \
+	    $(TSAN_DIR)/strand_inject.o                                 \
+	    $(TSAN_DIR)/strand_runtime.o                                \
+	    $(TSAN_DIR)/strand_offload.o                                \
+	    $(TSAN_DIR)/strand_scope.o
+	test -z "$(ASM_OBJ_TSAN)" || ar qs $(LIB_TSAN) $(ASM_OBJ_TSAN)
+	clang $(CFLAGS_TSAN) $(INCLUDES) -I tests/ -I src/              \
+	    tests/run_tests.c tests/test_layer1.c $(LIB_TSAN) $(LDFLAGS) \
+	    -o $(TEST_BIN_TSAN)
+	TSAN_OPTIONS=die_after_fork=0 $(TEST_BIN_TSAN)
 
 # Valgrind — Linux only, no sanitizers (ASan + Valgrind conflict)
 valgrind: $(TEST_BIN_VG)
@@ -153,7 +183,7 @@ lint: $(LIB_DEV)
 	clang-tidy $(LIB_SRCS) -- $(CFLAGS_DEV) $(INCLUDES)
 	@if command -v cppcheck >/dev/null 2>&1; then \
 		cppcheck --enable=all --error-exitcode=1 \
-		         --suppress=missingIncludeSystem \	         --suppress=unusedFunction \	         --suppress=constParameterPointer \		         src/; \
+		         --suppress=missingIncludeSystem \	         --suppress=unusedFunction \	         --suppress=constParameterPointer \	         --suppress=staticFunction \		         src/; \
 	else \
 		echo "cppcheck not found; skipping cppcheck step"; \
 	fi
@@ -219,16 +249,40 @@ $(LIB_RELEASE): $(LIB_SRCS) $(ASM_SRC)
 
 # --- Test binary (ASan/UBSan build) -----------------------------------------
 
-$(TEST_BIN): $(LIB_DEV) tests/run_tests.c tests/test_harness.h
+$(TEST_BIN): $(LIB_DEV) tests/run_tests.c tests/test_layer1.c tests/test_harness.h
 	@mkdir -p $(BUILD_TESTS_DIR)
-	$(CC) $(CFLAGS_DEV) $(INCLUDES) -I tests/			\
-	    tests/run_tests.c $(LIB_DEV) $(LDFLAGS)			\
+	$(CC) $(CFLAGS_DEV) $(INCLUDES) -I tests/ -I src/		\
+	    tests/run_tests.c tests/test_layer1.c $(LIB_DEV) $(LDFLAGS)	\
 	    -o $(TEST_BIN)
 
 # --- Valgrind test binary (no sanitizers) -----------------------------------
 
-$(TEST_BIN_VG): $(LIB_DEV) tests/run_tests.c tests/test_harness.h
+$(TEST_BIN_VG): $(LIB_VG) tests/run_tests.c tests/test_layer1.c tests/test_harness.h
 	@mkdir -p $(BUILD_TESTS_DIR)
-	$(CC) $(CFLAGS_VG) $(INCLUDES) -I tests/			\
-	    tests/run_tests.c $(LIB_DEV) $(LDFLAGS)			\
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -I tests/ -I src/		\
+	    tests/run_tests.c tests/test_layer1.c $(LIB_VG) $(LDFLAGS)	\
 	    -o $(TEST_BIN_VG)
+
+# --- Valgrind library (no sanitizers) ---------------------------------------
+
+$(LIB_VG): $(LIB_SRCS) $(ASM_SRC)
+	@mkdir -p $(VG_DIR)
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -c src/strand_context.c  -o $(VG_DIR)/strand_context.o
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -c src/strand_fiber.c    -o $(VG_DIR)/strand_fiber.o
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -c src/strand_sched.c    -o $(VG_DIR)/strand_sched.o
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -c src/strand_poller.c   -o $(VG_DIR)/strand_poller.o
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -c src/strand_inject.c   -o $(VG_DIR)/strand_inject.o
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -c src/strand_runtime.c  -o $(VG_DIR)/strand_runtime.o
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -c src/strand_offload.c  -o $(VG_DIR)/strand_offload.o
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -c src/strand_scope.c    -o $(VG_DIR)/strand_scope.o
+	test -z "$(ASM_SRC)" || $(CC) $(CFLAGS_VG) -c $(ASM_SRC) -o $(ASM_OBJ_VG)
+	ar rcs $(LIB_VG)						\
+	    $(VG_DIR)/strand_context.o				\
+	    $(VG_DIR)/strand_fiber.o				\
+	    $(VG_DIR)/strand_sched.o				\
+	    $(VG_DIR)/strand_poller.o				\
+	    $(VG_DIR)/strand_inject.o				\
+	    $(VG_DIR)/strand_runtime.o				\
+	    $(VG_DIR)/strand_offload.o				\
+	    $(VG_DIR)/strand_scope.o
+	test -z "$(ASM_OBJ_VG)" || ar qs $(LIB_VG) $(ASM_OBJ_VG)
