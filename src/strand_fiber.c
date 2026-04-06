@@ -81,3 +81,29 @@ stack_free(void *base, size_t stack_size, unsigned long vg_id)
 	STRAND_VG_STACK_DEREGISTER(vg_id);
 	munmap(base, stack_size + page_size());
 }
+/*
+ * fiber_init — initialise the TSan fiber handle on a newly allocated
+ * strand_fiber_t.  Must be called once per descriptor before any context
+ * switch involving this fiber.  In non-TSan builds the macro is a no-op.
+ * See ARCHITECTURE.md §3.7 and TECH_STACK.md §7.3.
+ */
+static void __attribute__((unused))
+fiber_init(strand_fiber_t *f)
+{
+	f->tsan_fiber = NULL;
+	STRAND_TSAN_CREATE(f);
+}
+
+/*
+ * fiber_destroy — destroy the TSan fiber handle when a strand_fiber_t is
+ * being freed or returned to the dead pool.  Must be called after the fiber
+ * has finished and will never be switched to again.  In non-TSan builds the
+ * macro is a no-op.
+ * See ARCHITECTURE.md §3.7 and TECH_STACK.md §7.3.
+ */
+static void __attribute__((unused))
+fiber_destroy(strand_fiber_t *f)
+{
+	STRAND_TSAN_DESTROY(f);
+	f->tsan_fiber = NULL;
+}

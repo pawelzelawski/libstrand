@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-06
 **Current Phase**: Phase 2 — Layer 1: Execution Contexts
-**Next Task**: Phase 2 — Task 2.7
+**Next Task**: Phase 2 — Tests (test_layer1.c)
 
 ### Phase Summary
 
@@ -252,7 +252,7 @@ switch in isolation.
   - `VALGRIND_STACK_DEREGISTER(valgrind_stack_id)`
   - `munmap(base, stack_size + PAGE_SIZE)`
 
-**2.7 — TSan fiber handle lifecycle**
+**2.7 — TSan fiber handle lifecycle** ✓ DONE
 - In `strand_context.c` or `strand_fiber.c`, on fiber creation:
   `fiber->tsan_fiber = __tsan_create_fiber(0)` (TSan builds only)
 - On fiber destruction: `__tsan_destroy_fiber(fiber->tsan_fiber)`
