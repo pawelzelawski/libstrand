@@ -172,12 +172,20 @@ void
 strand_context_init(strand_context_t *ctx, void *stack_top,
                     strand_fiber_fn_t entry, void *arg)
 {
+	uint64_t sp;
+
 	/*
 	 * Align sp to 16 bytes — AAPCS64 requires 16-byte alignment at all
 	 * times.  The caller should provide an aligned stack_top; we enforce
 	 * the alignment defensively.
+	 *
+	 * Leave one 16-byte slot below stack_top so the first callee prologue
+	 * push (stp x29, x30, [sp, #-16]!) always lands inside writable stack
+	 * memory on platforms with stricter stack-boundary handling.
 	 */
-	ctx->sp = (uint64_t)(uintptr_t)stack_top & ~(uint64_t)15;
+	sp = (uint64_t)(uintptr_t)stack_top & ~(uint64_t)15;
+	sp -= 16;
+	ctx->sp = sp;
 
 	/*
 	 * x30 (lr): trampoline address — strand_context_swap's ret branches
