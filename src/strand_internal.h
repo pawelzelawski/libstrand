@@ -17,6 +17,17 @@
 #include "strand_context.h"
 
 /*
+ * Sanitizer feature detection.
+ * Clang exposes sanitizer state via __has_feature(...), while some GCC
+ * builds define __SANITIZE_ADDRESS__ / __SANITIZE_THREAD__.
+ */
+#if defined(__has_feature)
+#define STRAND_HAS_FEATURE(x) __has_feature(x)
+#else
+#define STRAND_HAS_FEATURE(x) 0
+#endif
+
+/*
  * STRAND_DEBUG_ASSERT — active in debug builds (-DSTRAND_DEBUG).
  * Use for invariant checks that must not run in production.
  */
@@ -34,14 +45,14 @@
  * Without these hooks ASan reports valid fiber stack accesses as
  * stack-buffer-overflows. See TECH_STACK.md §7.2 and ARCHITECTURE.md §3.7.
  */
-#if defined(__SANITIZE_ADDRESS__)
+#if defined(__SANITIZE_ADDRESS__) || STRAND_HAS_FEATURE(address_sanitizer)
 #include <sanitizer/asan_interface.h>
-#define STRAND_ASAN_SWITCH_START(new_sp, new_sz, old_sp, old_sz)               \
+#define STRAND_ASAN_SWITCH_START(new_sp, new_sz)                               \
 	__sanitizer_start_switch_fiber(NULL, (new_sp), (new_sz))
 #define STRAND_ASAN_SWITCH_FINISH()                                            \
 	__sanitizer_finish_switch_fiber(NULL, NULL, NULL)
 #else
-#define STRAND_ASAN_SWITCH_START(new_sp, new_sz, old_sp, old_sz) ((void)0)
+#define STRAND_ASAN_SWITCH_START(new_sp, new_sz) ((void)0)
 #define STRAND_ASAN_SWITCH_FINISH() ((void)0)
 #endif
 
@@ -54,15 +65,21 @@
  * false negatives across context switch boundaries.
  * See TECH_STACK.md §7.3 and ARCHITECTURE.md §3.7.
  */
-#if defined(__SANITIZE_THREAD__)
+#if defined(__SANITIZE_THREAD__) || STRAND_HAS_FEATURE(thread_sanitizer)
 #include <sanitizer/tsan_interface.h>
 #define STRAND_TSAN_SWITCH(to_fiber)                                           \
-	__tsan_switch_to_fiber((to_fiber)->tsan_fiber, 0)
+	do {                                                                   \
+		if ((to_fiber)->tsan_fiber != NULL)                            \
+			__tsan_switch_to_fiber((to_fiber)->tsan_fiber, 0);     \
+	} while (0)
 #define STRAND_TSAN_CREATE(f) ((f)->tsan_fiber = __tsan_create_fiber(0))
+#define STRAND_TSAN_BIND_CURRENT(f)                                            \
+	((f)->tsan_fiber = __tsan_get_current_fiber())
 #define STRAND_TSAN_DESTROY(f) __tsan_destroy_fiber((f)->tsan_fiber)
 #else
 #define STRAND_TSAN_SWITCH(to_fiber) ((void)0)
 #define STRAND_TSAN_CREATE(f) ((void)0)
+#define STRAND_TSAN_BIND_CURRENT(f) ((void)0)
 #define STRAND_TSAN_DESTROY(f) ((void)0)
 #endif
 

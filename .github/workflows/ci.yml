@@ -55,7 +55,16 @@ jobs:
           usesh: true
           run: |
             make dev
-            make test
+            make test || {
+              echo "make test failed; collecting backtrace from build/tests/run_tests"
+              if ! command -v gdb >/dev/null 2>&1; then
+                doas pkg_add -I gdb || true
+              fi
+              if command -v gdb >/dev/null 2>&1; then
+                gdb -q -batch -ex run -ex bt --args build/tests/run_tests || true
+              fi
+              exit 1
+            }
 
   build-and-test-openbsd-arm64:
     name: OpenBSD arm64
@@ -71,4 +80,13 @@ jobs:
           arch: aarch64
           run: |
             make dev
-            make test
+            make test || {
+              echo "make test failed; collecting backtrace from build/tests/run_tests"
+              if ! command -v gdb >/dev/null 2>&1; then
+                doas pkg_add -I gdb || true
+              fi
+              if command -v gdb >/dev/null 2>&1; then
+                gdb -q -batch -ex run -ex bt --args build/tests/run_tests || true
+              fi
+              exit 1
+            }

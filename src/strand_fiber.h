@@ -32,4 +32,12 @@ void stack_free(void *base, size_t stack_size, unsigned long vg_id);
 /* page_size — cached system page size. */
 size_t page_size(void);
 
+/*
+ * TSan fiber lifecycle hooks.
+ * In non-TSan builds these are cheap no-ops.
+ */
+void strand_fiber_tsan_init(strand_fiber_t *f);
+void strand_fiber_tsan_destroy(strand_fiber_t *f);
+void strand_fiber_tsan_bind_current(strand_fiber_t *f);
+
 #endif /* STRAND_FIBER_H */

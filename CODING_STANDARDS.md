@@ -326,6 +326,12 @@ Every assembly function must carry complete DWARF CFI annotations.
 Missing or incorrect annotations produce misleading backtraces and broken
 unwind through signal handlers and crash reporters. This is not optional.
 
+When a function saves registers on the current stack frame, include matching
+`.cfi_offset` / `.cfi_def_cfa_offset` directives. For context-switch stubs
+that save registers to explicit context structs (not CFA-relative stack
+slots), emit valid `.cfi_startproc` / `.cfi_endproc` unwind metadata and use
+stack-relative directives only where they are semantically correct.
+
 ```asm
 .globl strand_context_switch
 .type  strand_context_switch, @function
@@ -952,8 +958,9 @@ Before every commit:
       `_r` variants (strtok_r, asctime_r, ctime_r, rand_r)
 - [ ] No blocking fd passed to `strand_fiber_wait_readable` or
       `strand_fiber_wait_writable` — debug assert for O_NONBLOCK in place
-- [ ] Assembly stubs have complete CFI annotations (`.cfi_startproc`,
-      `.cfi_offset` for each saved register, `.cfi_endproc`)
+- [ ] Assembly stubs emit valid CFI/FDE unwind info (`.cfi_startproc`,
+	  `.cfi_endproc`, and stack-relative `.cfi_offset` directives where
+	  applicable)
 - [ ] `_Static_assert` present for any struct whose layout the assembly
       stubs depend on
 - [ ] ASan fiber switch hooks present at every context switch
