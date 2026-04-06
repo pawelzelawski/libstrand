@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include "../include/strand.h"
+#include "strand_context.h"
 
 /*
  * STRAND_DEBUG_ASSERT — active in debug builds (-DSTRAND_DEBUG).
@@ -26,20 +27,13 @@
 #endif
 
 /*
- * STRAND_CONTEXT_SIZE — size of the register save area in strand_context_t.
- * Placeholder: replaced with sizeof(strand_context_t) in Phase 2 (Task 2.1).
- * The assembly stubs in src/arch/ depend on this value — must be kept in sync.
- * See CODING_STANDARDS.md §1.3.
+ * Compile-time layout assertions. See CODING_STANDARDS.md §1.3.
+ * strand_context_t check is live — Task 2.1 complete.
+ * strand_fiber_t check is a placeholder until Phase 3, Task 3.1.
  */
-#define STRAND_CONTEXT_SIZE 0
-
-/*
- * _Static_assert placeholders — replaced with real checks as struct
- * definitions land in Phase 2 onward. See CODING_STANDARDS.md §1.3.
- */
-_Static_assert(1, "placeholder — replaced in Phase 2: "
-                  "sizeof(strand_context_t) == STRAND_CONTEXT_SIZE");
-_Static_assert(1, "placeholder — replaced in Phase 2: "
+_Static_assert(sizeof(strand_context_t) == STRAND_CONTEXT_SIZE,
+               "strand_context_t size changed — update assembly stubs");
+_Static_assert(1, "placeholder — replaced in Phase 3 (Task 3.1): "
                   "offsetof(strand_fiber_t, context) == 0");
 _Static_assert(
     1,

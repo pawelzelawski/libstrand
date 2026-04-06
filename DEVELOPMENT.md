@@ -3,8 +3,8 @@
 ## Status Overview
 
 **Last Updated**: 2026-04-06
-**Current Phase**: Phase 1 — Foundation (complete)
-**Next Task**: Phase 2 — Task 2.1
+**Current Phase**: Phase 2 — Layer 1: Execution Contexts
+**Next Task**: Phase 2 — Task 2.2
 
 ### Phase Summary
 
@@ -176,7 +176,7 @@ switch in isolation.
 
 ### Tasks
 
-**2.1 — strand_context_t and strand_context.h**
+**2.1 — strand_context_t and strand_context.h** ✓ DONE
 - Define `strand_context_t` in `src/strand_context.h`: register save area
   sized to hold all callee-saved registers for the current architecture,
   plus the stack pointer
