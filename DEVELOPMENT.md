@@ -345,7 +345,7 @@ the poller is stubbed out for scheduler-only testing.
 
 ### Tasks
 
-**3.1 — strand_fiber_t descriptor**
+**3.1 — strand_fiber_t descriptor** ✓ DONE
 - Define `strand_fiber_t` in `src/strand_internal.h`:
   - `strand_context_t context` — must be first field (offset 0)
   - `fiber_state_t state` — `_Atomic fiber_state_t`

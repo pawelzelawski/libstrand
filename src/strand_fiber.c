@@ -5,6 +5,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -160,4 +162,74 @@ strand_fiber_tsan_bind_current(strand_fiber_t *f)
 
 	f->tsan_fiber = NULL;
 	STRAND_TSAN_BIND_CURRENT(f);
+}
+
+/*
+ * fiber_alloc — allocate a fiber descriptor from the dead pool or malloc.
+ *
+ * Dead-pool path: pops the head entry from *dead_pool, increments the
+ * generation counter (ABA protection), zeros the entire descriptor, then
+ * writes the new generation back.  Outstanding handles with the old
+ * generation will correctly return STRAND_HANDLE_STALE.
+ *
+ * Fresh-alloc path: malloc() + memset to zero + generation = 1.
+ *
+ * In both cases the caller must initialise context, stack, and state
+ * before making the fiber runnable.
+ *
+ * Returns NULL on malloc failure; the dead-pool path never fails.
+ * See ARCHITECTURE.md §4.6.
+ */
+strand_fiber_t *
+fiber_alloc(strand_fiber_t **dead_pool)
+{
+	strand_fiber_t *f;
+
+	if (dead_pool != NULL && *dead_pool != NULL) {
+		uint64_t gen;
+
+		f = *dead_pool;
+		*dead_pool = f->next;
+		/*
+		 * Increment generation before zeroing: any handles with the
+		 * old value will return STALE.  Store on the stack so the
+		 * memset can safely clear the whole descriptor.
+		 */
+		gen = f->generation + 1;
+		memset(f, 0, sizeof(*f));
+		f->generation = gen;
+		return (f);
+	}
+
+	f = malloc(sizeof(strand_fiber_t));
+	if (f == NULL)
+		return (NULL);
+	memset(f, 0, sizeof(*f));
+	f->generation = 1;
+	return (f);
+}
+
+/*
+ * fiber_free — return a finished fiber descriptor to the dead pool.
+ *
+ * The fiber stack must be freed via stack_free() before this call.
+ * The next pointer is repurposed as the dead-pool intrusive link.
+ * Generation is NOT incremented here; that happens at the next
+ * fiber_alloc when the descriptor is taken from the pool.
+ *
+ * If dead_pool is NULL the descriptor is freed immediately via free().
+ * See ARCHITECTURE.md §4.6.
+ */
+void
+fiber_free(strand_fiber_t **dead_pool, strand_fiber_t *f)
+{
+	if (f == NULL)
+		return;
+
+	if (dead_pool != NULL) {
+		f->next = *dead_pool;
+		*dead_pool = f;
+	} else {
+		free(f);
+	}
 }

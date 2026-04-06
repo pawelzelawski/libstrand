@@ -10,6 +10,7 @@
  */
 
 #include <assert.h>
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -105,28 +106,61 @@
 #endif
 
 /*
- * strand_fiber_t — Phase 2 fields (Task 2.4).
+ * fiber_state_t — fiber execution state machine.
+ * See ARCHITECTURE.md §4.5 for all legal transitions and ownership rules.
  *
- * Full scheduler descriptor added in Phase 3 (Task 3.1) by appending
- * fields after these. Offsets of these fields never change.
+ * FIBER_CANCELLATION_PENDING is not a discrete state: it is a per-fiber
+ * flag that coexists with FIBER_RUNNABLE or FIBER_RUNNING.  It is stored
+ * as a separate field and not listed here.
+ */
+typedef enum {
+	FIBER_NEW = 0,
+	FIBER_RUNNABLE = 1,
+	FIBER_RUNNING = 2,
+	FIBER_PARKED_IO_READ = 3,
+	FIBER_PARKED_IO_WRITE = 4,
+	FIBER_PARKED_TIMER = 5,
+	FIBER_PARKED_OFFLOAD = 6,
+	FIBER_PARKED_CHANNEL = 7,
+	FIBER_FINISHED = 8,
+} fiber_state_t;
+
+/*
+ * strand_fiber_t — complete fiber descriptor (Phase 2 + Phase 3 Task 3.1).
  *
- * The context field MUST remain first: assembly stubs in src/arch/
- * assume offset 0. The _Static_assert below enforces this.
+ * Layout invariants:
+ *   - context MUST be at offset 0: assembly stubs in src/arch/ rely on it.
+ *   - The _Static_assert below enforces this at compile time.
  *
  * fp_ctrl encoding:
- *   x86_64 — low 32 bits hold MXCSR; upper 32 bits unused.
+ *   x86_64  — low 32 bits hold MXCSR; upper 32 bits unused.
  *   AArch64 — low 32 bits hold FPCR, high 32 bits hold FPSR.
  *
- * tsan_fiber is always present as void* (8 bytes) regardless of whether
- * TSan is active — avoids ABI differences between TSan and non-TSan builds.
- * It is NULL in non-TSan builds and populated by STRAND_TSAN_CREATE in
- * Task 2.7.
+ * tsan_fiber is always present as void* regardless of whether TSan is
+ * active — avoids ABI differences between TSan and non-TSan builds.
+ * It is NULL in non-TSan builds.
+ *
+ * Dead-pool recycling: when a descriptor is reused from the dead pool,
+ * generation is incremented and the descriptor is zeroed (except for the
+ * new generation value) before being handed to the caller.  The next
+ * field is repurposed as the dead-pool link while the fiber is in the
+ * pool; it is overwritten during normal use.
  */
 typedef struct strand_fiber {
-	strand_context_t context; /* MUST be first — offset 0 */
-	uint64_t fp_ctrl;         /* MXCSR (x86_64) or FPCR|FPSR (AArch64) */
-	void *stack_base;         /* usable stack base (above guard page) */
-	size_t stack_size;        /* usable stack size (excludes guard page) */
+	strand_context_t context;    /* MUST be first — offset 0 */
+	uint64_t fp_ctrl;            /* MXCSR (x86_64) or FPCR|FPSR */
+	_Atomic fiber_state_t state; /* see fiber_state_t above */
+	uint64_t
+	    generation;   /* ABA-protection counter; see ARCHITECTURE.md §4.6 */
+	void *stack_base; /* usable stack base (above guard page) */
+	size_t stack_size; /* usable stack size (excludes guard page) */
+	void
+	    *local_ptr; /* fiber-local storage slot; see ARCHITECTURE.md §4.7 */
+	strand_destructor_t
+	    local_dtor; /* destructor for local_ptr; called on FIBER_FINISHED */
+	strand_scope_t *scope; /* owning scope; NULL if detached */
+	struct strand_fiber
+	    *next; /* intrusive link: run queue, scope lists, dead pool */
 	void *tsan_fiber; /* __tsan_create_fiber handle; NULL if no TSan */
 	unsigned long
 	    valgrind_stack_id; /* VALGRIND_STACK_REGISTER id; 0 if unused */
@@ -139,8 +173,7 @@ _Static_assert(sizeof(strand_context_t) == STRAND_CONTEXT_SIZE,
                "strand_context_t size changed — update assembly stubs");
 _Static_assert(offsetof(strand_fiber_t, context) == 0,
                "context must be first field — assembly stubs assume offset 0");
-_Static_assert(
-    1,
-    "placeholder — replaced in Phase 3: sizeof(strand_fiber_handle_t) == 16");
+_Static_assert(sizeof(strand_fiber_handle_t) == 16,
+               "strand_fiber_handle_t size changed — ptr (8) + generation (8)");
 
 #endif /* STRAND_INTERNAL_H */

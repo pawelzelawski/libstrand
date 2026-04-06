@@ -48,6 +48,18 @@ typedef void (*strand_fiber_fn_t)(void *arg);
  */
 typedef void (*strand_destructor_t)(void *ptr);
 
+/*
+ * Return codes.
+ * STRAND_OK             — success; no error.
+ * STRAND_HANDLE_INVALID — handle.ptr is NULL; not a valid handle.
+ * STRAND_HANDLE_STALE   — handle ptr exists but generation differs;
+ *                         fiber has been recycled since handle was issued.
+ * See ARCHITECTURE.md §4.6 for ABA-protection semantics.
+ */
+#define STRAND_OK 0
+#define STRAND_HANDLE_INVALID (-1)
+#define STRAND_HANDLE_STALE (-2)
+
 /* Function declarations added in later phases. */
 
 #endif /* STRAND_H */
