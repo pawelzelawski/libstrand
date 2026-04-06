@@ -45,7 +45,7 @@ fp_ctrl_set(uint64_t ctrl)
 	__asm__ volatile("ldmxcsr %0" : : "m"(mxcsr));
 }
 
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 
 static inline uint64_t
 fp_ctrl_get(void)
@@ -166,7 +166,7 @@ strand_context_init(strand_context_t *ctx, void *stack_top,
 	ctx->r15 = 0;
 }
 
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 
 void
 strand_context_init(strand_context_t *ctx, void *stack_top,

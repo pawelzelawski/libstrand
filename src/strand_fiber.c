@@ -56,15 +56,24 @@ stack_alloc(size_t stack_size, unsigned long *vg_id_out)
 	size_t pgsz = page_size();
 	size_t total;
 	void *base;
+	int mmap_flags;
 
 	if (vg_id_out == NULL || pgsz == 0 || stack_size == 0)
 		return NULL;
 	if (SIZE_MAX - pgsz < stack_size)
 		return NULL;
 	total = stack_size + pgsz;
+	mmap_flags = MAP_ANONYMOUS | MAP_PRIVATE;
+#ifdef MAP_STACK
+	/*
+	 * Some kernels (notably OpenBSD arm64) enforce additional checks for
+	 * SP-backed mappings. Marking the region as MAP_STACK avoids faults
+	 * when this mapping is used as an execution stack.
+	 */
+	mmap_flags |= MAP_STACK;
+#endif
 
-	base = mmap(NULL, total, PROT_READ | PROT_WRITE,
-	            MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	base = mmap(NULL, total, PROT_READ | PROT_WRITE, mmap_flags, -1, 0);
 	if (base == MAP_FAILED)
 		return NULL;
 

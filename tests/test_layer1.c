@@ -304,7 +304,7 @@ test_context_mxcsr_preserved(void)
 	return (after == before) ? 0 : 1;
 }
 
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 
 static uint64_t
 read_fpcr(void)
@@ -391,7 +391,7 @@ fiber_05(void *arg)
 
 #if defined(__x86_64__) || defined(__amd64__)
 	__asm__ volatile("movq %%rsp, %0" : "=r"(sp));
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 	__asm__ volatile("mov %0, sp" : "=r"(sp));
 #else
 	sp = 0;
@@ -631,7 +631,7 @@ run_layer1_tests(void)
 	RUN("context_errno_preserved", test_context_errno_preserved);
 #if defined(__x86_64__) || defined(__amd64__)
 	RUN("context_mxcsr_preserved", test_context_mxcsr_preserved);
-#elif defined(__aarch64__)
+#elif defined(__aarch64__) || defined(__arm64__)
 	RUN("context_fpcr_preserved", test_context_fpcr_preserved);
 #endif
 	RUN("context_stack_alignment", test_context_stack_alignment);
