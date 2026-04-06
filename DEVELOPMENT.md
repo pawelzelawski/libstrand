@@ -2,15 +2,15 @@
 
 ## Status Overview
 
-**Last Updated**: 2026-03-28
-**Current Phase**: Phase 1 — Foundation (not started)
-**Next Task**: Phase 1 tasks
+**Last Updated**: 2026-04-06
+**Current Phase**: Phase 1 — Foundation (in progress)
+**Next Task**: Task 1.2 — Test harness
 
 ### Phase Summary
 
 | Phase | Name | Status | Tests | Notes |
 |---|---|---|---|---|
-| 1 | Foundation | NOT STARTED | — | Build system, test harness, skeleton |
+| 1 | Foundation | IN PROGRESS | — | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | NOT STARTED | — | Assembly, context switch, guard pages, sanitizer hooks |
 | 3 | Layer 2: Fiber Scheduler | NOT STARTED | — | Scheduler modes, fiber state machine, stack cache |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
@@ -22,14 +22,14 @@
 
 | ID | Milestone | Status |
 |---|---|---|
-| M1 | Build system works on Linux and OpenBSD, both architectures | NOT STARTED |
+| M1 | Build system works on Linux and OpenBSD, both architectures | IN PROGRESS (Linux x86_64 ✓, OpenBSD amd64 ✓; ARM64 via CI) |
 | M2 | All unit tests pass on Linux | NOT STARTED |
 | M3 | All unit tests pass on OpenBSD | NOT STARTED |
 | M4 | Valgrind clean on Linux | NOT STARTED |
 | M5 | ASan/UBSan clean on both platforms | NOT STARTED |
 | M6 | TSan clean on Linux (Clang only) | NOT STARTED |
-| M7 | clang-format clean | NOT STARTED |
-| M8 | clang-tidy zero warnings | NOT STARTED |
+| M7 | clang-format clean | DONE |
+| M8 | clang-tidy zero warnings | DONE (stubs) |
 | M9 | Context switch preserves all registers — verified by test | NOT STARTED |
 | M10 | scheduler_advance is nonblocking — verified by test | NOT STARTED |
 | M11 | scheduler_stop interrupts indefinitely blocked worker — verified by test | NOT STARTED |
@@ -96,7 +96,7 @@ are in place. Code compiles clean with zero warnings.
 
 ### Tasks
 
-**1.1 — Repository skeleton**
+**1.1 — Repository skeleton** ✓ DONE
 - Create directory structure per REPOSITORY_STRUCTURE.md §1:
   `src/`, `src/arch/x86_64/`, `src/arch/arm64/`, `include/`, `tests/`,
   `bench/`, `tools/`
@@ -133,14 +133,14 @@ are in place. Code compiles clean with zero warnings.
 
 ### Phase 1 Completion Criteria
 
-- [ ] `make dev` succeeds with zero warnings on Linux x86_64
-- [ ] `make dev` succeeds with zero warnings on Linux ARM64
-- [ ] `make dev` succeeds with zero warnings on OpenBSD amd64
-- [ ] `make dev` succeeds with zero warnings on OpenBSD arm64
+- [x] `make dev` succeeds with zero warnings on Linux x86_64
+- [ ] `make dev` succeeds with zero warnings on Linux ARM64 (CI)
+- [x] `make dev` succeeds with zero warnings on OpenBSD amd64
+- [ ] `make dev` succeeds with zero warnings on OpenBSD arm64 (CI)
 - [ ] `make test` runs and prints `0/0 tests passed` on all platforms
 - [ ] `make valgrind` exits clean on Linux
-- [ ] `make lint` produces zero warnings on all C stubs
-- [ ] Quality milestone M1 confirmed
+- [x] `make lint` produces zero warnings on all C stubs
+- [ ] Quality milestone M1 confirmed (ARM64 pending)
 
 ---
 

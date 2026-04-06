@@ -1,0 +1,31 @@
+# .clang-tidy — libstrand
+#
+# Static analysis configuration. See TECH_STACK.md §7.4.
+# Run via: make lint
+#
+# Enabled check groups:
+#   clang-diagnostic-*  — compiler warnings surfaced as tidy diagnostics
+#   clang-analyzer-*    — Clang static analyser (null deref, memory, etc.)
+#   bugprone-*          — common bug-prone patterns
+#   cert-c-*            — CERT C coding standard subset
+#   misc-*              — miscellaneous checks
+#
+# Disabled checks are called out individually with a reason.
+
+Checks: >
+  clang-diagnostic-*,
+  clang-analyzer-*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  cert-c-*,
+  misc-*,
+  -misc-unused-parameters
+
+# Treat tidy warnings as errors at quality gates (make lint).
+# Set to '' during development to see all findings without failing.
+WarningsAsErrors: ''
+
+# Only report findings in project headers, not system headers.
+HeaderFilterRegex: '(include|src)/.*\.h$'
+
+CheckOptions: []

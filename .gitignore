@@ -1,0 +1,16 @@
+# Build output
+build/
+
+# Valgrind core dumps
+vgcore.*
+
+# clang compilation database
+compile_commands.json
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*~
+*.orig
+.DS_Store

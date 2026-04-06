@@ -1,0 +1,56 @@
+---
+# .clang-format — libstrand
+#
+# KNF (Kernel Normal Form) based style, matching OpenBSD coding conventions.
+# See CODING_STANDARDS.md §1.1.
+#
+# Key rules encoded here:
+#   - Tabs for indentation, 8-character width
+#   - Return type on its own line for function definitions
+#   - Opening brace on same line for control structures
+#   - Opening brace on its own line for function definitions
+#   - 80-column limit
+#   - No spaces inside parentheses
+#   - Spaces around binary operators
+
+BasedOnStyle: LLVM
+
+# Indentation: tabs, 8-wide
+UseTab:              ForIndentation
+TabWidth:            8
+IndentWidth:         8
+ContinuationIndentWidth: 4
+
+# Line length
+ColumnLimit: 80
+
+# Return type on its own line for function definitions (KNF)
+AlwaysBreakAfterReturnType: TopLevelDefinitions
+
+# Braces: function definitions get brace on new line; control structures same line
+BreakBeforeBraces: Linux
+
+# No short functions/blocks collapsed to one line
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+
+# Spaces
+SpaceBeforeParens:    ControlStatements
+SpacesInParens:       Never
+SpaceAfterCStyleCast: false
+SpaceInEmptyParentheses: false
+
+# Pointer alignment: int *p (KNF style)
+PointerAlignment: Right
+
+# Align consecutive assignments and declarations
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+
+# Do not sort includes — include order is specified in CODING_STANDARDS.md §1.2
+SortIncludes: Never
+
+# Trailing commas
+InsertTrailingCommas: None
