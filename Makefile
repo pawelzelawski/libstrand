@@ -34,7 +34,8 @@ CFLAGS_COMMON = -std=c11 -Wall -Wextra -Wpedantic			\
                 -Wno-unused-parameter					\
                 -fno-omit-frame-pointer					\
                 -D_POSIX_C_SOURCE=200809L				\
-                -D_XOPEN_SOURCE=700
+                -D_XOPEN_SOURCE=700				\
+                $(HAVE_VALGRIND)
 
 # Platform flags — STRAND_LINUX or STRAND_OPENBSD
 CFLAGS_OS != if [ "$(OS)" = "Linux" ]; then echo "-DSTRAND_LINUX"; \
@@ -43,6 +44,15 @@ CFLAGS_OS != if [ "$(OS)" = "Linux" ]; then echo "-DSTRAND_LINUX"; \
 
 # ASan/UBSan — Linux only; OpenBSD clang does not support -fsanitize=address
 SANITIZERS != if [ "$(OS)" = "Linux" ]; then echo "-fsanitize=address,undefined"; else echo ""; fi
+
+# Valgrind client request macros — present when valgrind-devel (Fedora/RHEL),
+# valgrind-dev (Debian/Ubuntu), or valgrind (OpenBSD ports) is installed.
+# The macros are no-ops in non-Valgrind runs; compiled in whenever the header
+# is present so Valgrind can track fiber stack boundaries.
+# See TECH_STACK.md §7.1.
+HAVE_VALGRIND != if $(CC) -include valgrind/valgrind.h -x c /dev/null -c \
+                    -o /dev/null 2>/dev/null; \
+                 then echo "-DHAVE_VALGRIND"; else echo ""; fi
 
 CFLAGS_DEV     = $(CFLAGS_COMMON) $(CFLAGS_OS)				\
                  -O1 -g -Werror					\

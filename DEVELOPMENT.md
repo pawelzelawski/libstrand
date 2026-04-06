@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-06
 **Current Phase**: Phase 2 — Layer 1: Execution Contexts
-**Next Task**: Phase 2 — Task 2.6
+**Next Task**: Phase 2 — Task 2.7
 
 ### Phase Summary
 
@@ -241,7 +241,7 @@ switch in isolation.
   - Correct alignment is critical — the first instruction of `entry` must
     observe a properly aligned stack
 
-**2.6 — Stack allocation with guard pages**
+**2.6 — Stack allocation with guard pages** ✓ DONE
 - Implement `stack_alloc(size_t stack_size)` in `src/strand_fiber.c`:
   - `mmap(NULL, stack_size + PAGE_SIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0)`
   - Check for `MAP_FAILED`

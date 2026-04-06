@@ -67,6 +67,27 @@
 #endif
 
 /*
+ * Valgrind fiber stack registration.
+ * STRAND_VG_STACK_REGISTER must be called after every mmap+mprotect to
+ * register the usable portion of the stack with Valgrind, so that Valgrind
+ * does not report fiber stack accesses as errors.  The registration returns
+ * an opaque ID that must be passed to STRAND_VG_STACK_DEREGISTER at free.
+ * These macros are no-ops when -DHAVE_VALGRIND is not set (OpenBSD builds,
+ * or Linux builds without valgrind-devel) and are also no-ops at runtime
+ * when the process is not running under Valgrind.
+ * See TECH_STACK.md §7.1 and ARCHITECTURE.md §3.7.
+ */
+#ifdef HAVE_VALGRIND
+#include <valgrind/valgrind.h>
+#define STRAND_VG_STACK_REGISTER(base, top)                                    \
+	((unsigned long)VALGRIND_STACK_REGISTER((base), (top)))
+#define STRAND_VG_STACK_DEREGISTER(id) VALGRIND_STACK_DEREGISTER((id))
+#else
+#define STRAND_VG_STACK_REGISTER(base, top) (0UL)
+#define STRAND_VG_STACK_DEREGISTER(id) ((void)0)
+#endif
+
+/*
  * strand_fiber_t — Phase 2 fields (Task 2.4).
  *
  * Full scheduler descriptor added in Phase 3 (Task 3.1) by appending
@@ -90,6 +111,8 @@ typedef struct strand_fiber {
 	void *stack_base;         /* usable stack base (above guard page) */
 	size_t stack_size;        /* usable stack size (excludes guard page) */
 	void *tsan_fiber; /* __tsan_create_fiber handle; NULL if no TSan */
+	unsigned long
+	    valgrind_stack_id; /* VALGRIND_STACK_REGISTER id; 0 if unused */
 } strand_fiber_t;
 
 /*
