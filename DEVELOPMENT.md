@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-06
 **Current Phase**: Phase 2 — Layer 1: Execution Contexts
-**Next Task**: Phase 2 — Task 2.3
+**Next Task**: Phase 2 — Task 2.4
 
 ### Phase Summary
 
@@ -203,7 +203,7 @@ switch in isolation.
 - No XMM saves — correct under SysV AMD64 ABI. Add a comment confirming
   this explicitly per ARCHITECTURE.md §3.2
 
-**2.3 — AArch64 assembly: strand_context.S**
+**2.3 — AArch64 assembly: strand_context.S** ✓ DONE
 - Implement `strand_context_swap` in `src/arch/arm64/strand_context.S`:
   - Save callee-saved GPRs: x19–x28, x29 (fp), x30 (lr), sp
   - Save callee-saved FP/SIMD lower 64-bit halves: d8–d15
