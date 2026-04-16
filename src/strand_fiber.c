@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -165,6 +166,50 @@ strand_fiber_tsan_bind_current(strand_fiber_t *f)
 
 	f->tsan_fiber = NULL;
 	STRAND_TSAN_BIND_CURRENT(f);
+}
+
+/*
+ * strand_fiber_entry_start -- internal entry wrapper for spawned fibers.
+ *
+ * Runs the user entry function, then performs scheduler handoff so a normal
+ * return from user code is treated as fiber completion instead of trapping in
+ * the architecture trampoline guard instruction.
+ */
+static void
+strand_fiber_entry_start(void *varg)
+{
+	strand_fiber_t *f = (strand_fiber_t *)varg;
+	strand_scheduler_t *sched;
+
+	STRAND_DEBUG_ASSERT(f != NULL);
+	sched = f->home_sched;
+	STRAND_DEBUG_ASSERT(sched != NULL);
+
+	if (f->entry_fn != NULL)
+		f->entry_fn(f->entry_arg);
+
+	/*
+	 * ATOMIC: state transition to FINISHED is seq_cst by project default
+	 * ordering for shared atomics (CODING_STANDARDS.md §4.1).
+	 */
+	atomic_store(&f->state, FIBER_FINISHED);
+
+	/*
+	 * Completion handoff mirrors test helper t35_switch_back: defer stack and
+	 * fiber-local destructor processing to scheduler Step 5 after switch-back.
+	 */
+	sched->pending_free_base = (char *)f->stack_base - page_size();
+	sched->pending_free_size = f->stack_size;
+	sched->pending_free_vg_id = f->valgrind_stack_id;
+	sched->pending_free_local_ptr = f->local_ptr;
+	sched->pending_free_local_dtor = f->local_dtor;
+
+	fiber_free(&sched->dead_pool, f);
+	strand_context_switch(f, &sched->scheduler_ctx);
+
+	STRAND_DEBUG_ASSERT(0);
+	for (;;)
+		;
 }
 
 /*
@@ -341,15 +386,17 @@ strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 	f->stack_base = (char *)base + page_size();
 	f->stack_size = sz;
 	f->valgrind_stack_id = vg_id;
+	f->entry_fn = fn;
+	f->entry_arg = arg;
 
 	stack_top = (char *)f->stack_base + sz;
-	strand_context_init(&f->context, stack_top, fn, arg);
+	strand_context_init(&f->context, stack_top, strand_fiber_entry_start, f);
 
 	strand_fiber_tsan_init(f);
 
 	f->home_sched = sched;
-	atomic_store_explicit(&f->state, FIBER_NEW, memory_order_relaxed);
-	atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
+	atomic_store(&f->state, FIBER_NEW);
+	atomic_store(&f->state, FIBER_RUNNABLE);
 
 	run_queue_push(sched, f);
 
@@ -482,13 +529,19 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 	f = handle.ptr;
 	sched = f->home_sched;
 
+	if (sched == NULL)
+		return (STRAND_ERR_WRONGCTX);
+	if (!pthread_equal(pthread_self(), sched->owner_thread))
+		return (STRAND_ERR_WRONGCTX);
+
 	/*
 	 * Load the state once.  In Phase 3 this is always same-worker so no
 	 * concurrent state change is possible between the load and the action.
 	 * In Phase 5 the cross-worker path will use an inject operation
 	 * instead of directly manipulating state.
 	 */
-	state = atomic_load_explicit(&f->state, memory_order_relaxed);
+	/* ATOMIC: seq_cst default for shared state loads (CODING_STANDARDS.md §4.1). */
+	state = atomic_load(&f->state);
 
 	switch (state) {
 	case FIBER_PARKED_TIMER:
@@ -498,10 +551,8 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 		 * STRAND_CANCELLED.  Transition to RUNNABLE and enqueue.
 		 */
 		timer_heap_remove(sched, f);
-		atomic_store_explicit(&f->cancel_pending, 1,
-		                      memory_order_relaxed);
-		atomic_store_explicit(&f->state, FIBER_RUNNABLE,
-		                      memory_order_relaxed);
+		atomic_store(&f->cancel_pending, 1);
+		atomic_store(&f->state, FIBER_RUNNABLE);
 		run_queue_push(sched, f);
 		break;
 
@@ -512,8 +563,7 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 		 * in the run queue (RUNNABLE) or continues executing (RUNNING)
 		 * and must check cancel_pending at its next park point.
 		 */
-		atomic_store_explicit(&f->cancel_pending, 1,
-		                      memory_order_relaxed);
+		atomic_store(&f->cancel_pending, 1);
 		break;
 
 	case FIBER_FINISHED:

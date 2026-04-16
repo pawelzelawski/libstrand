@@ -10,6 +10,7 @@
  */
 
 #include <assert.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -158,6 +159,8 @@ typedef struct strand_fiber {
 	strand_context_t context;    /* MUST be first — offset 0 */
 	uint64_t fp_ctrl;            /* MXCSR (x86_64) or FPCR|FPSR */
 	_Atomic fiber_state_t state; /* see fiber_state_t above */
+	strand_fiber_fn_t entry_fn;  /* user entry function */
+	void *entry_arg;             /* user entry argument */
 	uint64_t
 	    generation;   /* ABA-protection counter; see ARCHITECTURE.md §4.6 */
 	void *stack_base; /* usable stack base (above guard page) */
@@ -353,6 +356,10 @@ typedef struct strand_scheduler {
 	/* Dead pool — reusable strand_fiber_t descriptors linked via next.
 	 * fiber_alloc pops from here when available; fiber_free pushes here. */
 	strand_fiber_t *dead_pool;
+
+	/* Owner thread for same-worker operations (Phase 3).
+	 * Set at create and refreshed by scheduler entry points. */
+	pthread_t owner_thread;
 } strand_scheduler_t;
 
 #endif /* STRAND_INTERNAL_H */

@@ -104,9 +104,10 @@ strand_context_swap:
  * address making rsp%16 == 8 on entry to the fiber function, satisfying
  * the SysV AMD64 ABI requirement.
  *
- * The `ud2` after the call is a guard: the fiber entry function must not
- * return.  If it does, ud2 raises SIGILL immediately rather than
- * continuing with a corrupted or empty stack.
+ * The `ud2` after the call is a guard: the trampoline target must not
+ * return. In normal operation this target is the internal
+ * strand_fiber_entry_start wrapper, which may call user code and then
+ * switches back to the scheduler without returning here.
  */
 	.text
 	.globl	strand_fiber_trampoline

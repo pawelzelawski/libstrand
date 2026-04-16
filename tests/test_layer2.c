@@ -283,9 +283,7 @@ test_wakeup_fd_drained_as_control(void)
  *             budget limiting, shutdown error.
  *
  * Design note on fiber lifecycle in Phase 3 tests:
- * The scheduler has no automatic fiber-completion handling in Phase 3.
- * Fiber entry functions MUST NOT return (the trampoline has a ud2 guard).
- * Each test fiber calls t35_switch_back(), which pushes the descriptor
+ * Most test fibers still use t35_switch_back(), which pushes the descriptor
  * to the dead pool BEFORE the context switch, so that
  * strand_scheduler_destroy() frees the malloc'd descriptor cleanly.
  * The mmap'd stacks are not explicitly unmapped here; Valgrind's heap
@@ -465,6 +463,68 @@ test_fiber_runs(void)
 	    atomic_load_explicit(&child_arg.ran, memory_order_acquire) ? 0 : 1;
 	strand_scheduler_destroy(sched);
 	return (result);
+}
+
+/* =========================================================================
+ * test_spawned_fiber_return_safe
+ *
+ * Verify that a fiber spawned through strand_fiber_spawn may return normally
+ * without trapping. The spawned child sets a flag and returns; the internal
+ * completion wrapper must switch back to the scheduler cleanly.
+ * =========================================================================
+ */
+
+struct t35_return_child_arg {
+	_Atomic int ran;
+};
+
+static void
+t35_return_child_fn(void *varg)
+{
+	struct t35_return_child_arg *a = varg;
+	atomic_store_explicit(&a->ran, 1, memory_order_release);
+}
+
+struct t35_return_root_arg {
+	strand_scheduler_t *sched;
+	struct t35_return_child_arg *child;
+};
+
+static void
+t35_return_root_fn(void *varg)
+{
+	struct t35_return_root_arg *a = varg;
+
+	strand_fiber_spawn(a->sched, t35_return_child_fn, a->child, 0, NULL);
+	t35_switch_back(a->sched);
+}
+
+static int
+test_spawned_fiber_return_safe(void)
+{
+	strand_scheduler_t *sched;
+	struct t35_return_child_arg child_arg;
+	struct t35_return_root_arg root_arg;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	atomic_init(&child_arg.ran, 0);
+	root_arg.sched = sched;
+	root_arg.child = &child_arg;
+
+	if (t35_push_fiber(sched, t35_return_root_fn, &root_arg) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	strand_scheduler_advance(sched, NULL);
+	strand_scheduler_destroy(sched);
+
+	return (atomic_load_explicit(&child_arg.ran, memory_order_acquire) == 1
+	            ? 0
+	            : 1);
 }
 
 /* =========================================================================
@@ -1662,6 +1722,7 @@ run_layer2_tests(void)
 	    test_wakeup_fd_drained_as_control);
 	RUN("test_advance_nonblocking", test_advance_nonblocking);
 	RUN("test_fiber_runs", test_fiber_runs);
+	RUN("test_spawned_fiber_return_safe", test_spawned_fiber_return_safe);
 	RUN("test_fifo_order", test_fifo_order);
 	RUN("test_budget_limiting", test_budget_limiting);
 	RUN("test_spawn_returns_error_after_stop",

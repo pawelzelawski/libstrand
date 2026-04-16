@@ -161,9 +161,10 @@ strand_context_swap:
  * AAPCS64 stack-alignment requirement is satisfied on entry to the fiber
  * function.
  *
- * The `brk #0` after blr is a guard: the fiber entry function must not
- * return.  If it does, brk #0 raises SIGTRAP immediately rather than
- * continuing with a stale link register.
+ * The `brk #0` after blr is a guard: the trampoline target must not
+ * return. In normal operation this target is the internal
+ * strand_fiber_entry_start wrapper, which may call user code and then
+ * switches back to the scheduler without returning here.
  */
 	.text
 	.globl	strand_fiber_trampoline

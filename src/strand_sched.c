@@ -26,6 +26,7 @@
 
 #include <limits.h>
 #include <poll.h>
+#include <pthread.h>
 
 #include "strand_context.h"
 #include "strand_fiber.h"
@@ -201,6 +202,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	sched->poller = NULL;
 	sched->inject_queue._placeholder = 0;
 	atomic_init(&sched->stop_flag, 0);
+	sched->owner_thread = pthread_self();
 
 	/*
 	 * Bind TSan's current-thread fiber to scheduler_ctx so that context
@@ -481,6 +483,9 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	size_t ran;
 	strand_fiber_t *f;
 
+	/* Phase 3 same-worker bookkeeping: current caller owns scheduler access. */
+	sched->owner_thread = pthread_self();
+
 	/*
 	 * Step 1: drain inject queue.
 	 * Phase 3 stub -- the inject queue carries no real items yet.
@@ -713,6 +718,9 @@ strand_scheduler_run(strand_scheduler_t *sched)
 	 * deferred to Phase 5 (Task 5.3) where the worker-thread lifecycle
 	 * is fully defined.
 	 */
+
+	/* Worker mode establishes scheduler ownership for same-worker APIs. */
+	sched->owner_thread = pthread_self();
 
 	for (;;) {
 		uint64_t next_ns;

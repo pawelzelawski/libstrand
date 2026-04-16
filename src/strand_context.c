@@ -124,9 +124,10 @@ strand_context_switch(strand_fiber_t *from, strand_fiber_t *to)
 
 /*
  * strand_fiber_trampoline — defined in the arch-specific strand_context.S.
- * First landing point for a newly fabricated context. Sets up the
- * ABI argument register from a callee-saved register, then calls the
- * fiber entry function.  Not part of the public API.
+ * First landing point for a newly fabricated context. Sets up the ABI
+ * argument register from a callee-saved register, then calls the context
+ * entry target (the internal spawn wrapper in production paths).
+ * Not part of the public API.
  */
 void strand_fiber_trampoline(void);
 

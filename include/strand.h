@@ -61,8 +61,7 @@ typedef void (*strand_destructor_t)(void *ptr);
 #define STRAND_HANDLE_INVALID (-1)
 #define STRAND_HANDLE_STALE (-2)
 #define STRAND_ERR_SHUTDOWN (-3) /* scheduler stopped; spawn rejected */
-#define STRAND_ERR_WRONGCTX (-4) /* called from wrong context (host vs fiber)  \
-	                          */
+#define STRAND_ERR_WRONGCTX (-4) /* called from wrong context / wrong worker */
 #define STRAND_ERR_NOMEM (-5)    /* allocation failure */
 #define STRAND_CANCELLED (-6)    /* operation cancelled by strand_fiber_cancel */
 /*
@@ -251,7 +250,8 @@ int strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns);
  *   FIBER_PARKED_IO_READ/WRITE, FIBER_PARKED_OFFLOAD, FIBER_PARKED_CHANNEL:
  *     placeholder in Phase 3 — handled in Phases 4 and 5.
  *
- * Phase 3: same-worker calls only.  Cross-worker enqueue path added in
+ * Phase 3: same-worker calls only. Calling from a different thread/worker
+ * returns STRAND_ERR_WRONGCTX. Cross-worker enqueue path is added in
  * Phase 5 (Task 5.2).
  *
  * See ARCHITECTURE.md §8.1 for the full cancellation state table and
