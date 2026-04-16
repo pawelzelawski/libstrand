@@ -15,6 +15,7 @@
 #include "strand_context.h"
 #include "strand_fiber.h"
 #include "strand_internal.h"
+#include "strand_inject.h"
 #include "strand_sched.h"
 #include "strand_poller.h"
 
@@ -533,8 +534,15 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 
 	if (sched == NULL)
 		return (STRAND_ERR_WRONGCTX);
-	if (!pthread_equal(pthread_self(), sched->owner_thread))
-		return (STRAND_ERR_WRONGCTX);
+	if (!pthread_equal(pthread_self(), sched->owner_thread)) {
+		/*
+		 * SAFETY: cross-worker cancel is enqueue-only. The request is
+		 * pushed to the target scheduler's inject queue and processed in
+		 * Step 1 of strand_scheduler_advance on the owning worker.
+		 * Post-return fd-freedom guarantees do not apply until processed.
+		 */
+		return (inject_cancel_enqueue(sched, handle));
+	}
 
 	/*
 	 * Load the state once.  In Phase 3 this is always same-worker so no

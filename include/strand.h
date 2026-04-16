@@ -119,10 +119,10 @@ typedef enum { SCHED_PROGRESS = 0, SCHED_IDLE = 1 } sched_result_t;
 /*
  * strand_scheduler_advance — perform one nonblocking scheduler pass.
  * Steps (per ARCHITECTURE.md §4.2):
- *   1. Drain inject queue (stub in Phase 3).
+ *   1. Drain inject queue.
  *   2. Expire timers whose deadline <= now_ns; move to run queue.
  *   3. Drain wakeup fd — bytes are control signals, not fiber events.
- *   4. Poll I/O with zero timeout (stub in Phase 3).
+ *   4. Poll I/O with zero timeout.
  *   5. Run up to sched->budget fibers from the run queue.
  * Returns SCHED_PROGRESS if any fibers ran or any timer fired.
  * Returns SCHED_IDLE with *next_deadline_ns set otherwise.
@@ -159,10 +159,14 @@ uint64_t strand_scheduler_next_deadline(const strand_scheduler_t *sched);
 
 /*
  * strand_scheduler_get_fd — fd the host loop must monitor.
- * Returns the eventfd (Linux) or the read end of the wakeup pipe (OpenBSD).
+ *
+ * Returns the scheduler's internal poller fd (epoll on Linux, kqueue on
+ * OpenBSD). This fd becomes readable when scheduler-managed activity is
+ * pending (I/O readiness, wakeup control signals, etc.).
+ *
  * The host loop registers this fd with its own epoll/kqueue instance and
  * calls strand_scheduler_advance when it fires.
- * See ARCHITECTURE.md §4.2 and §4.3.
+ * See ARCHITECTURE.md §4.2, §4.3, §5.
  */
 int strand_scheduler_get_fd(const strand_scheduler_t *sched);
 
@@ -245,16 +249,19 @@ int strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns);
  *                          call site and receives STRAND_CANCELLED.
  *   FIBER_RUNNABLE       — set cancel_pending (FIBER_CANCELLATION_PENDING).
  *   FIBER_RUNNING        — set cancel_pending (FIBER_CANCELLATION_PENDING).
+ *   FIBER_PARKED_IO_READ/WRITE
+ *                        — cancel waiter registration, transition to
+ *                          FIBER_RUNNABLE, wake with STRAND_CANCELLED.
  *   FIBER_FINISHED       — no-op; returns STRAND_OK.
  *   Stale handle         — no-op; returns STRAND_HANDLE_STALE.
  *   Invalid handle       — returns STRAND_HANDLE_INVALID.
  *
- *   FIBER_PARKED_IO_READ/WRITE, FIBER_PARKED_OFFLOAD, FIBER_PARKED_CHANNEL:
- *     placeholder in Phase 3 — handled in Phases 4 and 5.
+ *   FIBER_PARKED_OFFLOAD, FIBER_PARKED_CHANNEL:
+ *     placeholder — handled in later phases.
  *
- * Phase 3: same-worker calls only. Calling from a different thread/worker
- * returns STRAND_ERR_WRONGCTX. Cross-worker enqueue path is added in
- * Phase 5 (Task 5.2).
+ * Same-worker calls apply immediately. Cross-worker calls are enqueue-only:
+ * the cancel request is queued to the target scheduler and processed in
+ * Step 1 of strand_scheduler_advance on the owning worker.
  *
  * See ARCHITECTURE.md §8.1 for the full cancellation state table and
  * cross-worker semantics.

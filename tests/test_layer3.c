@@ -1583,15 +1583,15 @@ test_ev_eof_openbsd(void)
 /* =========================================================================
  * test_ev_dispatch_openbsd
  *
- * Verify EV_ONESHOT one-shot + immediate-refire behaviour:
+ * Verify EV_DISPATCH one-shot-disable + re-enable behaviour:
  *   1. Park fiber on read; write data; advance → fiber wakes (filter fires
- *      once and auto-deletes, EV_ONESHOT).
+ *      once and auto-disables, EV_DISPATCH).
  *   2. Fiber calls wait_readable again WITHOUT draining the pipe.  Re-arm
- *      uses EV_ADD | EV_ONESHOT, installing a brand-new filter.  Since
- *      data is still present the kernel activates the new filter immediately.
+ *      uses EV_ADD | EV_DISPATCH.  Since data is still present, re-enable
+ *      must trigger immediately under level-triggered EV_DISPATCH semantics.
  *      Verify fiber wakes a second time.
  *
- * This tests that the poller's EV_ONESHOT scheme correctly re-fires when
+ * This tests that the poller's EV_DISPATCH scheme correctly re-fires when
  * the level condition is already satisfied at re-arm time.
  *
  * See ARCHITECTURE.md §5.7.

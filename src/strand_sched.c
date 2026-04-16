@@ -29,6 +29,7 @@
 
 #include "strand_context.h"
 #include "strand_fiber.h"
+#include "strand_inject.h"
 #include "strand_poller.h"
 
 /* Initial capacity for the timer min-heap (grows by doubling). */
@@ -117,6 +118,11 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	if (sched == NULL)
 		return (NULL);
 
+	if (pthread_mutex_init(&sched->inject_queue.inject_mu, NULL) != 0) {
+		free(sched);
+		return (NULL);
+	}
+
 /*
  * Initialise wakeup fd sentinels before the open attempt so that
  * wakeup_close() is safe to call on any error path.
@@ -140,6 +146,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 #ifdef STRAND_LINUX
 	sched->wakeup_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 	if (sched->wakeup_fd == -1) {
+		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
 		free(sched);
 		return (NULL);
 	}
@@ -151,6 +158,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	 * F_SETFL are fully POSIX and always visible.
 	 */
 	if (pipe(sched->wakeup_pipe) == -1) {
+		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
 		free(sched);
 		return (NULL);
 	}
@@ -160,6 +168,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	    fcntl(sched->wakeup_pipe[1], F_SETFL, O_NONBLOCK) == -1) {
 		close(sched->wakeup_pipe[0]);
 		close(sched->wakeup_pipe[1]);
+		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
 		free(sched);
 		return (NULL);
 	}
@@ -169,6 +178,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	    malloc(TIMER_HEAP_INITIAL_CAP * sizeof(*sched->timer_heap));
 	if (sched->timer_heap == NULL) {
 		wakeup_close(sched);
+		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
 		free(sched);
 		return (NULL);
 	}
@@ -179,6 +189,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	if (sched->stack_cache == NULL) {
 		free(sched->timer_heap);
 		wakeup_close(sched);
+		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
 		free(sched);
 		return (NULL);
 	}
@@ -201,6 +212,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	sched->dead_pool = NULL;
 	sched->poller = poller_create(0);
 	if (sched->poller == NULL) {
+		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
 		wakeup_close(sched);
 		free(sched->timer_heap);
 		free(sched->stack_cache);
@@ -217,6 +229,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	if (poller_register_wakeup_fd(sched->poller, sched->wakeup_fd) !=
 	    STRAND_OK) {
 		poller_destroy(sched->poller);
+		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
 		wakeup_close(sched);
 		free(sched->timer_heap);
 		free(sched->stack_cache);
@@ -228,6 +241,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	if (poller_register_wakeup_fd(sched->poller,
 	    sched->wakeup_pipe[0]) != STRAND_OK) {
 		poller_destroy(sched->poller);
+		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
 		wakeup_close(sched);
 		free(sched->timer_heap);
 		free(sched->stack_cache);
@@ -235,7 +249,8 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 		return NULL;
 	}
 #endif
-	sched->inject_queue._placeholder = 0;
+	sched->inject_queue.head = NULL;
+	sched->inject_queue.tail = NULL;
 	atomic_init(&sched->stop_flag, 0);
 	sched->owner_thread = pthread_self();
 
@@ -273,6 +288,13 @@ strand_scheduler_destroy(strand_scheduler_t *sched)
 	 * corrupts TSan's internal state.  Just NULL the pointer.
 	 */
 	sched->scheduler_ctx.tsan_fiber = NULL;
+
+	/*
+	 * Scheduler destroy requires no active fibers; pending cross-worker
+	 * cancel requests are stale at this point and can be discarded.
+	 */
+	inject_cancel_discard_all(sched);
+	pthread_mutex_destroy(&sched->inject_queue.inject_mu);
 
 	wakeup_close(sched);
 
@@ -536,11 +558,10 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	STRAND_TSAN_BIND_CURRENT(&sched->scheduler_ctx);
 
 	/*
-	 * Step 1: drain inject queue.
-	 * Phase 3 stub -- the inject queue carries no real items yet.
-	 * Real drain implemented in Phase 5 (Task 5.1).
+	 * Step 1: drain injected cross-worker cancel requests.
+	 * Full generic inject queue semantics land in Phase 5.
 	 */
-	(void)(sched->inject_queue._placeholder);
+	inject_cancel_drain(sched);
 
 	/*
 	 * Step 2: expire timers.
@@ -680,24 +701,23 @@ strand_scheduler_next_deadline(const strand_scheduler_t *sched)
 }
 
 /* ---------------------------------------------------------------------------
- * strand_scheduler_get_fd -- return the fd the host loop must monitor.
+ * strand_scheduler_get_fd -- return the scheduler activity fd for host loops.
  *
- * On Linux this is the eventfd used as the wakeup channel.
- * On OpenBSD this is the read end of the wakeup pipe.
- * The host loop should register this fd with its own epoll/kqueue instance
- * and call strand_scheduler_advance when it fires.
- * See ARCHITECTURE.md §4.2.
+ * In Phase 4 this is the internal poller fd (epoll on Linux, kqueue on
+ * OpenBSD), not the raw wakeup channel.  The poller fd becomes readable when
+ * any scheduler event is pending: libstrand-managed I/O readiness, wakeup
+ * control writes (stop/cross-worker), or other poller-delivered activity.
+ *
+ * Host loops should monitor this fd and call strand_scheduler_advance when it
+ * fires.  See ARCHITECTURE.md §4.2 and §5.
  * ---------------------------------------------------------------------------
  */
 int
 strand_scheduler_get_fd(const strand_scheduler_t *sched)
 {
-#ifdef STRAND_LINUX
-	return (sched->wakeup_fd);
-#endif
-#ifdef STRAND_OPENBSD
-	return (sched->wakeup_pipe[0]);
-#endif
+	if (sched == NULL || sched->poller == NULL)
+		return (-1);
+	return (sched->poller->pollfd);
 }
 
 /* ---------------------------------------------------------------------------

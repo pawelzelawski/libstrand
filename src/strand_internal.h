@@ -223,12 +223,13 @@ _Static_assert(sizeof(strand_fiber_handle_t) == 16,
                "strand_fiber_handle_t size changed — ptr (8) + generation (8)");
 
 /*
- * strand_inject_queue_t — Phase 3 stub.
- * Replaced with a real bounded MPSC ring buffer in Phase 5 (Task 5.1).
- * The stub has no fields; inject_queue_drain is a no-op in Phase 3.
+ * strand_inject_queue_t — minimal Phase 4 injected-cancel queue.
+ * Full bounded MPSC queue semantics land in Phase 5 (Task 5.1).
  */
 typedef struct strand_inject_queue {
-	int _placeholder; /* zero-size structs are not valid in C11 */
+	pthread_mutex_t inject_mu;
+	struct strand_cancel_req *head;
+	struct strand_cancel_req *tail;
 } strand_inject_queue_t;
 
 /*

@@ -20,6 +20,26 @@
 
 #ifdef STRAND_LINUX
 #include <sys/epoll.h>
+
+#define POLLER_WAKEUP_TOKEN UINT64_MAX
+
+static uint64_t
+poller_make_token(int fd, uint32_t arm_token)
+{
+	return (((uint64_t)(uint32_t)fd << 32) | (uint64_t)arm_token);
+}
+
+static int
+poller_token_fd(uint64_t token)
+{
+	return ((int)(uint32_t)(token >> 32));
+}
+
+static uint32_t
+poller_token_arm(uint64_t token)
+{
+	return ((uint32_t)token);
+}
 #endif
 
 #ifdef STRAND_OPENBSD
@@ -355,16 +375,15 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 	op = (e->reg_state == FD_REG_NOT_REGISTERED) ? EPOLL_CTL_ADD
 	                                              : EPOLL_CTL_MOD;
 	ev.events   = new_mask;
-	ev.data.ptr = e;
 
 	/*
-	 * Increment arm_token before the syscall.  The token is stored in
-	 * ev.data.ptr (entry pointer) and implicitly in entry->arm_token.
-	 * poller_deliver_event can use arm_token to detect stale events after
-	 * a cancel + re-register sequence.
+	 * Increment arm_token before the syscall and encode (fd, arm_token)
+	 * into epoll user-data. poller_deliver_event validates this token so
+	 * stale events from older registrations are discarded safely.
 	 * See ARCHITECTURE.md §5.3.
 	 */
 	e->arm_token++;
+	ev.data.u64 = poller_make_token(fd, e->arm_token);
 
 	if (epoll_ctl(p->pollfd, op, fd, &ev) == -1)
 		return (STRAND_ERR_IO);
@@ -380,17 +399,12 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 	(void)new_mask; /* mask is implicit in the filter on OpenBSD */
 
 	/*
-	 * EV_ONESHOT is used instead of EV_DISPATCH so that each wait
-	 * registration is a brand-new filter install.  EV_DISPATCH only
-	 * disables the filter after delivery; re-enabling it with EV_ADD on
-	 * an fd where the level condition is already satisfied does not
-	 * immediately re-queue the knote on OpenBSD.  EV_ONESHOT deletes the
-	 * filter after delivery, so the next EV_ADD registers a genuinely new
-	 * filter — the kernel checks the current level and queues the event
-	 * immediately if the condition is already met.
-	 * See ARCHITECTURE.md §5.7.
+	 * OpenBSD path uses EV_DISPATCH as required by ARCHITECTURE.md §5.7.
+	 * After delivery, EV_DISPATCH leaves the filter disabled. Re-arm must
+	 * explicitly re-enable it; EV_ENABLE is harmless on first registration.
 	 */
-	EV_SET(&kev, (uintptr_t)fd, filter, EV_ADD | EV_ONESHOT, 0, 0, e);
+	EV_SET(&kev, (uintptr_t)fd, filter,
+	       EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, e);
 	e->arm_token++;
 
 	if (kevent(p->pollfd, &kev, 1, NULL, 0, NULL) == -1)
@@ -583,13 +597,17 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 	int                fd;
 	int                woke_read = 0, woke_write = 0;
 
-	/* NULL sentinel: wakeup fd event; no fiber to wake. */
-	if (ev->data.ptr == NULL)
+	if (ev->data.u64 == POLLER_WAKEUP_TOKEN)
 		return;
 
-	e     = (strand_fd_entry_t *)ev->data.ptr;
+	fd = poller_token_fd(ev->data.u64);
+	e  = fd_table_lookup(p, fd);
+	if (e == NULL)
+		return;
+	if (e->arm_token != poller_token_arm(ev->data.u64))
+		return;
+
 	flags = ev->events;
-	fd    = e->fd;
 
 	/*
 	 * SAFETY: EPOLLERR and EPOLLHUP are delivered by the kernel
@@ -883,8 +901,8 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
  *
  * The event is registered WITHOUT EPOLLONESHOT / EV_DISPATCH (persistent)
  * so that successive stop signals all unblock the wait.
- * data.ptr = NULL (Linux) / udata = NULL (OpenBSD) serves as the delivery
- * sentinel — poller_deliver_event skips entries with a NULL pointer.
+	 * data.u64 = POLLER_WAKEUP_TOKEN (Linux) / udata = NULL (OpenBSD) serves
+	 * as the delivery sentinel.
  *
  * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
  * See ARCHITECTURE.md §5 and DEVELOPMENT.md Task 4.5.
@@ -897,7 +915,7 @@ poller_register_wakeup_fd(strand_poller_t *p, int fd)
 	struct epoll_event ev;
 
 	ev.events   = EPOLLIN;
-	ev.data.ptr = NULL; /* sentinel: not a fiber fd table entry */
+	ev.data.u64 = POLLER_WAKEUP_TOKEN;
 	if (epoll_ctl(p->pollfd, EPOLL_CTL_ADD, fd, &ev) == -1)
 		return (STRAND_ERR_IO);
 	return (STRAND_OK);

@@ -54,9 +54,9 @@ typedef enum {
  * reg_state    — Linux EPOLLONESHOT registration state.
  *                Ignored on OpenBSD (EV_DISPATCH has no equivalent tracking).
  * arm_token    — per-registration generation counter; bumped on each arm.
- *                Stored in epoll_event.data.ptr / kevent.udata as the token
- *                so that a stale delivered event (after cancel + re-arm) can
- *                be detected and discarded at delivery time.
+ *                Linux: packed with fd into epoll_event.data.u64 and
+ *                validated on delivery to discard stale events.
+ *                OpenBSD: entry pointer carried in kevent.udata.
  *                See ARCHITECTURE.md §5.3.
  * dbg_gen      — debug-only generation counter; incremented when fd reuse
  *                is detected (fd closed and reopened with same number).
@@ -156,8 +156,8 @@ void fd_table_remove(strand_poller_t *p, int fd);
  * On Linux, new_mask must already include EPOLLET | EPOLLONESHOT and
  * the correct combination of EPOLLIN / EPOLLOUT for all active waiters.
  *
- * entry->arm_token is incremented before the syscall so that the token
- * stored in event data matches the current registration epoch.
+ * entry->arm_token is incremented before the syscall so event data carries
+ * the current registration epoch.
  *
  * Returns STRAND_OK or STRAND_ERR_IO on syscall failure.
  * See ARCHITECTURE.md §5.4 (Linux) and §5.7 (OpenBSD).
@@ -232,8 +232,8 @@ void poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f);
  * On OpenBSD: adds wakeup_pipe[0] with EVFILT_READ | EV_ADD (persistent,
  * no EV_DISPATCH).
  *
- * The registered event uses data.ptr = NULL (Linux) / udata = NULL (OpenBSD)
- * as a sentinel so poller_deliver_event can identify it as the wakeup channel
+ * The registered event uses a dedicated sentinel token (Linux) / udata = NULL
+ * (OpenBSD) so poller_deliver_event can identify it as the wakeup channel
  * and skip fiber wakeup.  The actual drain happens in advance Step 3.
  *
  * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
