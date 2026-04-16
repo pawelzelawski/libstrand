@@ -30,6 +30,7 @@
 
 #include "strand_context.h"
 #include "strand_fiber.h"
+#include "strand_poller.h"
 
 /* Initial capacity for the timer min-heap (grows by doubling). */
 #define TIMER_HEAP_INITIAL_CAP ((size_t)8)
@@ -199,7 +200,14 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	sched->run_queue_len = 0;
 	sched->current_fiber = NULL;
 	sched->dead_pool = NULL;
-	sched->poller = NULL;
+	sched->poller = poller_create(0);
+	if (sched->poller == NULL) {
+		wakeup_close(sched);
+		free(sched->timer_heap);
+		free(sched->stack_cache);
+		free(sched);
+		return NULL;
+	}
 	sched->inject_queue._placeholder = 0;
 	atomic_init(&sched->stop_flag, 0);
 	sched->owner_thread = pthread_self();
@@ -240,6 +248,9 @@ strand_scheduler_destroy(strand_scheduler_t *sched)
 	sched->scheduler_ctx.tsan_fiber = NULL;
 
 	wakeup_close(sched);
+
+	poller_destroy(sched->poller);
+	sched->poller = NULL;
 
 	free(sched->timer_heap);
 

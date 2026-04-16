@@ -4,11 +4,135 @@
 /*
  * strand_poller.h — I/O poller internal interface.
  * epoll (Linux) and kqueue (OpenBSD). See ARCHITECTURE.md §5.
+ *
+ * Task 4.1: strand_poller_t definition and fd waiter hash table interface.
  */
 
 #include "../include/strand.h"
 #include "strand_internal.h"
 
-/* strand_poller_t and fd waiter table defined in Phase 4 (Task 4.1). */
+#ifdef STRAND_LINUX
+#include <sys/epoll.h>
+#endif
+
+#ifdef STRAND_OPENBSD
+#include <sys/event.h>
+#endif
+
+/* fd sentinel values in the waiter table */
+#define FD_ENTRY_EMPTY     (-1) /* slot never used or fully cleared */
+#define FD_ENTRY_TOMBSTONE (-2) /* slot was removed; probe chain continues */
+
+/*
+ * fd_reg_state_t — Linux EPOLLONESHOT registration state per fd.
+ *
+ * NOT_REGISTERED — fd has never been registered, or was DEL'd.
+ *                  Re-arm must use epoll_ctl ADD.
+ * ACTIVE         — fd is currently registered and armed.
+ * DISABLED       — fd fired; registration auto-disabled by EPOLLONESHOT.
+ *                  Re-arm must use epoll_ctl MOD (not ADD — would get EEXIST).
+ *
+ * See ARCHITECTURE.md §5.2 and §5.4.
+ */
+typedef enum {
+	FD_REG_NOT_REGISTERED = 0,
+	FD_REG_ACTIVE         = 1,
+	FD_REG_DISABLED       = 2,
+} fd_reg_state_t;
+
+/*
+ * strand_fd_entry_t — one slot in the open-addressed fd waiter hash table.
+ *
+ * fd           — registered fd key; FD_ENTRY_EMPTY or FD_ENTRY_TOMBSTONE
+ *                when the slot is not live.
+ * read_waiter  — fiber parked in FIBER_PARKED_IO_READ on this fd, or NULL.
+ * write_waiter — fiber parked in FIBER_PARKED_IO_WRITE on this fd, or NULL.
+ * event_mask   — current registration interest mask (epoll/kqueue flags).
+ *                Reflects the union of active read and write waiter interests.
+ * reg_state    — Linux EPOLLONESHOT registration state.
+ *                Ignored on OpenBSD (EV_DISPATCH has no equivalent tracking).
+ * arm_token    — per-registration generation counter; bumped on each arm.
+ *                Stored in epoll_event.data.ptr / kevent.udata as the token
+ *                so that a stale delivered event (after cancel + re-arm) can
+ *                be detected and discarded at delivery time.
+ *                See ARCHITECTURE.md §5.3.
+ * dbg_gen      — debug-only generation counter; incremented when fd reuse
+ *                is detected (fd closed and reopened with same number).
+ *                Used in debug builds to assert fd lifecycle correctness.
+ *                See ARCHITECTURE.md §5.3 and CODING_STANDARDS.md §6.1.
+ */
+typedef struct strand_fd_entry {
+	int              fd;
+	strand_fiber_t  *read_waiter;
+	strand_fiber_t  *write_waiter;
+	uint32_t         event_mask;
+	fd_reg_state_t   reg_state;
+	uint32_t         arm_token;
+#ifdef STRAND_DEBUG
+	uint32_t         dbg_gen;
+#endif
+} strand_fd_entry_t;
+
+/*
+ * struct strand_poller — complete I/O poller.
+ *
+ * pollfd     — epoll fd (Linux) or kqueue fd (OpenBSD); -1 if not open.
+ * table      — open-addressed fd waiter hash table; linear probing.
+ * table_cap  — table capacity; always a power of 2.
+ * table_len  — number of live entries (tombstones are not counted).
+ *
+ * The table grows (doubles) when load exceeds 75% (table_len * 4 >= table_cap * 3).
+ * The hash function is: fd & (table_cap - 1).
+ * Empty slots terminate probes; tombstones do not.
+ *
+ * See ARCHITECTURE.md §5.
+ */
+struct strand_poller {
+	int                pollfd;
+	strand_fd_entry_t *table;
+	size_t             table_cap;
+	size_t             table_len;
+};
+
+/* Default initial fd table capacity (power of 2). */
+#define FD_TABLE_INITIAL_CAP ((size_t)64)
+
+/*
+ * poller_create — allocate and initialise an I/O poller.
+ * initial_cap — initial fd table capacity; rounded up to next power of 2.
+ *               Pass 0 to use FD_TABLE_INITIAL_CAP.
+ * Returns NULL on error (epoll_create1/kqueue or allocation failure).
+ */
+strand_poller_t *poller_create(size_t initial_cap);
+
+/*
+ * poller_destroy — close the poller fd and free all memory.
+ * Debug builds assert that no active waiters remain in the table.
+ * Safe to call with NULL.
+ */
+void poller_destroy(strand_poller_t *p);
+
+/*
+ * fd_table_lookup — find the entry for fd.
+ * Returns a pointer to the entry, or NULL if fd is not registered.
+ */
+strand_fd_entry_t *fd_table_lookup(strand_poller_t *p, int fd);
+
+/*
+ * fd_table_insert — add a new entry for fd and return a pointer to it.
+ * The caller must verify (via fd_table_lookup) that fd is not already
+ * present before calling this function.
+ * Grows the table if the load factor would exceed 75%.
+ * Returns NULL on allocation failure.
+ */
+strand_fd_entry_t *fd_table_insert(strand_poller_t *p, int fd);
+
+/*
+ * fd_table_remove — remove the entry for fd from the table.
+ * Must only be called when both read_waiter and write_waiter are NULL.
+ * Debug builds assert this precondition.
+ * No-op if fd is not found in the table.
+ */
+void fd_table_remove(strand_poller_t *p, int fd);
 
 #endif /* STRAND_POLLER_H */
