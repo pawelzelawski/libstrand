@@ -58,6 +58,14 @@ void sched_stack_free(strand_scheduler_t *sched, void *base, size_t stack_size,
 size_t page_size(void);
 
 /*
+ * strand_fiber_entry_start — internal entry wrapper for spawned fibers.
+ * Calls f->entry_fn(f->entry_arg), then performs scheduler handoff
+ * (deferred stack free + fiber_free + context switch back to scheduler).
+ * Exposed for test helpers that bootstrap fibers without strand_fiber_spawn.
+ */
+void strand_fiber_entry_start(void *varg);
+
+/*
  * TSan fiber lifecycle hooks.
  * In non-TSan builds these are cheap no-ops.
  */

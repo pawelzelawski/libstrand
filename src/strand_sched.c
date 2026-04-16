@@ -525,6 +525,17 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	sched->owner_thread = pthread_self();
 
 	/*
+	 * Rebind scheduler_ctx's TSan fiber handle to the current thread.
+	 * strand_scheduler_advance may be called from any thread (e.g. the
+	 * worker thread in strand_scheduler_run, or the main thread after a
+	 * stop).  The TSan handle must always match the actual OS thread that
+	 * is about to context-switch, otherwise TSan asserts when a fiber
+	 * switches back to the scheduler context and TSan sees a cross-thread
+	 * fiber transition.  In non-TSan builds this is a no-op.
+	 */
+	STRAND_TSAN_BIND_CURRENT(&sched->scheduler_ctx);
+
+	/*
 	 * Step 1: drain inject queue.
 	 * Phase 3 stub -- the inject queue carries no real items yet.
 	 * Real drain implemented in Phase 5 (Task 5.1).
@@ -761,6 +772,13 @@ strand_scheduler_run(strand_scheduler_t *sched)
 
 	/* Worker mode establishes scheduler ownership for same-worker APIs. */
 	sched->owner_thread = pthread_self();
+
+	/*
+	 * Rebind scheduler_ctx's TSan fiber handle to this worker thread.
+	 * See the comment in strand_scheduler_advance for the full rationale.
+	 * In non-TSan builds this is a no-op.
+	 */
+	STRAND_TSAN_BIND_CURRENT(&sched->scheduler_ctx);
 
 	for (;;) {
 		uint64_t next_ns;

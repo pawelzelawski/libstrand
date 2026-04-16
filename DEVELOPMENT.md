@@ -668,13 +668,13 @@ File: `tests/test_layer3.c`
 
 ### Phase 4 Completion Criteria
 
-- [ ] All Layer 3 tests pass on Linux (epoll path)
-- [ ] All Layer 3 tests pass on OpenBSD (kqueue path)
-- [ ] Post-re-arm readiness check test passes — quality milestone M12
-- [ ] "All events processed in re-arm check" test passes
-- [ ] EPOLLERR/EPOLLHUP tests pass on Linux
-- [ ] EV_EOF test passes on OpenBSD
-- [ ] Valgrind clean; ASan/UBSan clean on both platforms
+- [x] All Layer 3 tests pass on Linux (epoll path)
+- [x] All Layer 3 tests pass on OpenBSD (kqueue path)
+- [x] Post-re-arm readiness check test passes — quality milestone M12
+- [x] "All events processed in re-arm check" test passes
+- [x] EPOLLERR/EPOLLHUP tests pass on Linux
+- [x] EV_EOF test passes on OpenBSD
+- [x] Valgrind clean; ASan/UBSan clean on both platforms
 
 ---
 

@@ -176,7 +176,7 @@ strand_fiber_tsan_bind_current(strand_fiber_t *f)
  * return from user code is treated as fiber completion instead of trapping in
  * the architecture trampoline guard instruction.
  */
-static void
+void
 strand_fiber_entry_start(void *varg)
 {
 	strand_fiber_t *f = (strand_fiber_t *)varg;

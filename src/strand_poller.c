@@ -379,7 +379,18 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 
 	(void)new_mask; /* mask is implicit in the filter on OpenBSD */
 
-	EV_SET(&kev, (uintptr_t)fd, filter, EV_ADD | EV_DISPATCH, 0, 0, e);
+	/*
+	 * EV_ONESHOT is used instead of EV_DISPATCH so that each wait
+	 * registration is a brand-new filter install.  EV_DISPATCH only
+	 * disables the filter after delivery; re-enabling it with EV_ADD on
+	 * an fd where the level condition is already satisfied does not
+	 * immediately re-queue the knote on OpenBSD.  EV_ONESHOT deletes the
+	 * filter after delivery, so the next EV_ADD registers a genuinely new
+	 * filter — the kernel checks the current level and queues the event
+	 * immediately if the condition is already met.
+	 * See ARCHITECTURE.md §5.7.
+	 */
+	EV_SET(&kev, (uintptr_t)fd, filter, EV_ADD | EV_ONESHOT, 0, 0, e);
 	e->arm_token++;
 
 	if (kevent(p->pollfd, &kev, 1, NULL, 0, NULL) == -1)

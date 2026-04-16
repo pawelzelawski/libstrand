@@ -169,15 +169,21 @@ test-tsan:
 	    $(TSAN_DIR)/strand_scope.o
 	test -z "$(ASM_OBJ_TSAN)" || ar qs $(LIB_TSAN) $(ASM_OBJ_TSAN)
 	clang $(CFLAGS_TSAN) $(INCLUDES) -I tests/ -I src/              \
-	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c $(LIB_TSAN) $(LDFLAGS) \
+	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c $(LIB_TSAN) $(LDFLAGS) \
 	    -o $(TEST_BIN_TSAN)
 	TSAN_OPTIONS=die_after_fork=0 $(TEST_BIN_TSAN)
 
 # Valgrind — Linux only, no sanitizers (ASan + Valgrind conflict)
 valgrind: $(TEST_BIN_VG)
+	# --child-silent-after-fork=yes: intentional — Valgrind re-instruments any
+	# forked child process and then crashes (SIGSEGV in the tracer) when it
+	# walks the PROT_NONE fiber guard pages.  Silencing child output avoids
+	# spurious "Invalid read" / leak reports from those short-lived children
+	# without hiding any real errors in the parent under test.
 	valgrind --leak-check=full			\
 	         --show-leak-kinds=all			\
 	         --track-origins=yes			\
+	         --child-silent-after-fork=yes		\
 	         --error-exitcode=1			\
 	         $(TEST_BIN_VG)
 	rm -f vgcore.*
@@ -257,18 +263,18 @@ $(LIB_RELEASE): $(LIB_SRCS) $(ASM_SRC)
 
 # --- Test binary (ASan/UBSan build) -----------------------------------------
 
-$(TEST_BIN): $(LIB_DEV) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_harness.h
+$(TEST_BIN): $(LIB_DEV) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_harness.h
 	@mkdir -p $(BUILD_TESTS_DIR)
 	$(CC) $(CFLAGS_DEV) $(INCLUDES) -I tests/ -I src/		\
-	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c $(LIB_DEV) $(LDFLAGS)	\
+	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c $(LIB_DEV) $(LDFLAGS)	\
 	    -o $(TEST_BIN)
 
 # --- Valgrind test binary (no sanitizers) -----------------------------------
 
-$(TEST_BIN_VG): $(LIB_VG) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_harness.h
+$(TEST_BIN_VG): $(LIB_VG) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_harness.h
 	@mkdir -p $(BUILD_TESTS_DIR)
 	$(CC) $(CFLAGS_VG) $(INCLUDES) -I tests/ -I src/		\
-	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c $(LIB_VG) $(LDFLAGS)	\
+	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c $(LIB_VG) $(LDFLAGS)	\
 	    -o $(TEST_BIN_VG)
 
 # --- Valgrind library (no sanitizers) ---------------------------------------
