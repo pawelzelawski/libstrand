@@ -307,3 +307,42 @@ strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 
 	return (STRAND_OK);
 }
+
+/* ---------------------------------------------------------------------------
+ * strand_fiber_yield — voluntarily yield the current fiber.
+ *
+ * Transitions the calling fiber FIBER_RUNNING -> FIBER_RUNNABLE, appends it
+ * to the run queue tail, then switches back to the scheduler.  Control
+ * returns here when the scheduler next picks this fiber from the run queue.
+ *
+ * Must be called from inside a running fiber.  Debug builds assert this.
+ * See ARCHITECTURE.md §4.5 and §11.2.
+ * ---------------------------------------------------------------------------
+ */
+void
+strand_fiber_yield(strand_scheduler_t *sched)
+{
+	strand_fiber_t *f;
+
+	STRAND_DEBUG_ASSERT(sched != NULL);
+	STRAND_DEBUG_ASSERT(sched->current_fiber != NULL);
+
+	f = sched->current_fiber;
+
+	/*
+	 * Transition FIBER_RUNNING -> FIBER_RUNNABLE before re-queuing.
+	 * The state is relaxed here: the scheduler, which is the only
+	 * other observer, will see the updated state after the context
+	 * switch returns (which implies a sequencing point).
+	 */
+	atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
+
+	/* Append to tail so that the fiber is not re-run until all currently
+	 * queued fibers have had a turn (FIFO fairness). */
+	run_queue_push(sched, f);
+
+	/* Switch back to the scheduler.  Execution resumes here when the
+	 * scheduler next picks this fiber from the run queue. */
+	strand_context_switch(f, &sched->scheduler_ctx);
+}
+

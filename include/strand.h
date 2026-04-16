@@ -186,6 +186,25 @@ int strand_scheduler_get_fd(const strand_scheduler_t *sched);
 int strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn,
                        void *arg, size_t stack_sz, strand_fiber_handle_t *out);
 
+/*
+ * strand_fiber_yield — voluntarily yield the current fiber.
+ *
+ * Transitions the calling fiber from FIBER_RUNNING to FIBER_RUNNABLE,
+ * appends it to the tail of the run queue, then switches back to the
+ * scheduler.  The fiber will be resumed on the next advance pass when the
+ * scheduler picks it from the run queue.
+ *
+ * Must be called from inside a running fiber (sched->current_fiber != NULL).
+ * Calling from the host thread is a debug assertion failure.
+ *
+ * This is both a yield point and a cancellation point: after resuming, a
+ * fiber should check for cancellation if needed.
+ *
+ * See ARCHITECTURE.md §4.5 (FIBER_RUNNING -> FIBER_RUNNABLE transition) and
+ * §11.2 (explicit yield contracts).
+ */
+void strand_fiber_yield(strand_scheduler_t *sched);
+
 /* Function declarations added in later phases. */
 
 #endif /* STRAND_H */

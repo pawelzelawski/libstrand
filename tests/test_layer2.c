@@ -7,6 +7,7 @@
  *             strand_scheduler_next_deadline, strand_scheduler_get_fd.
  *   Task 3.5: strand_fiber_spawn (within-worker path), advance nonblocking,
  *             FIFO run-queue ordering, budget limiting, shutdown error.
+ *   Task 3.6: strand_fiber_yield — verify yield re-queues the fiber.
  *
  * See DEVELOPMENT.md §"Tests for Phase 3".
  */
@@ -617,6 +618,111 @@ test_spawn_returns_error_after_stop(void)
 	return (rc == STRAND_ERR_SHUTDOWN ? 0 : 1);
 }
 
+/* =========================================================================
+ * Task 3.6 — test_yield_requeues
+ *
+ * A fiber calls strand_fiber_yield() once, which re-queues it rather than
+ * finishing it.  After the first advance call the fiber must NOT have
+ * completed.  After the second advance call it must have completed.
+ *
+ * Design:
+ *   - The fiber has a phase counter (0 → 1 → done).
+ *   - Phase 0: increment to 1, call strand_fiber_yield, return to phase 1.
+ *   - Phase 1: mark done, call t35_switch_back.
+ *   - After first advance:  phase == 1, done == 0  → yield worked.
+ *   - After second advance: done == 1              → fiber resumed.
+ * =========================================================================
+ */
+
+struct t36_yield_arg {
+	strand_scheduler_t *sched;
+	_Atomic int phase;
+	_Atomic int done;
+};
+
+static void
+t36_yield_fiber_fn(void *varg)
+{
+	struct t36_yield_arg *a = varg;
+
+	/* Phase 0: record that we ran once, then yield back to scheduler. */
+	atomic_store_explicit(&a->phase, 1, memory_order_release);
+	strand_fiber_yield(a->sched);
+
+	/* Phase 1: we were re-queued and resumed; mark completion. */
+	atomic_store_explicit(&a->done, 1, memory_order_release);
+	t35_switch_back(a->sched);
+}
+
+static int
+test_yield_requeues(void)
+{
+	strand_scheduler_t *sched;
+	strand_sched_config_t cfg;
+	struct t36_yield_arg arg;
+	int phase_after_first, done_after_first;
+	int done_after_second;
+	int result;
+
+	/*
+	 * Budget = 1: each strand_scheduler_advance runs at most one fiber.
+	 * This is required to observe that the yielded fiber is deferred to
+	 * the next advance pass rather than immediately re-run within the
+	 * same pass.  With budget > 1 the scheduler would pick the re-queued
+	 * fiber in the same loop iteration.
+	 */
+	cfg.budget = 1;
+	cfg.inject_cap = 256;
+	cfg.cache_cap = 8;
+	cfg.idle_floor = 2;
+	sched = strand_scheduler_create(&cfg);
+	if (sched == NULL)
+		return (1);
+
+	atomic_init(&arg.phase, 0);
+	atomic_init(&arg.done, 0);
+	arg.sched = sched;
+
+	if (t35_push_fiber(sched, t36_yield_fiber_fn, &arg) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	/*
+	 * First advance (budget=1): fiber runs to the yield point, sets
+	 * phase = 1, calls strand_fiber_yield, and returns control to the
+	 * scheduler.  Budget is exhausted after one fiber; the re-queued
+	 * fiber is NOT run again.  done must still be 0.
+	 */
+	strand_scheduler_advance(sched, NULL);
+	phase_after_first =
+	    atomic_load_explicit(&arg.phase, memory_order_acquire);
+	done_after_first =
+	    atomic_load_explicit(&arg.done, memory_order_acquire);
+
+	/*
+	 * Second advance: the scheduler picks the re-queued fiber, resumes
+	 * it past the yield, and it sets done = 1 then switches back.
+	 */
+	strand_scheduler_advance(sched, NULL);
+	done_after_second =
+	    atomic_load_explicit(&arg.done, memory_order_acquire);
+
+	strand_scheduler_destroy(sched);
+
+	/*
+	 * Pass conditions:
+	 *   - phase was set to 1 in the first pass (fiber ran before yield)
+	 *   - done was NOT set after the first pass (yield deferred resumption)
+	 *   - done IS set after the second pass (fiber resumed and completed)
+	 */
+	result = (phase_after_first == 1 && done_after_first == 0 &&
+	          done_after_second == 1)
+	             ? 0
+	             : 1;
+	return (result);
+}
+
 void
 run_layer2_tests(void)
 {
@@ -630,4 +736,5 @@ run_layer2_tests(void)
 	RUN("test_budget_limiting", test_budget_limiting);
 	RUN("test_spawn_returns_error_after_stop",
 	    test_spawn_returns_error_after_stop);
+	RUN("test_yield_requeues", test_yield_requeues);
 }

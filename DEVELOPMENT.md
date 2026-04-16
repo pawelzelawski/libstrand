@@ -416,7 +416,7 @@ the poller is stubbed out for scheduler-only testing.
   - `run_queue_push(sched, f)`
   - Return handle: `{f, f->generation}`
 
-**3.6 — strand_fiber_yield**
+**3.6 — strand_fiber_yield** ✓ DONE
 - Implement `strand_fiber_yield()`:
   - Assert called from a running fiber (`sched->current_fiber != NULL`)
   - Transition `f->state = FIBER_RUNNABLE`
