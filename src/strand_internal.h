@@ -180,6 +180,16 @@ typedef struct strand_fiber {
 	 * See ARCHITECTURE.md §4.5 and §8.1.
 	 */
 	_Atomic int cancel_pending;
+	/*
+	 * home_sched — the scheduler that owns this fiber.
+	 * Set at spawn time (strand_fiber_spawn) and used by
+	 * strand_fiber_cancel to access the run queue and timer heap without
+	 * requiring the caller to supply a scheduler pointer.
+	 * In Phase 5 (multi-worker) this will identify the fiber's pinned
+	 * worker for cross-worker inject routing.
+	 * Zeroed by fiber_alloc on descriptor reuse; set again at next spawn.
+	 */
+	struct strand_scheduler *home_sched;
 } strand_fiber_t;
 
 /*

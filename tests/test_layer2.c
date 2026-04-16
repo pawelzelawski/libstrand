@@ -9,6 +9,8 @@
  *             FIFO run-queue ordering, budget limiting, shutdown error.
  *   Task 3.6: strand_fiber_yield — verify yield re-queues the fiber.
  *   Task 3.7: strand_fiber_sleep_until — timer fires, timer order.
+ *   Task 3.8: strand_fiber_cancel — cancel timer, cancel runnable,
+ *             stale handle, generation increment on reuse.
  *
  * See DEVELOPMENT.md §"Tests for Phase 3".
  */
@@ -340,6 +342,7 @@ t35_push_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg)
 	f->stack_base = (char *)base + page_size();
 	f->stack_size = sz;
 	f->valgrind_stack_id = vg_id;
+	f->home_sched = sched;
 	strand_context_init(&f->context, (char *)f->stack_base + sz, fn, arg);
 	strand_fiber_tsan_init(f);
 	atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
@@ -914,6 +917,409 @@ test_timer_order(void)
 	return ((order[0] == 1 && order[1] == 0) ? 0 : 1);
 }
 
+/* =========================================================================
+ * Task 3.8 — test_cancel_timer
+ *
+ * A fiber calls strand_fiber_sleep_until with a far-future deadline.
+ * Before the deadline would ever fire, strand_fiber_cancel is called from
+ * the host context.  The fiber must resume immediately and
+ * strand_fiber_sleep_until must return STRAND_CANCELLED.
+ *
+ * Design:
+ *   - Root fiber spawns the sleeper and records the handle; both run in
+ *     the first advance (budget=64).  After that: root is done, sleeper is
+ *     parked on the timer heap.
+ *   - Host calls strand_fiber_cancel — removes from heap, sets
+ *     cancel_pending, moves sleeper to run queue.
+ *   - Second advance runs the sleeper; sleep_until returns STRAND_CANCELLED.
+ * =========================================================================
+ */
+
+struct t38_cancel_timer_child_arg {
+	strand_scheduler_t *sched;
+	uint64_t deadline_ns;
+	int rc; /* return value of strand_fiber_sleep_until */
+	_Atomic int done;
+};
+
+static void
+t38_cancel_timer_child_fn(void *varg)
+{
+	struct t38_cancel_timer_child_arg *a = varg;
+
+	a->rc = strand_fiber_sleep_until(a->sched, a->deadline_ns);
+	atomic_store_explicit(&a->done, 1, memory_order_release);
+	t35_switch_back(a->sched);
+}
+
+struct t38_cancel_timer_root_arg {
+	strand_scheduler_t *sched;
+	struct t38_cancel_timer_child_arg *child;
+	strand_fiber_handle_t child_handle;
+};
+
+static void
+t38_cancel_timer_root_fn(void *varg)
+{
+	struct t38_cancel_timer_root_arg *a = varg;
+
+	strand_fiber_spawn(a->sched, t38_cancel_timer_child_fn, a->child, 0,
+	                   &a->child_handle);
+	t35_switch_back(a->sched);
+}
+
+static int
+test_cancel_timer(void)
+{
+	strand_scheduler_t *sched;
+	struct t38_cancel_timer_child_arg child_arg;
+	struct t38_cancel_timer_root_arg root_arg;
+	int done_before, done_after;
+	int result;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	/* Far-future deadline — must not fire on its own during this test. */
+	strand_test_clock_ns = 1000;
+	child_arg.sched = sched;
+	child_arg.deadline_ns = 999999999ULL;
+	child_arg.rc = -999;
+	atomic_init(&child_arg.done, 0);
+
+	root_arg.sched = sched;
+	root_arg.child = &child_arg;
+	root_arg.child_handle.ptr = NULL;
+	root_arg.child_handle.generation = 0;
+
+	if (t35_push_fiber(sched, t38_cancel_timer_root_fn, &root_arg) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	/*
+	 * First advance: root spawns child (gets handle), root exits.
+	 * Child runs, calls sleep_until(far future), parks on timer heap.
+	 * done must still be 0.
+	 */
+	strand_scheduler_advance(sched, NULL);
+	done_before =
+	    atomic_load_explicit(&child_arg.done, memory_order_acquire);
+
+	/*
+	 * Cancel the parked child.  strand_fiber_cancel removes it from the
+	 * timer heap, sets cancel_pending, and moves it to the run queue.
+	 */
+	strand_fiber_cancel(root_arg.child_handle);
+
+	/*
+	 * Second advance: child resumes, sleep_until returns STRAND_CANCELLED,
+	 * child sets done = 1 and exits.
+	 */
+	strand_scheduler_advance(sched, NULL);
+	done_after =
+	    atomic_load_explicit(&child_arg.done, memory_order_acquire);
+
+	strand_scheduler_destroy(sched);
+
+	result = (done_before == 0 && done_after == 1 &&
+	          child_arg.rc == STRAND_CANCELLED)
+	             ? 0
+	             : 1;
+	return (result);
+}
+
+/* =========================================================================
+ * Task 3.8 — test_cancel_runnable
+ *
+ * Cancel a fiber that is in FIBER_RUNNABLE state (queued but not yet run).
+ * Verify that cancel_pending is set on the descriptor.  Then drain the
+ * scheduler cleanly.
+ * =========================================================================
+ */
+
+struct t38_cancel_runnable_arg {
+	strand_scheduler_t *sched;
+	_Atomic int ran;
+};
+
+static void
+t38_cancel_runnable_fiber_fn(void *varg)
+{
+	struct t38_cancel_runnable_arg *a = varg;
+
+	atomic_store_explicit(&a->ran, 1, memory_order_release);
+	t35_switch_back(a->sched);
+}
+
+static int
+test_cancel_runnable(void)
+{
+	strand_scheduler_t *sched;
+	strand_fiber_t *f;
+	strand_fiber_handle_t handle;
+	struct t38_cancel_runnable_arg arg;
+	void *base;
+	unsigned long vg_id;
+	size_t sz;
+	int cancel_pending_after;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	/*
+	 * Create a fiber in RUNNABLE state using the internal API (bypassing
+	 * strand_fiber_spawn's within-worker check).  Capture the handle so
+	 * we can cancel it before it runs.
+	 */
+	sz = STRAND_DEFAULT_STACK_SIZE;
+	f = fiber_alloc(&sched->dead_pool);
+	if (f == NULL) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	base = stack_alloc(sz, &vg_id);
+	if (base == NULL) {
+		fiber_free(&sched->dead_pool, f);
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	f->stack_base = (char *)base + page_size();
+	f->stack_size = sz;
+	f->valgrind_stack_id = vg_id;
+	f->home_sched = sched;
+	atomic_init(&arg.ran, 0);
+	arg.sched = sched;
+	strand_context_init(&f->context, (char *)f->stack_base + sz,
+	                    t38_cancel_runnable_fiber_fn, &arg);
+	strand_fiber_tsan_init(f);
+	atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
+	run_queue_push(sched, f);
+
+	handle.ptr = f;
+	handle.generation = f->generation;
+
+	/*
+	 * Cancel before any advance — fiber is still FIBER_RUNNABLE.
+	 * cancel_pending must be set; state must remain FIBER_RUNNABLE.
+	 */
+	strand_fiber_cancel(handle);
+	cancel_pending_after =
+	    atomic_load_explicit(&f->cancel_pending, memory_order_acquire);
+
+	/* Drain the run queue so destroy finds a clean scheduler. */
+	while (strand_scheduler_advance(sched, NULL) == SCHED_PROGRESS)
+		;
+
+	strand_scheduler_destroy(sched);
+
+	/*
+	 * Pass condition: cancel_pending was set after the cancel call.
+	 * (The fiber still ran — RUNNABLE cancel does not remove it from
+	 * the queue — but cancel_pending was 1 before it ran.)
+	 */
+	return (cancel_pending_after == 1 ? 0 : 1);
+}
+
+/* =========================================================================
+ * Task 3.8 — test_stale_handle_noop
+ *
+ * Obtain a handle to a fiber, let the fiber finish (descriptor moves to
+ * dead pool, generation incremented).  Call strand_fiber_cancel with the
+ * old handle.  Must return STRAND_HANDLE_STALE and not crash.
+ * =========================================================================
+ */
+
+struct t38_stale_arg {
+	strand_scheduler_t *sched;
+};
+
+static void
+t38_stale_fiber_fn(void *varg)
+{
+	struct t38_stale_arg *a = varg;
+	t35_switch_back(a->sched);
+}
+
+static int
+test_stale_handle_noop(void)
+{
+	strand_scheduler_t *sched;
+	struct t38_stale_arg arg;
+	strand_fiber_t *f;
+	strand_fiber_handle_t handle;
+	void *base;
+	unsigned long vg_id;
+	size_t sz;
+	int rc;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	sz = STRAND_DEFAULT_STACK_SIZE;
+	f = fiber_alloc(&sched->dead_pool);
+	if (f == NULL) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	base = stack_alloc(sz, &vg_id);
+	if (base == NULL) {
+		fiber_free(&sched->dead_pool, f);
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	f->stack_base = (char *)base + page_size();
+	f->stack_size = sz;
+	f->valgrind_stack_id = vg_id;
+	f->home_sched = sched;
+	arg.sched = sched;
+	strand_context_init(&f->context, (char *)f->stack_base + sz,
+	                    t38_stale_fiber_fn, &arg);
+	strand_fiber_tsan_init(f);
+	atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
+	run_queue_push(sched, f);
+
+	/* Capture handle before running. */
+	handle.ptr = f;
+	handle.generation = f->generation;
+
+	/* Run the fiber — it calls t35_switch_back, which pushes the
+	 * descriptor to the dead pool (generation unchanged at this point). */
+	strand_scheduler_advance(sched, NULL);
+
+	/*
+	 * Now call cancel with the old handle.  The descriptor is in the dead
+	 * pool.  fiber_alloc would increment the generation on next reuse, but
+	 * that hasn't happened yet — the generation still matches.
+	 *
+	 * To produce a stale handle we need to reuse the descriptor once.
+	 * Spawn another fiber: fiber_alloc pops from dead pool and increments
+	 * generation.  The old handle's generation is now stale.
+	 */
+	{
+		strand_fiber_t *f2;
+		void *base2;
+		unsigned long vg_id2;
+
+		f2 = fiber_alloc(&sched->dead_pool);
+		if (f2 == NULL) {
+			strand_scheduler_destroy(sched);
+			return (1);
+		}
+		base2 = stack_alloc(sz, &vg_id2);
+		if (base2 == NULL) {
+			fiber_free(&sched->dead_pool, f2);
+			strand_scheduler_destroy(sched);
+			return (1);
+		}
+		f2->stack_base = (char *)base2 + page_size();
+		f2->stack_size = sz;
+		f2->valgrind_stack_id = vg_id2;
+		f2->home_sched = sched;
+		strand_context_init(&f2->context, (char *)f2->stack_base + sz,
+		                    t38_stale_fiber_fn, &arg);
+		strand_fiber_tsan_init(f2);
+		atomic_store_explicit(&f2->state, FIBER_RUNNABLE,
+		                      memory_order_relaxed);
+		run_queue_push(sched, f2);
+	}
+
+	/* Cancel with the old (now stale) handle — must return STALE. */
+	rc = strand_fiber_cancel(handle);
+
+	/* Drain so destroy is clean. */
+	while (strand_scheduler_advance(sched, NULL) == SCHED_PROGRESS)
+		;
+
+	strand_scheduler_destroy(sched);
+	return (rc == STRAND_HANDLE_STALE ? 0 : 1);
+}
+
+/* =========================================================================
+ * Task 3.8 — test_generation_increments_on_reuse
+ *
+ * Spawn fiber A, let it complete (descriptor returns to dead pool).
+ * Allocate fiber B from the dead pool.  Verify B's generation is strictly
+ * greater than A's generation.
+ * =========================================================================
+ */
+
+static void
+t38_gen_fiber_fn(void *varg)
+{
+	struct t38_stale_arg *a = varg;
+	t35_switch_back(a->sched);
+}
+
+static int
+test_generation_increments_on_reuse(void)
+{
+	strand_scheduler_t *sched;
+	struct t38_stale_arg arg;
+	strand_fiber_t *fa, *fb;
+	void *base;
+	unsigned long vg_id;
+	size_t sz;
+	uint64_t gen_a, gen_b;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	sz = STRAND_DEFAULT_STACK_SIZE;
+	arg.sched = sched;
+
+	/* Allocate and run fiber A to completion. */
+	fa = fiber_alloc(&sched->dead_pool);
+	if (fa == NULL) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	base = stack_alloc(sz, &vg_id);
+	if (base == NULL) {
+		fiber_free(&sched->dead_pool, fa);
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	fa->stack_base = (char *)base + page_size();
+	fa->stack_size = sz;
+	fa->valgrind_stack_id = vg_id;
+	fa->home_sched = sched;
+	strand_context_init(&fa->context, (char *)fa->stack_base + sz,
+	                    t38_gen_fiber_fn, &arg);
+	strand_fiber_tsan_init(fa);
+	atomic_store_explicit(&fa->state, FIBER_RUNNABLE, memory_order_relaxed);
+	run_queue_push(sched, fa);
+
+	gen_a = fa->generation;
+
+	/* Run A — t38_gen_fiber_fn calls t35_switch_back, returning the
+	 * descriptor to the dead pool. */
+	strand_scheduler_advance(sched, NULL);
+
+	/*
+	 * Now allocate fiber B — fiber_alloc must pop fa's descriptor from the
+	 * dead pool and increment its generation.
+	 */
+	fb = fiber_alloc(&sched->dead_pool);
+	if (fb == NULL) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	gen_b = fb->generation;
+
+	/* Return fb to the dead pool immediately — it was never fully set up. */
+	fiber_free(&sched->dead_pool, fb);
+
+	strand_scheduler_destroy(sched);
+
+	/* B's generation must be strictly greater than A's. */
+	return (gen_b > gen_a ? 0 : 1);
+}
+
 void
 run_layer2_tests(void)
 {
@@ -930,4 +1336,9 @@ run_layer2_tests(void)
 	RUN("test_yield_requeues", test_yield_requeues);
 	RUN("test_timer_fires", test_timer_fires);
 	RUN("test_timer_order", test_timer_order);
+	RUN("test_cancel_timer", test_cancel_timer);
+	RUN("test_cancel_runnable", test_cancel_runnable);
+	RUN("test_stale_handle_noop", test_stale_handle_noop);
+	RUN("test_generation_increments_on_reuse",
+	    test_generation_increments_on_reuse);
 }

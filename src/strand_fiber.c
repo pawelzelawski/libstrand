@@ -295,6 +295,7 @@ strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 
 	strand_fiber_tsan_init(f);
 
+	f->home_sched = sched;
 	atomic_store_explicit(&f->state, FIBER_NEW, memory_order_relaxed);
 	atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
 
@@ -405,5 +406,83 @@ strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns)
 	cancelled = atomic_exchange_explicit(&f->cancel_pending, 0,
 	                                     memory_order_acq_rel);
 	return (cancelled ? STRAND_CANCELLED : STRAND_OK);
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_fiber_cancel — cancel a fiber by ABA-safe handle.
+ *
+ * Phase 3: same-worker path only.  Acts based on current fiber state.
+ * See ARCHITECTURE.md §8.1 and the doc comment in include/strand.h.
+ * ---------------------------------------------------------------------------
+ */
+int
+strand_fiber_cancel(strand_fiber_handle_t handle)
+{
+	strand_fiber_t *f;
+	strand_scheduler_t *sched;
+	fiber_state_t state;
+	int rc;
+
+	rc = fiber_handle_validate(handle);
+	if (rc != STRAND_OK)
+		return (rc);
+
+	f = handle.ptr;
+	sched = f->home_sched;
+
+	/*
+	 * Load the state once.  In Phase 3 this is always same-worker so no
+	 * concurrent state change is possible between the load and the action.
+	 * In Phase 5 the cross-worker path will use an inject operation
+	 * instead of directly manipulating state.
+	 */
+	state = atomic_load_explicit(&f->state, memory_order_relaxed);
+
+	switch (state) {
+	case FIBER_PARKED_TIMER:
+		/*
+		 * Remove from the timer heap so the fiber will not be woken
+		 * by timer expiry.  Set cancel_pending so sleep_until returns
+		 * STRAND_CANCELLED.  Transition to RUNNABLE and enqueue.
+		 */
+		timer_heap_remove(sched, f);
+		atomic_store_explicit(&f->cancel_pending, 1,
+		                      memory_order_relaxed);
+		atomic_store_explicit(&f->state, FIBER_RUNNABLE,
+		                      memory_order_relaxed);
+		run_queue_push(sched, f);
+		break;
+
+	case FIBER_RUNNABLE:
+	case FIBER_RUNNING:
+		/*
+		 * Set the FIBER_CANCELLATION_PENDING flag.  The fiber remains
+		 * in the run queue (RUNNABLE) or continues executing (RUNNING)
+		 * and must check cancel_pending at its next park point.
+		 */
+		atomic_store_explicit(&f->cancel_pending, 1,
+		                      memory_order_relaxed);
+		break;
+
+	case FIBER_FINISHED:
+	case FIBER_NEW:
+		/* No-op — fiber is not in a cancellable state. */
+		break;
+
+	case FIBER_PARKED_IO_READ:
+	case FIBER_PARKED_IO_WRITE:
+	case FIBER_PARKED_OFFLOAD:
+	case FIBER_PARKED_CHANNEL:
+		/*
+		 * Placeholder — these states are handled when the respective
+		 * layers are implemented:
+		 *   FIBER_PARKED_IO_*  : Phase 4 (Task 4.4)
+		 *   FIBER_PARKED_OFFLOAD: Phase 5 (Task 5.5)
+		 *   FIBER_PARKED_CHANNEL: Phase 6
+		 */
+		break;
+	}
+
+	return (STRAND_OK);
 }
 

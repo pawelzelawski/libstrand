@@ -391,6 +391,51 @@ timer_heap_peek_deadline(const strand_scheduler_t *sched)
 	return (sched->timer_heap[0].deadline_ns);
 }
 
+/*
+ * timer_heap_remove -- remove the entry whose fiber pointer matches f.
+ *
+ * Linear scan to locate the entry; replaces it with the last element to
+ * avoid leaving a hole, then restores heap order by sifting up then down.
+ * Sifting both directions handles the general case regardless of whether
+ * the replacement value is smaller or larger than the removed entry's
+ * neighbours.
+ *
+ * Returns 1 if found and removed, 0 if f was not in the heap.
+ */
+int
+timer_heap_remove(strand_scheduler_t *sched, strand_fiber_t *f)
+{
+	size_t i;
+	strand_timer_entry_t *h = sched->timer_heap;
+	size_t n = sched->timer_heap_len;
+
+	/* Linear scan — heap is sorted by deadline, not by fiber pointer. */
+	for (i = 0; i < n; i++) {
+		if (h[i].fiber == f)
+			break;
+	}
+	if (i == n)
+		return (0); /* not found */
+
+	/*
+	 * Replace with the last entry and shrink the heap.  If i already
+	 * points to the last entry, no data movement is needed.
+	 */
+	sched->timer_heap_len--;
+	if (i < sched->timer_heap_len) {
+		h[i] = h[sched->timer_heap_len];
+		/*
+		 * Sift up first: if the replacement is smaller than its
+		 * parent, bubble it up.  Then sift down: if it is larger
+		 * than a child, bubble it down.  Only one of the two will
+		 * actually move the element; the other is a no-op.
+		 */
+		heap_sift_up(sched, i);
+		heap_sift_down(sched, i);
+	}
+	return (1);
+}
+
 /* ---------------------------------------------------------------------------
  * strand_scheduler_advance -- one nonblocking scheduler pass.
  * See ARCHITECTURE.md section 4.2 for the five-step specification.

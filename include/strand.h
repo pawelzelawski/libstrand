@@ -232,6 +232,33 @@ void strand_fiber_yield(strand_scheduler_t *sched);
  */
 int strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns);
 
+/*
+ * strand_fiber_cancel — cancel a fiber identified by an ABA-safe handle.
+ *
+ * Validates the handle (null + generation check).  Then acts based on the
+ * fiber's current state:
+ *
+ *   FIBER_PARKED_TIMER   — remove from the timer heap, set cancel_pending,
+ *                          transition to FIBER_RUNNABLE, push to run queue.
+ *                          The fiber resumes at the strand_fiber_sleep_until
+ *                          call site and receives STRAND_CANCELLED.
+ *   FIBER_RUNNABLE       — set cancel_pending (FIBER_CANCELLATION_PENDING).
+ *   FIBER_RUNNING        — set cancel_pending (FIBER_CANCELLATION_PENDING).
+ *   FIBER_FINISHED       — no-op; returns STRAND_OK.
+ *   Stale handle         — no-op; returns STRAND_HANDLE_STALE.
+ *   Invalid handle       — returns STRAND_HANDLE_INVALID.
+ *
+ *   FIBER_PARKED_IO_READ/WRITE, FIBER_PARKED_OFFLOAD, FIBER_PARKED_CHANNEL:
+ *     placeholder in Phase 3 — handled in Phases 4 and 5.
+ *
+ * Phase 3: same-worker calls only.  Cross-worker enqueue path added in
+ * Phase 5 (Task 5.2).
+ *
+ * See ARCHITECTURE.md §8.1 for the full cancellation state table and
+ * cross-worker semantics.
+ */
+int strand_fiber_cancel(strand_fiber_handle_t handle);
+
 /* Function declarations added in later phases. */
 
 #endif /* STRAND_H */

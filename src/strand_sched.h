@@ -45,4 +45,16 @@ strand_timer_entry_t timer_heap_pop_min(strand_scheduler_t *sched);
  */
 uint64_t timer_heap_peek_deadline(const strand_scheduler_t *sched);
 
+/*
+ * timer_heap_remove — remove the entry for fiber f from the heap.
+ *
+ * Searches the heap by fiber pointer (linear scan — heap is keyed on
+ * deadline, not on fiber address).  If found, replaces the entry with
+ * the last element and restores heap order via sift-up then sift-down.
+ * Returns 1 if the entry was found and removed, 0 if not found.
+ * Caller must ensure f is actually parked in FIBER_PARKED_TIMER before
+ * calling.
+ */
+int timer_heap_remove(strand_scheduler_t *sched, strand_fiber_t *f);
+
 #endif /* STRAND_SCHED_H */

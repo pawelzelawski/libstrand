@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-16
 **Current Phase**: Phase 3 — Layer 2: Fiber Scheduler (in progress)
-**Next Task**: Phase 3 — Task 3.8: strand_fiber_cancel (partial)
+**Next Task**: Phase 3 — Task 3.9: Stack cache
 
 ### Phase Summary
 
@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | 1 | Foundation | DONE | 0/0 | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
-| 3 | Layer 2: Fiber Scheduler | IN PROGRESS | 21/21 | Tasks 3.1–3.7 done; 3.8–3.10 remaining |
+| 3 | Layer 2: Fiber Scheduler | IN PROGRESS | 25/25 | Tasks 3.1–3.8 done; 3.9–3.10 remaining |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
 | 5 | Layer 4: Multi-Worker Runtime | NOT STARTED | — | Workers, inject queue, offload pool |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
@@ -430,7 +430,7 @@ the poller is stubbed out for scheduler-only testing.
   - `strand_context_switch(f, sched->scheduler_ctx)`
   - On return: check for cancellation flag and return appropriate result
 
-**3.8 — strand_fiber_cancel (partial)**
+**3.8 — strand_fiber_cancel (partial)** ✓ DONE
 - Implement `strand_fiber_cancel(strand_fiber_handle_t handle)` for the states
   available in Phase 3:
   - Validate handle: null check + generation check
