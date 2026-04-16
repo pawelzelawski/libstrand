@@ -3,8 +3,8 @@
 ## Status Overview
 
 **Last Updated**: 2026-04-16
-**Current Phase**: Phase 3 — Layer 2: Fiber Scheduler (in progress)
-**Next Task**: Phase 4 — Layer 3: I/O Integration
+**Current Phase**: Phase 4 — Layer 3: I/O Integration
+**Next Task**: Phase 4 — Task 4.1: strand_poller_t and fd waiter table
 
 ### Phase Summary
 
@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | 1 | Foundation | DONE | 0/0 | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
-| 3 | Layer 2: Fiber Scheduler | IN PROGRESS | 30/30 | Tasks 3.1–3.10 done; pending Phase 3 completion criteria sign-off |
+| 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
 | 5 | Layer 4: Multi-Worker Runtime | NOT STARTED | — | Workers, inject queue, offload pool |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
@@ -519,14 +519,22 @@ File: `tests/test_layer2.c`
 
 ### Phase 3 Completion Criteria
 
-- [ ] All Layer 2 tests pass on Linux and OpenBSD, both architectures
-- [ ] `strand_scheduler_advance` verified nonblocking — quality milestone M10
-- [ ] `strand_scheduler_stop` interrupts blocked worker — quality milestone M11
-- [ ] Stack cache reuse verified (mmap not called on cache hit)
-- [ ] Generation counter increments on descriptor reuse
-- [ ] Fiber-local destructor called on completion
-- [ ] Valgrind clean; ASan/UBSan clean on both platforms
-- [ ] TSan clean — context switch hooks in place
+- [x] All Layer 2 tests pass on Linux and OpenBSD, both architectures
+      — 30/30 Linux (ASan/UBSan, TSan, Valgrind); 30/30 OpenBSD
+- [x] `strand_scheduler_advance` verified nonblocking — quality milestone M10
+      — `test_advance_nonblocking` passes
+- [x] `strand_scheduler_stop` interrupts blocked worker — quality milestone M11
+      — `test_scheduler_run_blocks` passes
+- [x] Stack cache reuse verified (mmap not called on cache hit)
+      — `test_stack_cache_reuse` passes
+- [x] Generation counter increments on descriptor reuse
+      — `test_generation_increments_on_reuse` passes
+- [x] Fiber-local destructor called on completion
+      — `test_fiber_local_destructor` passes
+- [x] Valgrind clean; ASan/UBSan clean on both platforms
+      — 0 errors, 0 leaks on Linux; clean on OpenBSD
+- [x] TSan clean — context switch hooks in place
+      — 30/30 TSan (Linux)
 
 ---
 
