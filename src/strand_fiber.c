@@ -538,3 +538,57 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 	return (STRAND_OK);
 }
 
+/* ---------------------------------------------------------------------------
+ * strand_fiber_local_set — store a fiber-local pointer with destructor.
+ *
+ * Sets local_ptr and local_dtor on the currently running fiber.  The
+ * scheduler calls the destructor (if non-NULL) with the stored pointer
+ * immediately after the fiber completes and the context switch returns —
+ * see the pending_free processing block in strand_scheduler_advance.
+ *
+ * Must be called from inside a fiber.  Debug builds assert; release builds
+ * treat a non-fiber call as a no-op.
+ * See ARCHITECTURE.md §4.7.
+ * ---------------------------------------------------------------------------
+ */
+void
+strand_fiber_local_set(strand_scheduler_t *sched, void *ptr,
+                       strand_destructor_t dtor)
+{
+	strand_fiber_t *f;
+
+	if (sched == NULL)
+		return;
+
+	if (sched->current_fiber == NULL) {
+		STRAND_DEBUG_ASSERT(0 && "strand_fiber_local_set called from non-fiber context");
+		return;
+	}
+
+	f = sched->current_fiber;
+	f->local_ptr  = ptr;
+	f->local_dtor = dtor;
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_fiber_local_get — retrieve the fiber-local pointer.
+ *
+ * Returns current_fiber->local_ptr.  Returns NULL if called from the host
+ * thread (debug builds assert).
+ * See ARCHITECTURE.md §4.7.
+ * ---------------------------------------------------------------------------
+ */
+void *
+strand_fiber_local_get(strand_scheduler_t *sched)
+{
+	if (sched == NULL)
+		return (NULL);
+
+	if (sched->current_fiber == NULL) {
+		STRAND_DEBUG_ASSERT(0 && "strand_fiber_local_get called from non-fiber context");
+		return (NULL);
+	}
+
+	return (sched->current_fiber->local_ptr);
+}
+

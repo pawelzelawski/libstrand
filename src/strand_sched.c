@@ -189,6 +189,8 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	sched->pending_free_base  = NULL;
 	sched->pending_free_size  = 0;
 	sched->pending_free_vg_id = 0;
+	sched->pending_free_local_ptr  = NULL;
+	sched->pending_free_local_dtor = NULL;
 
 	sched->budget = budget;
 	sched->run_head = NULL;
@@ -534,13 +536,27 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 		sched->current_fiber = NULL;
 
 		/*
-		 * Pending stack free — ARCHITECTURE.md §13, §4.2 Step 5.
+		 * Pending stack free and fiber-local destructor —
+		 * ARCHITECTURE.md §13, §4.2 Step 5, §4.7.
 		 *
-		 * The fiber stored its stack info in pending_free_* before
-		 * switching back so it could not munmap its own execution stack.
-		 * We are now back on the scheduler's stack; it is safe to
-		 * call sched_stack_free (which may call munmap) here.
+		 * The fiber stored its stack info and local destructor in
+		 * pending_free_* before switching back so it could not
+		 * munmap its own execution stack or run the destructor on
+		 * the fiber's stack.  We are now back on the scheduler's
+		 * stack; both operations are safe here.
+		 *
+		 * Destructor is called before the stack is freed so the
+		 * destructor body can still refer to fiber-stack memory
+		 * without risk (it runs on the scheduler stack, not the
+		 * fiber stack, but the mapping still exists until after
+		 * sched_stack_free).
 		 */
+		if (sched->pending_free_local_dtor != NULL) {
+			sched->pending_free_local_dtor(
+			    sched->pending_free_local_ptr);
+			sched->pending_free_local_dtor = NULL;
+			sched->pending_free_local_ptr  = NULL;
+		}
 		if (sched->pending_free_base != NULL) {
 			sched_stack_free(sched,
 			                 sched->pending_free_base,

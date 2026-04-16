@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-16
 **Current Phase**: Phase 3 — Layer 2: Fiber Scheduler (in progress)
-**Next Task**: Phase 3 — Task 3.10: Fiber-local storage
+**Next Task**: Phase 4 — Layer 3: I/O Integration
 
 ### Phase Summary
 
@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | 1 | Foundation | DONE | 0/0 | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
-| 3 | Layer 2: Fiber Scheduler | IN PROGRESS | 28/28 | Tasks 3.1–3.9 done; 3.10 remaining |
+| 3 | Layer 2: Fiber Scheduler | IN PROGRESS | 30/30 | Tasks 3.1–3.10 done; pending Phase 3 completion criteria sign-off |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
 | 5 | Layer 4: Multi-Worker Runtime | NOT STARTED | — | Workers, inject queue, offload pool |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
@@ -456,11 +456,21 @@ the poller is stubbed out for scheduler-only testing.
 - Stack size per cache slot must match — only cache stacks of matching size.
   Different sizes are not interchangeable.
 
-**3.10 — Fiber-local storage**
-- Implement `strand_fiber_local_set(void *ptr, strand_destructor_t dtor)`:
-  set `current_fiber->local_ptr = ptr`, `current_fiber->local_dtor = dtor`
-- Implement `strand_fiber_local_get()`: return `current_fiber->local_ptr`
-- Destructor called by scheduler when `FIBER_FINISHED` is processed
+**3.10 — Fiber-local storage** ✓ DONE
+- Implemented `strand_fiber_local_set(sched, ptr, dtor)` in `src/strand_fiber.c`:
+  sets `current_fiber->local_ptr` and `current_fiber->local_dtor`; WRONGCTX
+  guard (STRAND_DEBUG_ASSERT + silent no-op in release)
+- Implemented `strand_fiber_local_get(sched)` in `src/strand_fiber.c`:
+  returns `current_fiber->local_ptr`; same WRONGCTX guard
+- Declared both in `include/strand.h` with full doc comments
+- Added `pending_free_local_ptr` / `pending_free_local_dtor` fields to
+  `strand_scheduler_t`; `t35_switch_back` copies them from the fiber before
+  the context switch; `strand_scheduler_advance` calls the destructor (if
+  non-NULL) and clears both fields after each fiber completes — before
+  `sched_stack_free` so the destructor runs while the fiber stack is still
+  mapped (ARCHITECTURE.md §4.7)
+- Tests: `test_fiber_local_set_get`, `test_fiber_local_destructor` — 30/30
+  passed Linux (ASan/UBSan, TSan, Valgrind clean)
 
 ### Tests for Phase 3
 

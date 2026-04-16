@@ -337,6 +337,14 @@ typedef struct strand_scheduler {
 	void         *pending_free_base;
 	size_t        pending_free_size;
 	unsigned long pending_free_vg_id;
+	/*
+	 * Pending fiber-local destructor — copied from the completing fiber's
+	 * local_dtor/local_ptr before the context switch so the scheduler can
+	 * invoke the destructor after the switch, while on its own stack.
+	 * pending_free_local_dtor == NULL means no destructor to call.
+	 */
+	void                *pending_free_local_ptr;
+	strand_destructor_t  pending_free_local_dtor;
 	size_t cache_cap;
 	size_t cache_floor;
 	uint64_t cache_idle_ns; /* idle reclamation timeout (ns) */

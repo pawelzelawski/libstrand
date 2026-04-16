@@ -12,6 +12,8 @@
  *   Task 3.8: strand_fiber_cancel — cancel timer, cancel runnable,
  *             stale handle, generation increment on reuse.
  *   Task 3.9: stack cache — reuse, cap overflow, idle reclamation.
+ *   Task 3.10: fiber-local storage — set/get across yield, destructor on
+ *             completion.
  *
  * See DEVELOPMENT.md §"Tests for Phase 3".
  */
@@ -321,6 +323,8 @@ t35_switch_back(strand_scheduler_t *sched)
 	sched->pending_free_base  = (char *)me->stack_base - page_size();
 	sched->pending_free_size  = me->stack_size;
 	sched->pending_free_vg_id = me->valgrind_stack_id;
+	sched->pending_free_local_ptr  = me->local_ptr;
+	sched->pending_free_local_dtor = me->local_dtor;
 	fiber_free(&sched->dead_pool, me);
 	strand_context_switch(me, &sched->scheduler_ctx);
 }
@@ -1505,6 +1509,150 @@ test_idle_reclamation(void)
 	return (0);
 }
 
+/* =========================================================================
+ * Task 3.10 — Fiber-local storage
+ * =========================================================================
+ */
+
+/*
+ * t310_set_get_arg — shared argument for test_fiber_local_set_get.
+ * The fiber sets a local pointer, yields, then reads it back via
+ * strand_fiber_local_get and compares with the expected value.
+ */
+struct t310_set_get_arg {
+	strand_scheduler_t *sched;
+	void               *ptr;      /* value to store */
+	void               *got;      /* value read back after yield */
+	int                 phase;    /* 0: first run, 1: resumed after yield */
+};
+
+static void
+t310_set_get_fn(void *varg)
+{
+	struct t310_set_get_arg *a = (struct t310_set_get_arg *)varg;
+	strand_scheduler_t *sched = a->sched;
+
+	/* Phase 0: set local ptr, yield. */
+	strand_fiber_local_set(sched, a->ptr, NULL);
+	a->phase = 1;
+	strand_fiber_yield(sched);
+
+	/* Phase 1: read back after yield; store in got. */
+	a->got = strand_fiber_local_get(sched);
+	t35_switch_back(sched);
+}
+
+/*
+ * test_fiber_local_set_get -- set a local ptr in a fiber, yield, get ptr;
+ * verify the same value is returned after the yield.
+ */
+static int
+test_fiber_local_set_get(void)
+{
+	strand_scheduler_t *sched;
+	struct t310_set_get_arg arg;
+	int sentinel;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	arg.sched = sched;
+	arg.ptr   = &sentinel; /* any non-NULL address */
+	arg.got   = NULL;
+	arg.phase = 0;
+
+	if (t35_push_fiber(sched, t310_set_get_fn, &arg) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	/* First advance: fiber sets local ptr, yields, returns to scheduler. */
+	strand_scheduler_advance(sched, NULL);
+	if (arg.phase != 1) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	/* Second advance: fiber resumes, reads local ptr, calls t35_switch_back. */
+	strand_scheduler_advance(sched, NULL);
+
+	strand_scheduler_destroy(sched);
+
+	/* got must equal the address we stored. */
+	return (arg.got == arg.ptr ? 0 : 1);
+}
+
+/*
+ * t310_dtor_arg — shared argument for test_fiber_local_destructor.
+ */
+struct t310_dtor_arg {
+	strand_scheduler_t *sched;
+	void               *stored_ptr;  /* value passed to destructor */
+	void               *dtor_got;    /* what the destructor received */
+	int                 dtor_called; /* incremented by destructor */
+};
+
+static void
+t310_dtor_fn(void *ptr)
+{
+	struct t310_dtor_arg *a = (struct t310_dtor_arg *)ptr;
+	a->dtor_called++;
+	a->dtor_got = a->stored_ptr;
+}
+
+static void
+t310_fiber_with_dtor_fn(void *varg)
+{
+	struct t310_dtor_arg *a = (struct t310_dtor_arg *)varg;
+
+	/* Register a destructor pointing back at the arg struct so the
+	 * destructor can record what it received. */
+	strand_fiber_local_set(a->sched, a->stored_ptr, t310_dtor_fn);
+
+	/* Replace local_ptr with the arg struct so the destructor receives a
+	 * pointer it can write through.  The destructor signature is
+	 * void (*)(void*) and the ptr argument is the stored local_ptr. */
+	strand_fiber_local_set(a->sched, a /* <-- this IS the dtor arg */, t310_dtor_fn);
+	t35_switch_back(a->sched);
+}
+
+/*
+ * test_fiber_local_destructor -- set a local ptr with destructor; let the
+ * fiber finish; verify the destructor was called exactly once with the
+ * correct pointer.
+ */
+static int
+test_fiber_local_destructor(void)
+{
+	strand_scheduler_t *sched;
+	struct t310_dtor_arg arg;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	arg.sched      = sched;
+	arg.stored_ptr = &arg; /* store arg's own address */
+	arg.dtor_got   = NULL;
+	arg.dtor_called = 0;
+
+	if (t35_push_fiber(sched, t310_fiber_with_dtor_fn, &arg) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	/* Advance: fiber sets local_ptr=&arg with dtor=t310_dtor_fn,
+	 * calls t35_switch_back.  Scheduler processes pending_free and
+	 * invokes the destructor with &arg. */
+	strand_scheduler_advance(sched, NULL);
+
+	strand_scheduler_destroy(sched);
+
+	/* Destructor must have been called exactly once with &arg. */
+	return (arg.dtor_called == 1 && arg.dtor_got == &arg ? 0 : 1);
+}
+
 void
 run_layer2_tests(void)
 {
@@ -1529,6 +1677,8 @@ run_layer2_tests(void)
 	RUN("test_stack_cache_reuse", test_stack_cache_reuse);
 	RUN("test_stack_cache_cap", test_stack_cache_cap);
 	RUN("test_idle_reclamation", test_idle_reclamation);
+	RUN("test_fiber_local_set_get", test_fiber_local_set_get);
+	RUN("test_fiber_local_destructor", test_fiber_local_destructor);
 }
 
 

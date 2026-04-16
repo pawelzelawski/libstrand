@@ -259,6 +259,39 @@ int strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns);
  */
 int strand_fiber_cancel(strand_fiber_handle_t handle);
 
+/*
+ * strand_fiber_local_set — store a fiber-local pointer with an optional
+ * destructor.
+ *
+ * Sets current_fiber->local_ptr = ptr and current_fiber->local_dtor = dtor.
+ * Overwrites any previously stored values.
+ *
+ * The destructor (if non-NULL) is called with the stored pointer by the
+ * scheduler when the fiber completes.  It is called exactly once, on the
+ * scheduler's own stack after the fiber has switched back.  If local_ptr is
+ * NULL when the fiber completes the destructor is still called with NULL.
+ *
+ * Must be called from inside a running fiber (sched->current_fiber != NULL).
+ * Debug builds assert this; release builds silently do nothing if called from
+ * the host thread.
+ *
+ * See ARCHITECTURE.md §4.7.
+ */
+void strand_fiber_local_set(strand_scheduler_t *sched, void *ptr,
+                             strand_destructor_t dtor);
+
+/*
+ * strand_fiber_local_get — retrieve the fiber-local pointer.
+ *
+ * Returns current_fiber->local_ptr.
+ *
+ * Must be called from inside a running fiber.  Returns NULL if called from
+ * the host thread (debug builds assert).
+ *
+ * See ARCHITECTURE.md §4.7.
+ */
+void *strand_fiber_local_get(strand_scheduler_t *sched);
+
 /* Function declarations added in later phases. */
 
 #endif /* STRAND_H */
