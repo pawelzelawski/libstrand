@@ -3,11 +3,15 @@
  * See ARCHITECTURE.md §5.
  *
  * Task 4.1: strand_poller_t and fd waiter hash table implementation.
+ * Task 4.2: strand_fiber_wait_readable / strand_fiber_wait_writable.
  */
 
 #include "strand_poller.h"
+#include "strand_context.h"
+#include "strand_sched.h"
 
 #include <assert.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -287,15 +291,7 @@ fd_table_insert(strand_poller_t *p, int fd)
 
 /*
  * fd_table_remove — remove the entry for fd from the table.
- *
- * Replaces the entry with a tombstone so that probe chains for other fds
- * that collided with this slot remain intact.
- *
- * Must only be called when both read_waiter and write_waiter are NULL —
- * i.e., after both I/O waiter fibers have been woken or cancelled.
- * Debug builds assert this precondition.
- *
- * No-op if fd is not found in the table.
+ * ...existing code...
  */
 void
 fd_table_remove(strand_poller_t *p, int fd)
@@ -325,5 +321,243 @@ fd_table_remove(strand_poller_t *p, int fd)
 	e->dbg_gen = 0;
 #endif
 	p->table_len--;
+}
+
+/* ---------------------------------------------------------------------------
+ * poller_arm_fd — arm or re-arm an fd in the OS poller.
+ *
+ * Linux: issues epoll_ctl ADD (NOT_REGISTERED) or MOD (otherwise) with
+ *        new_mask (caller is responsible for including EPOLLET | EPOLLONESHOT
+ *        and the correct EPOLLIN / EPOLLOUT combination).
+ *        Stores entry pointer in ev.data.ptr as the per-registration token
+ *        so that poller_deliver_event can find the entry without a hash lookup.
+ *        Increments arm_token before the syscall; updates event_mask and
+ *        reg_state on success.
+ *
+ * OpenBSD: issues kevent EV_ADD | EV_DISPATCH for the given filter
+ *          (EVFILT_READ or EVFILT_WRITE).  new_mask is not used on OpenBSD.
+ *          Stores entry pointer in kev.udata.
+ *
+ * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
+ * See ARCHITECTURE.md §5.4 and §5.7.
+ * ---------------------------------------------------------------------------
+ */
+int
+poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
+              int filter, strand_fd_entry_t *e)
+{
+#ifdef STRAND_LINUX
+	struct epoll_event ev;
+	int                op;
+
+	op = (e->reg_state == FD_REG_NOT_REGISTERED) ? EPOLL_CTL_ADD
+	                                              : EPOLL_CTL_MOD;
+	ev.events   = new_mask;
+	ev.data.ptr = e;
+
+	/*
+	 * Increment arm_token before the syscall.  The token is stored in
+	 * ev.data.ptr (entry pointer) and implicitly in entry->arm_token.
+	 * poller_deliver_event can use arm_token to detect stale events after
+	 * a cancel + re-register sequence.
+	 * See ARCHITECTURE.md §5.3.
+	 */
+	e->arm_token++;
+
+	if (epoll_ctl(p->pollfd, op, fd, &ev) == -1)
+		return (STRAND_ERR_IO);
+
+	e->event_mask = new_mask;
+	e->reg_state  = FD_REG_ACTIVE;
+	return (STRAND_OK);
+#endif
+
+#ifdef STRAND_OPENBSD
+	struct kevent kev;
+
+	(void)new_mask; /* mask is implicit in the filter on OpenBSD */
+
+	EV_SET(&kev, (uintptr_t)fd, filter, EV_ADD | EV_DISPATCH, 0, 0, e);
+	e->arm_token++;
+
+	if (kevent(p->pollfd, &kev, 1, NULL, 0, NULL) == -1)
+		return (STRAND_ERR_IO);
+
+	return (STRAND_OK);
+#endif
+}
+
+/* ---------------------------------------------------------------------------
+ * fiber_io_wake — transition a parked IO fiber to RUNNABLE.
+ *
+ * Sets io_result on the fiber, transitions state to FIBER_RUNNABLE, and
+ * appends the fiber to the scheduler run queue.  Called from
+ * poller_deliver_event (Task 4.3) and poller_cancel_io (Task 4.4).
+ *
+ * Must be called from the owning worker.
+ * ---------------------------------------------------------------------------
+ */
+void
+fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f, int result)
+{
+	f->io_result = result;
+	atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
+	run_queue_push(sched, f);
+}
+
+/* ---------------------------------------------------------------------------
+ * fiber_wait_io — common implementation for wait_readable / wait_writable.
+ *
+ * dir: 0 = read (FIBER_PARKED_IO_READ), 1 = write (FIBER_PARKED_IO_WRITE).
+ *
+ * Steps:
+ *   1. Assert fiber context; debug-assert O_NONBLOCK on fd.
+ *   2. Lookup or insert fd entry in poller table.
+ *   3. Reject duplicate waiter in same direction (STRAND_ERR_IO_CONFLICT).
+ *   4. Compute new event mask (Linux) or select filter (OpenBSD).
+ *   5. Arm fd via poller_arm_fd.
+ *   6. Store waiter pointer; record parked_fd on fiber.
+ *   7. Transition FIBER_RUNNING -> FIBER_PARKED_IO_READ or IO_WRITE.
+ *   8. strand_context_switch back to scheduler.
+ *   9. Return f->io_result (set by waker before run_queue_push).
+ *
+ * See ARCHITECTURE.md §5.2, §5.3, §5.4, §5.7.
+ * ---------------------------------------------------------------------------
+ */
+static int
+fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
+{
+	strand_fiber_t    *f;
+	strand_fd_entry_t *e;
+	int                inserted, rc;
+
+	STRAND_DEBUG_ASSERT(sched != NULL);
+	STRAND_DEBUG_ASSERT(sched->current_fiber != NULL);
+
+	f = sched->current_fiber;
+
+	/*
+	 * SAFETY: O_NONBLOCK must be set on fd before calling wait_readable /
+	 * wait_writable.  A blocking fd would stall the entire worker thread.
+	 * See ARCHITECTURE.md §5.1 and CODING_STANDARDS.md §6.1.
+	 */
+#ifdef STRAND_DEBUG
+	{
+		int fl = fcntl(fd, F_GETFL);
+		STRAND_DEBUG_ASSERT(fl != -1 && (fl & O_NONBLOCK) &&
+		    "fd passed to strand_fiber_wait without O_NONBLOCK");
+	}
+#endif
+
+	inserted = 0;
+	e = fd_table_lookup(sched->poller, fd);
+	if (e == NULL) {
+		e = fd_table_insert(sched->poller, fd);
+		if (e == NULL)
+			return (STRAND_ERR_NOMEM);
+		inserted = 1;
+	}
+
+	/*
+	 * Reject duplicate waiter in the requested direction.
+	 * Multiple waiters in the same direction are forbidden — see
+	 * ARCHITECTURE.md §5.3.
+	 */
+	if (dir == 0 && e->read_waiter != NULL)
+		return (STRAND_ERR_IO_CONFLICT);
+	if (dir == 1 && e->write_waiter != NULL)
+		return (STRAND_ERR_IO_CONFLICT);
+
+	/*
+	 * Compute event mask (Linux) or filter (OpenBSD) and arm the fd.
+	 *
+	 * Linux: mask reflects all active directions after this registration.
+	 *   Both EPOLLIN and EPOLLOUT may be set if both directions have waiters.
+	 *   EPOLLET | EPOLLONESHOT are always set.  See ARCHITECTURE.md §5.4.
+	 *
+	 * OpenBSD: EVFILT_READ and EVFILT_WRITE are independent filters.
+	 *   Each direction uses a separate kevent call.  See ARCHITECTURE.md §5.7.
+	 */
+#ifdef STRAND_LINUX
+	{
+		uint32_t new_mask;
+
+		new_mask = EPOLLET | EPOLLONESHOT;
+		/* Add EPOLLIN if registering read or if write waiter already active. */
+		if (dir == 0 || e->read_waiter != NULL)
+			new_mask |= EPOLLIN;
+		/* Add EPOLLOUT if registering write or if read waiter already active. */
+		if (dir == 1 || e->write_waiter != NULL)
+			new_mask |= EPOLLOUT;
+		rc = poller_arm_fd(sched->poller, fd, new_mask, 0, e);
+	}
+#endif
+
+#ifdef STRAND_OPENBSD
+	{
+		int filter = (dir == 0) ? EVFILT_READ : EVFILT_WRITE;
+		rc = poller_arm_fd(sched->poller, fd, 0, filter, e);
+	}
+#endif
+
+	if (rc != STRAND_OK) {
+		/*
+		 * Arm failed.  If we just inserted this entry and it has no
+		 * other waiters, remove it to keep the table clean.
+		 */
+		if (inserted && e->read_waiter == NULL && e->write_waiter == NULL)
+			fd_table_remove(sched->poller, fd);
+		return (rc);
+	}
+
+	/* Store the waiter pointer in the entry. */
+	if (dir == 0)
+		e->read_waiter = f;
+	else
+		e->write_waiter = f;
+
+	/* Record the fd on the fiber so the cancel path can find the entry. */
+	f->parked_fd = fd;
+
+	/*
+	 * Transition FIBER_RUNNING -> FIBER_PARKED_IO_READ / IO_WRITE.
+	 * Relaxed ordering: visibility is provided by the context switch below.
+	 */
+	atomic_store_explicit(&f->state,
+	    (dir == 0) ? FIBER_PARKED_IO_READ : FIBER_PARKED_IO_WRITE,
+	    memory_order_relaxed);
+
+	/* Switch back to the scheduler.  Resumes here when the fd fires,
+	 * the fiber is cancelled, or the fd enters an error state. */
+	strand_context_switch(f, &sched->scheduler_ctx);
+
+	/* Return the result set by the waker (STRAND_OK, STRAND_CANCELLED,
+	 * or STRAND_ERR_IO).  See fiber_io_wake and ARCHITECTURE.md §5.3. */
+	return (f->io_result);
+}
+
+/* ---------------------------------------------------------------------------
+ * Public API
+ * ---------------------------------------------------------------------------
+ */
+
+/*
+ * strand_fiber_wait_readable — park the current fiber until fd is readable.
+ * See ARCHITECTURE.md §5 and include/strand.h for the full contract.
+ */
+int
+strand_fiber_wait_readable(strand_scheduler_t *sched, int fd)
+{
+	return (fiber_wait_io(sched, fd, 0));
+}
+
+/*
+ * strand_fiber_wait_writable — park the current fiber until fd is writable.
+ * See ARCHITECTURE.md §5 and include/strand.h for the full contract.
+ */
+int
+strand_fiber_wait_writable(strand_scheduler_t *sched, int fd)
+{
+	return (fiber_wait_io(sched, fd, 1));
 }
 

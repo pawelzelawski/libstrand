@@ -184,6 +184,23 @@ typedef struct strand_fiber {
 	 */
 	_Atomic int cancel_pending;
 	/*
+	 * parked_fd — fd this fiber is parked on when state is
+	 * FIBER_PARKED_IO_READ or FIBER_PARKED_IO_WRITE.
+	 * Used by strand_fiber_cancel (Task 4.4) to find the fd table entry
+	 * without scanning the full poller table.
+	 * Meaningful only while fiber is in a PARKED_IO state; value is
+	 * undefined otherwise.
+	 */
+	int parked_fd;
+	/*
+	 * io_result — result code set by the waker before pushing this fiber
+	 * to the run queue from an IO wait.  Read by strand_fiber_wait_readable
+	 * / strand_fiber_wait_writable on return from strand_context_switch.
+	 * Values: STRAND_OK (ready), STRAND_CANCELLED, STRAND_ERR_IO.
+	 * See ARCHITECTURE.md §5.3 and §5.6.
+	 */
+	int io_result;
+	/*
 	 * home_sched — the scheduler that owns this fiber.
 	 * Set at spawn time (strand_fiber_spawn) and used by
 	 * strand_fiber_cancel to access the run queue and timer heap without

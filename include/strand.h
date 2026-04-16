@@ -64,6 +64,8 @@ typedef void (*strand_destructor_t)(void *ptr);
 #define STRAND_ERR_WRONGCTX (-4) /* called from wrong context / wrong worker */
 #define STRAND_ERR_NOMEM (-5)    /* allocation failure */
 #define STRAND_CANCELLED (-6)    /* operation cancelled by strand_fiber_cancel */
+#define STRAND_ERR_IO (-7)       /* fd entered error or hangup state (EPOLLERR/EPOLLHUP/EV_EOF) */
+#define STRAND_ERR_IO_CONFLICT (-8) /* waiter already registered on fd in the same direction */
 /*
  * Default scheduler and stack cache parameters.
  * These are the values used when zero is passed in strand_sched_config_t.
@@ -293,5 +295,40 @@ void strand_fiber_local_set(strand_scheduler_t *sched, void *ptr,
 void *strand_fiber_local_get(strand_scheduler_t *sched);
 
 /* Function declarations added in later phases. */
+
+/*
+ * strand_fiber_wait_readable — park the current fiber until fd is readable.
+ *
+ * Registers fd with the internal epoll/kqueue instance and transitions the
+ * calling fiber from FIBER_RUNNING to FIBER_PARKED_IO_READ.  The fiber
+ * resumes when the fd becomes readable, is cancelled, or the fd enters an
+ * error/hangup state.
+ *
+ * fd must have O_NONBLOCK set (debug builds assert; release builds do not
+ * check — undefined behaviour otherwise).  No other fiber must be parked
+ * for reading on the same fd.
+ *
+ * Returns STRAND_OK          — fd is ready for reading.
+ * Returns STRAND_CANCELLED   — strand_fiber_cancel was called on this fiber.
+ * Returns STRAND_ERR_IO      — fd entered an error or hangup state.
+ * Returns STRAND_ERR_IO_CONFLICT — a read waiter is already registered on fd.
+ * Returns STRAND_ERR_NOMEM   — fd table allocation failed.
+ *
+ * Must be called from inside a running fiber.  Debug builds assert this.
+ * See ARCHITECTURE.md §5.
+ */
+int strand_fiber_wait_readable(strand_scheduler_t *sched, int fd);
+
+/*
+ * strand_fiber_wait_writable — park the current fiber until fd is writable.
+ *
+ * Symmetric to strand_fiber_wait_readable for the write direction.
+ * Transitions to FIBER_PARKED_IO_WRITE.  Returns same result codes.
+ *
+ * Returns STRAND_ERR_IO_CONFLICT if a write waiter is already registered on fd.
+ *
+ * See ARCHITECTURE.md §5.
+ */
+int strand_fiber_wait_writable(strand_scheduler_t *sched, int fd);
 
 #endif /* STRAND_H */

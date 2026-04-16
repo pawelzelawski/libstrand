@@ -135,4 +135,37 @@ strand_fd_entry_t *fd_table_insert(strand_poller_t *p, int fd);
  */
 void fd_table_remove(strand_poller_t *p, int fd);
 
+/*
+ * poller_arm_fd — arm or re-arm fd in the OS poller.
+ *
+ * Linux: calls epoll_ctl ADD (if NOT_REGISTERED) or MOD (otherwise)
+ *        with new_mask | EPOLLET | EPOLLONESHOT.
+ *        Updates entry->event_mask, entry->reg_state, entry->arm_token.
+ * OpenBSD: calls kevent with filter EV_ADD | EV_DISPATCH.
+ *          filter is EVFILT_READ or EVFILT_WRITE; new_mask is ignored.
+ *
+ * On Linux, new_mask must already include EPOLLET | EPOLLONESHOT and
+ * the correct combination of EPOLLIN / EPOLLOUT for all active waiters.
+ *
+ * entry->arm_token is incremented before the syscall so that the token
+ * stored in event data matches the current registration epoch.
+ *
+ * Returns STRAND_OK or STRAND_ERR_IO on syscall failure.
+ * See ARCHITECTURE.md §5.4 (Linux) and §5.7 (OpenBSD).
+ */
+int poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
+                  int filter, strand_fd_entry_t *e);
+
+/*
+ * fiber_io_wake — wake a fiber parked on an IO wait with a given result.
+ *
+ * Sets f->io_result = result, transitions f to FIBER_RUNNABLE, and
+ * pushes f onto sched's run queue.  Called from poller_deliver_event
+ * (Task 4.3) and poller_cancel_io (Task 4.4).
+ *
+ * Must be called from the owning worker (same-worker path only in Phase 4).
+ */
+void fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f,
+                   int result);
+
 #endif /* STRAND_POLLER_H */
