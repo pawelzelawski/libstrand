@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-16
 **Current Phase**: Phase 4 — Layer 3: I/O Integration
-**Next Task**: Phase 4 — Task 4.3: poller_poll and event delivery
+**Next Task**: Phase 4 — Task 4.4: strand_fiber_cancel for I/O waiters
 
 ### Phase Summary
 
@@ -13,7 +13,7 @@
 | 1 | Foundation | DONE | 0/0 | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
-| 4 | Layer 3: I/O Integration | IN PROGRESS | 31/31 | Tasks 4.1–4.2 done; Linux clean |
+| 4 | Layer 3: I/O Integration | IN PROGRESS | 31/31 | Tasks 4.1–4.3, 4.5 done; Linux clean |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
 | 5 | Layer 4: Multi-Worker Runtime | NOT STARTED | — | Workers, inject queue, offload pool |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
@@ -592,7 +592,7 @@ platform-specific code is guarded by `STRAND_LINUX` / `STRAND_OPENBSD`.
 - `strand_context_switch(f, sched->scheduler_ctx)`
 - On return: return ready/cancelled result to caller
 
-**4.3 — poller_poll and event delivery**
+**4.3 — poller_poll and event delivery** ✓ DONE
 - Implement `poller_poll(poller, timeout_ms)`: call `epoll_wait`/`kevent`
   with the given timeout; process all returned events via `poller_deliver_event`
 - Implement `poller_deliver_event(sched, event)`:
@@ -620,7 +620,7 @@ platform-specific code is guarded by `STRAND_LINUX` / `STRAND_OPENBSD`.
   - Cross-worker path: enqueue to inject queue (inject queue real in Phase 5;
     cross-worker cancel tested fully in Phase 5)
 
-**4.5 — Wakeup fd integration into poller**
+**4.5 — Wakeup fd integration into poller** ✓ DONE
 - Register the scheduler wakeup fd with the epoll/kqueue instance so that
   `strand_scheduler_stop`'s write wakes a blocked `epoll_wait`/`kevent`
 - Drain wakeup fd bytes in scheduler advance Step 3 (already implemented

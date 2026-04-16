@@ -25,7 +25,6 @@
 #endif
 
 #include <limits.h>
-#include <poll.h>
 #include <pthread.h>
 
 #include "strand_context.h"
@@ -208,6 +207,34 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 		free(sched);
 		return NULL;
 	}
+
+	/*
+	 * Register the wakeup fd with the poller so that a write by
+	 * strand_scheduler_stop unblocks a blocked epoll_wait / kevent.
+	 * See ARCHITECTURE.md §5 and DEVELOPMENT.md Task 4.5.
+	 */
+#ifdef STRAND_LINUX
+	if (poller_register_wakeup_fd(sched->poller, sched->wakeup_fd) !=
+	    STRAND_OK) {
+		poller_destroy(sched->poller);
+		wakeup_close(sched);
+		free(sched->timer_heap);
+		free(sched->stack_cache);
+		free(sched);
+		return NULL;
+	}
+#endif
+#ifdef STRAND_OPENBSD
+	if (poller_register_wakeup_fd(sched->poller,
+	    sched->wakeup_pipe[0]) != STRAND_OK) {
+		poller_destroy(sched->poller);
+		wakeup_close(sched);
+		free(sched->timer_heap);
+		free(sched->stack_cache);
+		free(sched);
+		return NULL;
+	}
+#endif
 	sched->inject_queue._placeholder = 0;
 	atomic_init(&sched->stop_flag, 0);
 	sched->owner_thread = pthread_self();
@@ -529,10 +556,12 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	wakeup_drain(sched);
 
 	/*
-	 * Step 4: poll I/O with zero timeout.
-	 * Phase 3 stub -- poller is NULL until Phase 4 (Task 4.1).
+	 * Step 4: poll I/O with zero timeout (non-blocking).
+	 * Delivers any ready events to waiting fibers via poller_deliver_event,
+	 * pushing woken fibers onto the run queue for Step 5.
+	 * See ARCHITECTURE.md §4.2 and §5.
 	 */
-	(void)(sched->poller);
+	poller_poll(sched, 0);
 
 	/*
 	 * Step 5: run up to budget fibers.
@@ -736,7 +765,6 @@ strand_scheduler_run(strand_scheduler_t *sched)
 	for (;;) {
 		uint64_t next_ns;
 		sched_result_t rc;
-		struct pollfd pfd;
 		int timeout_ms;
 
 		if (atomic_load_explicit(&sched->stop_flag,
@@ -754,12 +782,11 @@ strand_scheduler_run(strand_scheduler_t *sched)
 
 		/*
 		 * Idle: compute timeout from the next timer deadline, then
-		 * block on the wakeup fd.  A stop signal (or, in Phase 4, I/O
-		 * readiness) will write to the fd and unblock poll early.
-		 *
-		 * Phase 3 stub: poll only the wakeup fd.  Phase 4 (Task 4.3)
-		 * replaces this with the real poller's epoll/kqueue fd so that
-		 * I/O readiness also wakes the worker.
+		 * block on the poller.  strand_scheduler_stop writes to the
+		 * wakeup fd (registered with the poller in Task 4.5), which
+		 * unblocks epoll_wait / kevent.  I/O readiness on any fiber
+		 * fd also unblocks the wait and delivers events.
+		 * See ARCHITECTURE.md §4.2.
 		 */
 		if (next_ns == UINT64_MAX) {
 			timeout_ms = -1; /* block indefinitely until woken */
@@ -776,14 +803,6 @@ strand_scheduler_run(strand_scheduler_t *sched)
 			}
 		}
 
-#ifdef STRAND_LINUX
-		pfd.fd = sched->wakeup_fd;
-#endif
-#ifdef STRAND_OPENBSD
-		pfd.fd = sched->wakeup_pipe[0];
-#endif
-		pfd.events = POLLIN;
-		pfd.revents = 0;
-		(void)poll(&pfd, 1, timeout_ms);
+		poller_poll(sched, timeout_ms);
 	}
 }

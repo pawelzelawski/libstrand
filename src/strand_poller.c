@@ -4,6 +4,8 @@
  *
  * Task 4.1: strand_poller_t and fd waiter hash table implementation.
  * Task 4.2: strand_fiber_wait_readable / strand_fiber_wait_writable.
+ * Task 4.3: poller_poll and event delivery.
+ * Task 4.5: wakeup fd integration into poller.
  */
 
 #include "strand_poller.h"
@@ -534,6 +536,282 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 	/* Return the result set by the waker (STRAND_OK, STRAND_CANCELLED,
 	 * or STRAND_ERR_IO).  See fiber_io_wake and ARCHITECTURE.md §5.3. */
 	return (f->io_result);
+}
+
+/* ---------------------------------------------------------------------------
+ * poller_deliver_event — process one event returned by epoll_wait / kevent.
+ *
+ * Linux path:
+ *   - NULL data.ptr: wakeup fd sentinel; skip fiber delivery.
+ *   - EPOLLERR / EPOLLHUP: wake all waiters on the fd with STRAND_ERR_IO.
+ *   - EPOLLIN: wake read waiter with STRAND_OK.
+ *   - EPOLLOUT: wake write waiter with STRAND_OK.
+ *   - If one direction woke and the other still has a waiter: re-arm the
+ *     remaining direction with MOD, then immediately call epoll_wait with
+ *     timeout=0 and process ALL returned events (post-re-arm check).
+ *   - Remove the fd table entry when both waiters are gone.
+ *
+ * OpenBSD path:
+ *   - NULL udata: wakeup fd sentinel; skip fiber delivery.
+ *   - EV_EOF: wake the waiter for this filter with STRAND_ERR_IO.
+ *   - Otherwise: wake the waiter for this filter with STRAND_OK.
+ *   - No post-re-arm check needed (EV_DISPATCH is level-triggered).
+ *
+ * See ARCHITECTURE.md §5.5, §5.6, §5.7.
+ * ---------------------------------------------------------------------------
+ */
+
+#ifdef STRAND_LINUX
+
+static void
+poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
+{
+	strand_fd_entry_t *e;
+	strand_poller_t   *p = sched->poller;
+	uint32_t           flags;
+	int                fd;
+	int                woke_read = 0, woke_write = 0;
+
+	/* NULL sentinel: wakeup fd event; no fiber to wake. */
+	if (ev->data.ptr == NULL)
+		return;
+
+	e     = (strand_fd_entry_t *)ev->data.ptr;
+	flags = ev->events;
+	fd    = e->fd;
+
+	/*
+	 * SAFETY: EPOLLERR and EPOLLHUP are delivered by the kernel
+	 * unconditionally, regardless of the registered interest mask.
+	 * Any fiber waiting on this fd in any direction must be woken
+	 * with an error result — leaving a fiber parked on an fd in an
+	 * error or hangup state would result in it parking forever.
+	 * These flags must be checked before EPOLLIN/EPOLLOUT.
+	 * See ARCHITECTURE.md §5.6.
+	 */
+	if (flags & (EPOLLERR | EPOLLHUP)) {
+		e->reg_state = FD_REG_DISABLED;
+		if (e->read_waiter != NULL) {
+			strand_fiber_t *f = e->read_waiter;
+			e->read_waiter = NULL;
+			fiber_io_wake(sched, f, STRAND_ERR_IO);
+		}
+		if (e->write_waiter != NULL) {
+			strand_fiber_t *f = e->write_waiter;
+			e->write_waiter = NULL;
+			fiber_io_wake(sched, f, STRAND_ERR_IO);
+		}
+		if (e->read_waiter == NULL && e->write_waiter == NULL)
+			fd_table_remove(p, fd);
+		return;
+	}
+
+	/*
+	 * EPOLLONESHOT auto-disabled the registration when the event fired.
+	 * Update reg_state to DISABLED so the next arm uses MOD, not ADD.
+	 */
+	e->reg_state = FD_REG_DISABLED;
+
+	if ((flags & EPOLLIN) && e->read_waiter != NULL) {
+		strand_fiber_t *f = e->read_waiter;
+		e->read_waiter = NULL;
+		fiber_io_wake(sched, f, STRAND_OK);
+		woke_read = 1;
+	}
+	if ((flags & EPOLLOUT) && e->write_waiter != NULL) {
+		strand_fiber_t *f = e->write_waiter;
+		e->write_waiter = NULL;
+		fiber_io_wake(sched, f, STRAND_OK);
+		woke_write = 1;
+	}
+
+	/*
+	 * If one direction woke and the other still has a waiter, re-arm the
+	 * remaining direction.  EPOLLET only fires on state transitions — if
+	 * the remaining direction was already ready before the MOD call, no
+	 * new edge will be generated and the waiter would park forever.
+	 * A zero-timeout epoll_wait immediately after the MOD call detects
+	 * this case.
+	 */
+	if ((woke_read || woke_write) &&
+	    (e->read_waiter != NULL || e->write_waiter != NULL)) {
+		uint32_t new_mask = EPOLLET | EPOLLONESHOT;
+		if (e->read_waiter  != NULL) new_mask |= EPOLLIN;
+		if (e->write_waiter != NULL) new_mask |= EPOLLOUT;
+
+		if (poller_arm_fd(p, fd, new_mask, 0, e) == STRAND_OK) {
+			struct epoll_event check_evs[POLLER_MAX_EVENTS];
+			int nfds, i;
+
+			/*
+			 * SAFETY: After re-arming with EPOLLONESHOT, the
+			 * remaining direction may already be ready (the fd was
+			 * ready before the MOD call and no new edge occurred).
+			 * A zero-timeout epoll_wait is required to detect this.
+			 * ALL events returned by this zero-timeout poll must be
+			 * processed — EPOLLONESHOT has consumed them from the
+			 * kernel queue and they will not reappear in any
+			 * subsequent poll, regardless of which fd they belong to.
+			 * See ARCHITECTURE.md §5.5.
+			 */
+			nfds = epoll_wait(p->pollfd, check_evs,
+			                  POLLER_MAX_EVENTS, 0);
+			for (i = 0; i < nfds; i++)
+				poller_deliver_event(sched, &check_evs[i]);
+		} else {
+			/*
+			 * Re-arm failed.  Wake the remaining waiter with an
+			 * error rather than leaving it parked on a broken fd.
+			 */
+			if (e->read_waiter != NULL) {
+				strand_fiber_t *f = e->read_waiter;
+				e->read_waiter = NULL;
+				fiber_io_wake(sched, f, STRAND_ERR_IO);
+			}
+			if (e->write_waiter != NULL) {
+				strand_fiber_t *f = e->write_waiter;
+				e->write_waiter = NULL;
+				fiber_io_wake(sched, f, STRAND_ERR_IO);
+			}
+		}
+	}
+
+	/*
+	 * Remove the table entry if both waiters are gone.  The recursive
+	 * zero-timeout delivery above may have already tombstoned this entry;
+	 * fd_table_remove is a no-op in that case (lookup returns NULL).
+	 */
+	if (e->read_waiter == NULL && e->write_waiter == NULL)
+		fd_table_remove(p, fd);
+}
+
+#endif /* STRAND_LINUX */
+
+#ifdef STRAND_OPENBSD
+
+static void
+poller_deliver_event(strand_scheduler_t *sched, struct kevent *kev)
+{
+	strand_fd_entry_t *e;
+	strand_poller_t   *p = sched->poller;
+	int                fd;
+	int                result;
+
+	/* NULL sentinel: wakeup fd event; no fiber to wake. */
+	if (kev->udata == NULL)
+		return;
+
+	e  = (strand_fd_entry_t *)kev->udata;
+	fd = e->fd;
+
+	/*
+	 * EV_EOF: the remote peer closed the connection, or the write end of
+	 * a pipe was closed.  Wake the waiter for this filter with an error
+	 * result so it is not left parked on a half-closed fd.
+	 * See ARCHITECTURE.md §5.7.
+	 */
+	result = (kev->flags & EV_EOF) ? STRAND_ERR_IO : STRAND_OK;
+
+	if (kev->filter == EVFILT_READ && e->read_waiter != NULL) {
+		strand_fiber_t *f = e->read_waiter;
+		e->read_waiter = NULL;
+		fiber_io_wake(sched, f, result);
+	} else if (kev->filter == EVFILT_WRITE && e->write_waiter != NULL) {
+		strand_fiber_t *f = e->write_waiter;
+		e->write_waiter = NULL;
+		fiber_io_wake(sched, f, result);
+	}
+
+	/* Remove the table entry when both waiters are gone. */
+	if (e->read_waiter == NULL && e->write_waiter == NULL)
+		fd_table_remove(p, fd);
+}
+
+#endif /* STRAND_OPENBSD */
+
+/* ---------------------------------------------------------------------------
+ * poller_poll — drain the OS polling fd and deliver all ready events.
+ *
+ * Calls epoll_wait (Linux) or kevent (OpenBSD) with the given timeout_ms.
+ * Each returned event is passed to poller_deliver_event, which wakes any
+ * parked fiber and pushes it onto the scheduler run queue.
+ *
+ * timeout_ms: -1 = block indefinitely; 0 = non-blocking; >0 = bounded wait.
+ * See ARCHITECTURE.md §5.5, §5.6, §5.7.
+ * ---------------------------------------------------------------------------
+ */
+void
+poller_poll(strand_scheduler_t *sched, int timeout_ms)
+{
+	strand_poller_t *p = sched->poller;
+
+#ifdef STRAND_LINUX
+	struct epoll_event evs[POLLER_MAX_EVENTS];
+	int                nfds, i;
+
+	nfds = epoll_wait(p->pollfd, evs, POLLER_MAX_EVENTS, timeout_ms);
+	for (i = 0; i < nfds; i++)
+		poller_deliver_event(sched, &evs[i]);
+#endif
+
+#ifdef STRAND_OPENBSD
+	struct kevent    evs[POLLER_MAX_EVENTS];
+	struct timespec  ts, *tsp;
+	int              nfds, i;
+
+	if (timeout_ms < 0) {
+		tsp = NULL; /* block indefinitely */
+	} else {
+		ts.tv_sec  = timeout_ms / 1000;
+		ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+		tsp = &ts;
+	}
+	nfds = kevent(p->pollfd, NULL, 0, evs, POLLER_MAX_EVENTS, tsp);
+	for (i = 0; i < nfds; i++)
+		poller_deliver_event(sched, &evs[i]);
+#endif
+}
+
+/* ---------------------------------------------------------------------------
+ * poller_register_wakeup_fd — register the scheduler wakeup fd with the
+ * poller OS instance so that a write to the wakeup channel interrupts a
+ * blocked epoll_wait / kevent call.
+ *
+ * The event is registered WITHOUT EPOLLONESHOT / EV_DISPATCH (persistent)
+ * so that successive stop signals all unblock the wait.
+ * data.ptr = NULL (Linux) / udata = NULL (OpenBSD) serves as the delivery
+ * sentinel — poller_deliver_event skips entries with a NULL pointer.
+ *
+ * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
+ * See ARCHITECTURE.md §5 and DEVELOPMENT.md Task 4.5.
+ * ---------------------------------------------------------------------------
+ */
+int
+poller_register_wakeup_fd(strand_poller_t *p, int fd)
+{
+#ifdef STRAND_LINUX
+	struct epoll_event ev;
+
+	ev.events   = EPOLLIN;
+	ev.data.ptr = NULL; /* sentinel: not a fiber fd table entry */
+	if (epoll_ctl(p->pollfd, EPOLL_CTL_ADD, fd, &ev) == -1)
+		return (STRAND_ERR_IO);
+	return (STRAND_OK);
+#endif
+
+#ifdef STRAND_OPENBSD
+	struct kevent kev;
+
+	/*
+	 * EV_ADD without EV_DISPATCH: persistent read filter.
+	 * Fires every time the pipe has data, not just on the first edge.
+	 * udata = NULL serves as the wakeup sentinel in poller_deliver_event.
+	 */
+	EV_SET(&kev, (uintptr_t)fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	if (kevent(p->pollfd, &kev, 1, NULL, 0, NULL) == -1)
+		return (STRAND_ERR_IO);
+	return (STRAND_OK);
+#endif
 }
 
 /* ---------------------------------------------------------------------------

@@ -6,6 +6,8 @@
  * epoll (Linux) and kqueue (OpenBSD). See ARCHITECTURE.md §5.
  *
  * Task 4.1: strand_poller_t definition and fd waiter hash table interface.
+ * Task 4.3: poller_poll and event delivery.
+ * Task 4.5: wakeup fd integration into poller.
  */
 
 #include "../include/strand.h"
@@ -98,6 +100,13 @@ struct strand_poller {
 #define FD_TABLE_INITIAL_CAP ((size_t)64)
 
 /*
+ * POLLER_MAX_EVENTS — maximum number of events to retrieve in a single
+ * epoll_wait / kevent call.  A batch of 64 balances per-call overhead
+ * against the cost of processing many events per loop iteration.
+ */
+#define POLLER_MAX_EVENTS ((int)64)
+
+/*
  * poller_create — allocate and initialise an I/O poller.
  * initial_cap — initial fd table capacity; rounded up to next power of 2.
  *               Pass 0 to use FD_TABLE_INITIAL_CAP.
@@ -167,5 +176,40 @@ int poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
  */
 void fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f,
                    int result);
+
+/*
+ * poller_poll — drain the OS polling fd and deliver all ready events.
+ *
+ * Calls epoll_wait (Linux) or kevent (OpenBSD) with the given timeout_ms,
+ * then calls poller_deliver_event for every returned event.  Ready fibers
+ * are pushed to sched's run queue by poller_deliver_event.
+ *
+ * timeout_ms:  -1 = block indefinitely until an event or wakeup;
+ *               0 = return immediately (non-blocking);
+ *              >0 = block for at most timeout_ms milliseconds.
+ *
+ * Called from strand_scheduler_advance Step 4 (timeout=0) and from the
+ * strand_scheduler_run idle wait (blocking timeout).
+ * See ARCHITECTURE.md §5.5, §5.6, §5.7.
+ */
+void poller_poll(struct strand_scheduler *sched, int timeout_ms);
+
+/*
+ * poller_register_wakeup_fd — register the scheduler wakeup fd with the
+ * poller's OS instance so that a write to the wakeup fd wakes a blocked
+ * epoll_wait / kevent call.
+ *
+ * On Linux: adds the eventfd with EPOLLIN (persistent, no EPOLLONESHOT).
+ * On OpenBSD: adds wakeup_pipe[0] with EVFILT_READ | EV_ADD (persistent,
+ * no EV_DISPATCH).
+ *
+ * The registered event uses data.ptr = NULL (Linux) / udata = NULL (OpenBSD)
+ * as a sentinel so poller_deliver_event can identify it as the wakeup channel
+ * and skip fiber wakeup.  The actual drain happens in advance Step 3.
+ *
+ * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
+ * See ARCHITECTURE.md §5 and DEVELOPMENT.md Task 4.5.
+ */
+int poller_register_wakeup_fd(strand_poller_t *p, int fd);
 
 #endif /* STRAND_POLLER_H */
