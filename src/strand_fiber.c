@@ -168,8 +168,60 @@ strand_fiber_tsan_bind_current(strand_fiber_t *f)
 }
 
 /*
- * fiber_alloc — allocate a fiber descriptor from the dead pool or malloc.
+ * sched_stack_alloc — cache-aware stack allocator.
  *
+ * Checks the top cache slot first.  If it has a matching size, pops and
+ * returns it (LIFO cache hit).  Otherwise calls the raw stack_alloc.
+ * Only the top slot is checked — different-sized stacks cannot be used
+ * interchangeably (ARCHITECTURE.md §13, DEVELOPMENT.md §3.9).
+ * See ARCHITECTURE.md §13.
+ */
+void *
+sched_stack_alloc(strand_scheduler_t *sched, size_t stack_size,
+                  unsigned long *vg_id_out)
+{
+	if (sched != NULL && sched->cache_len > 0) {
+		strand_stack_slot_t *top =
+		    &sched->stack_cache[sched->cache_len - 1];
+		if (top->stack_size == stack_size) {
+			/* Cache hit: pop the top entry (LIFO). */
+			void *base = top->base;
+			*vg_id_out = top->vg_id;
+			sched->cache_len--;
+			return (base);
+		}
+	}
+	/* Cache miss or no scheduler: fall through to raw mmap. */
+	return (stack_alloc(stack_size, vg_id_out));
+}
+
+/*
+ * sched_stack_free — cache-aware stack release.
+ *
+ * Pushes the stack to the cache top (LIFO) if space is available.
+ * If the cache is at capacity, calls stack_free immediately (overflow
+ * policy: discard the incoming stack — ARCHITECTURE.md §13.3).
+ * base must be the mmap base (includes the guard page at the low end).
+ * See ARCHITECTURE.md §13.
+ */
+void
+sched_stack_free(strand_scheduler_t *sched, void *base, size_t stack_size,
+                 unsigned long vg_id)
+{
+	if (sched != NULL && sched->cache_len < sched->cache_cap) {
+		strand_stack_slot_t *slot = &sched->stack_cache[sched->cache_len];
+		slot->base = base;
+		slot->stack_size = stack_size;
+		slot->vg_id = vg_id;
+		sched->cache_len++;
+		return;
+	}
+	/* Cache full (overflow) or no scheduler: unmap immediately. */
+	stack_free(base, stack_size, vg_id);
+}
+
+
+/*
  * Dead-pool path: pops the head entry from *dead_pool, increments the
  * generation counter (ABA protection), zeros the entire descriptor, then
  * writes the new generation back.  Outstanding handles with the old
@@ -280,7 +332,7 @@ strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 	if (f == NULL)
 		return (STRAND_ERR_NOMEM);
 
-	base = stack_alloc(sz, &vg_id);
+	base = sched_stack_alloc(sched, sz, &vg_id);
 	if (base == NULL) {
 		fiber_free(&sched->dead_pool, f);
 		return (STRAND_ERR_NOMEM);

@@ -13,18 +13,46 @@
 #include "strand_internal.h"
 
 /*
- * stack_alloc — allocate a fiber stack with a guard page.
+ * stack_alloc — allocate a fiber stack with a guard page via mmap.
  * Returns mmap base on success, NULL on failure.
  * *vg_id_out receives the Valgrind stack registration ID.
  * Usable stack top = (char *)base + page_size() + stack_size.
+ *
+ * This is the raw allocator.  Callers inside the scheduler should use
+ * sched_stack_alloc / sched_stack_free to go through the per-scheduler
+ * stack cache (ARCHITECTURE.md §13).
  */
 void *stack_alloc(size_t stack_size, unsigned long *vg_id_out);
 
 /*
  * stack_free — deregister from Valgrind and unmap.
  * base must be the mmap base returned by stack_alloc.
+ *
+ * Raw free — bypasses the cache.  Use sched_stack_free in scheduler code.
  */
 void stack_free(void *base, size_t stack_size, unsigned long vg_id);
+
+/*
+ * sched_stack_alloc — allocate a fiber stack through the per-scheduler cache.
+ *
+ * If the cache top entry has size == stack_size, pops and returns it (LIFO).
+ * Otherwise falls through to stack_alloc (mmap).
+ * Returns the mmap base on success, NULL on failure.
+ * See ARCHITECTURE.md §13.
+ */
+void *sched_stack_alloc(strand_scheduler_t *sched, size_t stack_size,
+                        unsigned long *vg_id_out);
+
+/*
+ * sched_stack_free — return a fiber stack to the per-scheduler cache or free.
+ *
+ * If cache_len < cache_cap: pushes the slot to the cache top (LIFO).
+ * If cache is full: calls stack_free immediately (overflow policy —
+ * ARCHITECTURE.md §13.3).
+ * base must be the mmap base (not the usable stack base).
+ */
+void sched_stack_free(strand_scheduler_t *sched, void *base, size_t stack_size,
+                      unsigned long vg_id);
 
 /* page_size — cached system page size. */
 size_t page_size(void);

@@ -319,6 +319,24 @@ typedef struct strand_scheduler {
 	 * See ARCHITECTURE.md §13 for cap, floor, and idle reclamation. */
 	strand_stack_slot_t *stack_cache;
 	size_t cache_len;
+
+	/*
+	 * Pending stack free — written by a completing fiber (via
+	 * t35_switch_back in tests; via the trampoline in production) to
+	 * communicate its stack back to the scheduler.  The fiber MUST NOT
+	 * call munmap on its own stack while still executing on it; instead
+	 * it stores the mmap base/size/vg_id here and the scheduler calls
+	 * sched_stack_free immediately after the context switch returns
+	 * (Step 5 of strand_scheduler_advance).
+	 * NULL in pending_free_base means no pending free.
+	 * SAFETY: only ever written from within the running fiber (single
+	 * threaded per scheduler) and read/cleared by the scheduler on the
+	 * same thread immediately after the switch — no synchronisation
+	 * needed.
+	 */
+	void         *pending_free_base;
+	size_t        pending_free_size;
+	unsigned long pending_free_vg_id;
 	size_t cache_cap;
 	size_t cache_floor;
 	uint64_t cache_idle_ns; /* idle reclamation timeout (ns) */

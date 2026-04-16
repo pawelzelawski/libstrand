@@ -186,6 +186,9 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	sched->cache_floor = cache_floor;
 	sched->cache_idle_ns = CACHE_IDLE_NS_DEFAULT;
 	sched->last_idle_ns = 0;
+	sched->pending_free_base  = NULL;
+	sched->pending_free_size  = 0;
+	sched->pending_free_vg_id = 0;
 
 	sched->budget = budget;
 	sched->run_head = NULL;
@@ -529,7 +532,57 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 		sched->current_fiber = f;
 		strand_context_switch(&sched->scheduler_ctx, f);
 		sched->current_fiber = NULL;
+
+		/*
+		 * Pending stack free — ARCHITECTURE.md §13, §4.2 Step 5.
+		 *
+		 * The fiber stored its stack info in pending_free_* before
+		 * switching back so it could not munmap its own execution stack.
+		 * We are now back on the scheduler's stack; it is safe to
+		 * call sched_stack_free (which may call munmap) here.
+		 */
+		if (sched->pending_free_base != NULL) {
+			sched_stack_free(sched,
+			                 sched->pending_free_base,
+			                 sched->pending_free_size,
+			                 sched->pending_free_vg_id);
+			sched->pending_free_base = NULL;
+		}
 		progress = 1;
+	}
+
+	/*
+	 * Idle reclamation — ARCHITECTURE.md §13.4.
+	 *
+	 * When the run queue is empty (idle), track the start of the idle
+	 * period using the timestamp already computed at Step 2 (t).  If the
+	 * queue has been empty for at least cache_idle_ns nanoseconds and the
+	 * cache holds more than cache_floor stacks, reclaim the excess from
+	 * the top (LIFO) down to cache_floor and reset the idle clock.
+	 *
+	 * When the queue is non-empty (busy), reset last_idle_ns to zero so
+	 * the idle timer restarts fresh after the next burst.
+	 *
+	 * In STRAND_TEST_CLOCK builds, t == strand_test_clock_ns, so tests
+	 * can trigger reclamation by advancing the mock clock past the
+	 * threshold without sleeping.
+	 */
+	if (sched->run_queue_len == 0) {
+		if (sched->last_idle_ns == 0)
+			sched->last_idle_ns = t;
+		if (sched->cache_len > sched->cache_floor &&
+		    t - sched->last_idle_ns >= sched->cache_idle_ns) {
+			while (sched->cache_len > sched->cache_floor) {
+				strand_stack_slot_t *slot =
+				    &sched->stack_cache[sched->cache_len - 1];
+				stack_free(slot->base, slot->stack_size,
+				           slot->vg_id);
+				sched->cache_len--;
+			}
+			sched->last_idle_ns = t;
+		}
+	} else {
+		sched->last_idle_ns = 0;
 	}
 
 	if (progress) {

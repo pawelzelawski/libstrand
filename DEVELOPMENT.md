@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-16
 **Current Phase**: Phase 3 — Layer 2: Fiber Scheduler (in progress)
-**Next Task**: Phase 3 — Task 3.9: Stack cache
+**Next Task**: Phase 3 — Task 3.10: Fiber-local storage
 
 ### Phase Summary
 
@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | 1 | Foundation | DONE | 0/0 | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
-| 3 | Layer 2: Fiber Scheduler | IN PROGRESS | 25/25 | Tasks 3.1–3.8 done; 3.9–3.10 remaining |
+| 3 | Layer 2: Fiber Scheduler | IN PROGRESS | 28/28 | Tasks 3.1–3.9 done; 3.10 remaining |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
 | 5 | Layer 4: Multi-Worker Runtime | NOT STARTED | — | Workers, inject queue, offload pool |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
@@ -441,15 +441,18 @@ the poller is stubbed out for scheduler-only testing.
   - Stale handle: return `STRAND_HANDLE_STALE`
   - I/O and offload parked states: placeholder — implemented in Phases 4 and 5
 
-**3.9 — Stack cache**
-- Implement cache-aware `stack_alloc` and `stack_free`:
-  - `stack_alloc`: check cache first (LIFO pop); if cache empty, call `mmap`
-  - `stack_free`: if `cache_len < cache_cap`, push to cache (LIFO);
-    else `munmap` immediately (overflow policy — ARCHITECTURE.md §13.3)
-  - Idle reclamation: when `run_queue_len == 0` and
-    `now_ns - last_idle_ns >= 5s` and `cache_len > idle_floor (8)`:
-    `munmap` stacks from cache top (LIFO) until `cache_len == idle_floor`;
-    reset `last_idle_ns`
+**3.9 — Stack cache** ✓ DONE
+- Implemented `sched_stack_alloc` / `sched_stack_free` in `src/strand_fiber.c`
+- Updated `strand_fiber_spawn` to use `sched_stack_alloc`
+- Added idle reclamation block to `strand_scheduler_advance` (Step 5)
+- Added `pending_free_base/size/vg_id` to `strand_scheduler_t`; scheduler
+  processes deferred stack free after each context switch returns (safe:
+  executing on scheduler stack, not fiber stack — ARCHITECTURE.md §13, §4.2)
+- Updated `t35_switch_back` to store stack in `pending_free_*` instead of
+  calling `sched_stack_free` directly (prevents munmap of live stack)
+- Updated `t35_push_fiber` and Task 3.8 helpers to use `sched_stack_alloc`
+- Tests: `test_stack_cache_reuse`, `test_stack_cache_cap`,
+  `test_idle_reclamation` — 28/28 passed Linux (ASan/UBSan, TSan, Valgrind)
 - Stack size per cache slot must match — only cache stacks of matching size.
   Different sizes are not interchangeable.
 

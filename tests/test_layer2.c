@@ -11,6 +11,7 @@
  *   Task 3.7: strand_fiber_sleep_until — timer fires, timer order.
  *   Task 3.8: strand_fiber_cancel — cancel timer, cancel runnable,
  *             stale handle, generation increment on reuse.
+ *   Task 3.9: stack cache — reuse, cap overflow, idle reclamation.
  *
  * See DEVELOPMENT.md §"Tests for Phase 3".
  */
@@ -20,6 +21,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -290,21 +292,35 @@ test_wakeup_fd_drained_as_control(void)
  */
 
 /*
- * t35_switch_back -- from within a fiber, push the fiber descriptor to the
- * dead pool and switch back to the scheduler.
+ * t35_switch_back -- from within a fiber, hand the stack back to the
+ * scheduler for deferred freeing, push the fiber descriptor to the dead
+ * pool, and switch back to the scheduler.
+ *
+ * Updated in Task 3.9: the stack MUST NOT be munmap'd while the fiber is
+ * still executing on it.  Instead the mmap base/size/vg_id are stored in
+ * sched->pending_free_* so that strand_scheduler_advance can call
+ * sched_stack_free immediately after the context switch returns (on the
+ * scheduler's own stack, where it is safe to munmap).
+ * See ARCHITECTURE.md §13 and §4.2 Step 5.
  *
  * fiber_free() modifies only the 'next' intrusive-link field, leaving
  * the context registers intact so the context switch succeeds.  The
  * strand_scheduler_destroy() dead-pool drain then frees the descriptor.
- * No code in this fiber may run after t35_switch_back() returns, but
- * in practice it does not return: the scheduler never re-queues a fiber
- * that has called t35_switch_back().
+ * No code in this fiber may run after t35_switch_back() returns.
  */
 static void
 t35_switch_back(strand_scheduler_t *sched)
 {
 	strand_fiber_t *me = sched->current_fiber;
 
+	/*
+	 * Store the stack for the scheduler to free after the switch.
+	 * The mmap base is me->stack_base - page_size() because stack_base
+	 * points to the usable region above the guard page.
+	 */
+	sched->pending_free_base  = (char *)me->stack_base - page_size();
+	sched->pending_free_size  = me->stack_size;
+	sched->pending_free_vg_id = me->valgrind_stack_id;
 	fiber_free(&sched->dead_pool, me);
 	strand_context_switch(me, &sched->scheduler_ctx);
 }
@@ -333,7 +349,7 @@ t35_push_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg)
 	if (f == NULL)
 		return (-1);
 
-	base = stack_alloc(sz, &vg_id);
+	base = sched_stack_alloc(sched, sz, &vg_id);
 	if (base == NULL) {
 		fiber_free(&sched->dead_pool, f);
 		return (-1);
@@ -1080,7 +1096,7 @@ test_cancel_runnable(void)
 		strand_scheduler_destroy(sched);
 		return (1);
 	}
-	base = stack_alloc(sz, &vg_id);
+	base = sched_stack_alloc(sched, sz, &vg_id);
 	if (base == NULL) {
 		fiber_free(&sched->dead_pool, f);
 		strand_scheduler_destroy(sched);
@@ -1165,7 +1181,7 @@ test_stale_handle_noop(void)
 		strand_scheduler_destroy(sched);
 		return (1);
 	}
-	base = stack_alloc(sz, &vg_id);
+	base = sched_stack_alloc(sched, sz, &vg_id);
 	if (base == NULL) {
 		fiber_free(&sched->dead_pool, f);
 		strand_scheduler_destroy(sched);
@@ -1209,7 +1225,7 @@ test_stale_handle_noop(void)
 			strand_scheduler_destroy(sched);
 			return (1);
 		}
-		base2 = stack_alloc(sz, &vg_id2);
+		base2 = sched_stack_alloc(sched, sz, &vg_id2);
 		if (base2 == NULL) {
 			fiber_free(&sched->dead_pool, f2);
 			strand_scheduler_destroy(sched);
@@ -1278,7 +1294,7 @@ test_generation_increments_on_reuse(void)
 		strand_scheduler_destroy(sched);
 		return (1);
 	}
-	base = stack_alloc(sz, &vg_id);
+	base = sched_stack_alloc(sched, sz, &vg_id);
 	if (base == NULL) {
 		fiber_free(&sched->dead_pool, fa);
 		strand_scheduler_destroy(sched);
@@ -1320,6 +1336,175 @@ test_generation_increments_on_reuse(void)
 	return (gen_b > gen_a ? 0 : 1);
 }
 
+/* =========================================================================
+ * Task 3.9 — Stack cache
+ * =========================================================================
+ */
+
+/* Simple fiber that calls t35_switch_back immediately. */
+static void
+t39_noop_fiber_fn(void *arg)
+{
+	strand_scheduler_t *sched = (strand_scheduler_t *)arg;
+	t35_switch_back(sched);
+}
+
+/*
+ * test_stack_cache_reuse -- spawn a fiber, let it finish (stack goes to
+ * cache via t35_switch_back), spawn another of the same size; verify that
+ * cache_len decreases (cache hit, no new mmap).
+ */
+static int
+test_stack_cache_reuse(void)
+{
+	strand_scheduler_t *sched;
+	size_t before, after;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	/* Spawn and run first fiber — stack ends up in cache. */
+	if (t35_push_fiber(sched, t39_noop_fiber_fn, sched) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	strand_scheduler_advance(sched, NULL);
+
+	/* Cache should now hold 1 stack. */
+	before = sched->cache_len;
+	if (before != 1) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	/* Spawn and run second fiber — should consume the cached stack. */
+	if (t35_push_fiber(sched, t39_noop_fiber_fn, sched) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	/* Cache_len drops by 1 when the stack is popped for the new fiber.
+	 * After advance the fiber finishes and pushes it back, so capture
+	 * the count inside the push step by checking before advance. */
+	after = sched->cache_len;
+
+	strand_scheduler_advance(sched, NULL);
+	strand_scheduler_destroy(sched);
+
+	/* The cached stack was consumed (cache_len went down from before). */
+	return (after < before ? 0 : 1);
+}
+
+/*
+ * test_stack_cache_cap -- fill cache to cap; finish one more fiber; verify
+ * the excess stack is NOT cached (cache_len stays at cap).
+ *
+ * Strategy: push cap+1 fibers BEFORE any advance so that all stacks are
+ * freshly mmap'd (the cache is empty during all push calls).  Then run
+ * them all in a single advance.  After cap fibers finish the cache is full;
+ * the (cap+1)th fiber's stack must be munmap'd immediately, so cache_len
+ * must equal cap exactly.
+ */
+static int
+test_stack_cache_cap(void)
+{
+	strand_scheduler_t *sched;
+	strand_sched_config_t cfg;
+	size_t cap, i;
+
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.cache_cap   = 2;
+	cfg.idle_floor  = 0;
+
+	sched = strand_scheduler_create(&cfg);
+	if (sched == NULL)
+		return (1);
+
+	cap = sched->cache_cap; /* 2 */
+
+	/* Push cap+1 fibers while cache is still empty (all mmaps). */
+	for (i = 0; i < cap + 1; i++) {
+		if (t35_push_fiber(sched, t39_noop_fiber_fn, sched) != 0) {
+			strand_scheduler_destroy(sched);
+			return (1);
+		}
+	}
+
+	/* Run all fibers in one advance (default budget covers them). */
+	strand_scheduler_advance(sched, NULL);
+
+	/* cache_len must equal cap exactly — the overflow stack was munmap'd. */
+	if (sched->cache_len != cap) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	strand_scheduler_destroy(sched);
+	return (0);
+}
+
+/*
+ * test_idle_reclamation -- fill cache past floor; advance mock clock past
+ * cache_idle_ns; call advance with empty run queue; verify cache shrinks
+ * to floor.
+ *
+ * Strategy: push (floor+2) fibers before any advance so that all stacks
+ * are freshly mmap'd.  Run them all; cache will hold floor+2 entries
+ * (above floor).  Then tick the mock clock past cache_idle_ns and call
+ * advance again with an empty run queue; reclamation must shrink the
+ * cache back to floor.
+ */
+static int
+test_idle_reclamation(void)
+{
+	strand_scheduler_t *sched;
+	strand_sched_config_t cfg;
+	size_t floor, i, fill;
+
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.cache_cap  = 4;
+	cfg.idle_floor = 1;
+
+	sched = strand_scheduler_create(&cfg);
+	if (sched == NULL)
+		return (1);
+
+	floor = sched->cache_floor; /* 1 */
+	fill  = floor + 2;          /* push enough to exceed floor */
+
+	/* Push fill fibers while cache is empty — all stacks are mmapped. */
+	for (i = 0; i < fill; i++) {
+		if (t35_push_fiber(sched, t39_noop_fiber_fn, sched) != 0) {
+			strand_scheduler_destroy(sched);
+			return (1);
+		}
+	}
+
+	/* Run all fibers; cache_len == fill > floor after this. */
+	strand_scheduler_advance(sched, NULL);
+
+	if (sched->cache_len <= floor) {
+		/* Sanity: cache should be above floor before reclamation. */
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	/* Advance mock clock past cache_idle_ns so idle reclamation fires. */
+	strand_test_clock_ns += sched->cache_idle_ns + 1;
+
+	/* Advance with empty run queue — reclamation should fire. */
+	strand_scheduler_advance(sched, NULL);
+
+	if (sched->cache_len > floor) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	strand_scheduler_destroy(sched);
+	return (0);
+}
+
 void
 run_layer2_tests(void)
 {
@@ -1341,4 +1526,9 @@ run_layer2_tests(void)
 	RUN("test_stale_handle_noop", test_stale_handle_noop);
 	RUN("test_generation_increments_on_reuse",
 	    test_generation_increments_on_reuse);
+	RUN("test_stack_cache_reuse", test_stack_cache_reuse);
+	RUN("test_stack_cache_cap", test_stack_cache_cap);
+	RUN("test_idle_reclamation", test_idle_reclamation);
 }
+
+
