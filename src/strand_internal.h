@@ -172,6 +172,14 @@ typedef struct strand_fiber {
 	void *tsan_fiber; /* __tsan_create_fiber handle; NULL if no TSan */
 	unsigned long
 	    valgrind_stack_id; /* VALGRIND_STACK_REGISTER id; 0 if unused */
+	/*
+	 * cancel_pending — set by strand_fiber_cancel when the fiber is
+	 * FIBER_RUNNABLE or FIBER_RUNNING (FIBER_CANCELLATION_PENDING flag).
+	 * Also consulted by strand_fiber_sleep_until on return to detect a
+	 * cancellation that raced with timer expiry.
+	 * See ARCHITECTURE.md §4.5 and §8.1.
+	 */
+	_Atomic int cancel_pending;
 } strand_fiber_t;
 
 /*

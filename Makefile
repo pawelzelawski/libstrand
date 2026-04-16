@@ -57,14 +57,17 @@ HAVE_VALGRIND != if $(CC) -include valgrind/valgrind.h -x c /dev/null -c \
 CFLAGS_DEV     = $(CFLAGS_COMMON) $(CFLAGS_OS)				\
                  -O1 -g -Werror					\
                  $(SANITIZERS)						\
-                 -DSTRAND_DEBUG
+                 -DSTRAND_DEBUG						\
+                 -DSTRAND_TEST_CLOCK
 
 CFLAGS_TSAN    = $(CFLAGS_COMMON) $(CFLAGS_OS)				\
                  -O1 -g							\
                  -fsanitize=thread					\
-                 -DSTRAND_DEBUG
+                 -DSTRAND_DEBUG						\
+                 -DSTRAND_TEST_CLOCK
 
-CFLAGS_VG      = $(CFLAGS_COMMON) $(CFLAGS_OS) -O1 -g -DSTRAND_DEBUG
+CFLAGS_VG      = $(CFLAGS_COMMON) $(CFLAGS_OS) -O1 -g -DSTRAND_DEBUG	\
+                 -DSTRAND_TEST_CLOCK
 
 CFLAGS_RELEASE = $(CFLAGS_COMMON) $(CFLAGS_OS) -O2 -DNDEBUG
 

@@ -346,3 +346,64 @@ strand_fiber_yield(strand_scheduler_t *sched)
 	strand_context_switch(f, &sched->scheduler_ctx);
 }
 
+/* ---------------------------------------------------------------------------
+ * strand_fiber_sleep_until — park the current fiber until a deadline.
+ *
+ * Transitions FIBER_RUNNING -> FIBER_PARKED_TIMER, inserts (deadline_ns, f)
+ * into the timer heap, then switches back to the scheduler.  Execution
+ * resumes here when the scheduler's Step 2 pops the expired entry from the
+ * heap and puts the fiber back into the run queue.
+ *
+ * On return, the cancel_pending flag is checked and cleared.  If it was set
+ * (by a concurrent strand_fiber_cancel — Task 3.8), STRAND_CANCELLED is
+ * returned.  Otherwise STRAND_OK.
+ *
+ * Must be called from inside a running fiber.  Debug builds assert this.
+ * See ARCHITECTURE.md §4.5 and §8.1.
+ * ---------------------------------------------------------------------------
+ */
+int
+strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns)
+{
+	strand_fiber_t *f;
+	int cancelled;
+
+	STRAND_DEBUG_ASSERT(sched != NULL);
+	STRAND_DEBUG_ASSERT(sched->current_fiber != NULL);
+
+	f = sched->current_fiber;
+
+	/*
+	 * Transition FIBER_RUNNING -> FIBER_PARKED_TIMER.
+	 * The relaxed store is safe here: visibility to other threads is
+	 * provided by the context switch that follows.
+	 */
+	atomic_store_explicit(&f->state, FIBER_PARKED_TIMER,
+	                      memory_order_relaxed);
+
+	/*
+	 * Insert into the timer min-heap.  On allocation failure the fiber
+	 * cannot park — return an error without switching context.
+	 * (Extremely rare; heap only grows on capacity increase.)
+	 */
+	if (timer_heap_push(sched, deadline_ns, f) != 0) {
+		atomic_store_explicit(&f->state, FIBER_RUNNING,
+		                      memory_order_relaxed);
+		return (STRAND_ERR_NOMEM);
+	}
+
+	/* Switch back to the scheduler.  Resumes here at timer expiry or
+	 * when strand_fiber_cancel moves this fiber to FIBER_RUNNABLE. */
+	strand_context_switch(f, &sched->scheduler_ctx);
+
+	/*
+	 * Check and clear the cancellation flag atomically.
+	 * If strand_fiber_cancel (Task 3.8) set this flag before we resumed,
+	 * return STRAND_CANCELLED so the caller can propagate cancellation.
+	 * The exchange clears the flag so subsequent park calls start clean.
+	 */
+	cancelled = atomic_exchange_explicit(&f->cancel_pending, 0,
+	                                     memory_order_acq_rel);
+	return (cancelled ? STRAND_CANCELLED : STRAND_OK);
+}
+

@@ -64,6 +64,7 @@ typedef void (*strand_destructor_t)(void *ptr);
 #define STRAND_ERR_WRONGCTX (-4) /* called from wrong context (host vs fiber)  \
 	                          */
 #define STRAND_ERR_NOMEM (-5)    /* allocation failure */
+#define STRAND_CANCELLED (-6)    /* operation cancelled by strand_fiber_cancel */
 /*
  * Default scheduler and stack cache parameters.
  * These are the values used when zero is passed in strand_sched_config_t.
@@ -204,6 +205,32 @@ int strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn,
  * §11.2 (explicit yield contracts).
  */
 void strand_fiber_yield(strand_scheduler_t *sched);
+
+/*
+ * strand_fiber_sleep_until — park the current fiber until a deadline.
+ *
+ * Transitions the calling fiber from FIBER_RUNNING to FIBER_PARKED_TIMER,
+ * inserts it into the per-scheduler timer min-heap keyed on deadline_ns,
+ * then switches back to the scheduler.  The fiber is resumed when the
+ * scheduler's Step 2 (timer expiry) pops it from the heap after the
+ * deadline passes.
+ *
+ * deadline_ns — absolute CLOCK_MONOTONIC deadline in nanoseconds.  Use
+ *               strand_scheduler_next_deadline to convert relative durations.
+ *               A deadline already in the past causes the fiber to be queued
+ *               for immediate resumption on the next advance call.
+ *
+ * Returns STRAND_OK       if the deadline expired normally.
+ * Returns STRAND_CANCELLED if strand_fiber_cancel was called on this fiber
+ *                           while it was parked (cancel_pending flag set).
+ *
+ * Must be called from inside a running fiber (sched->current_fiber != NULL).
+ * Calling from the host thread is a debug assertion failure.
+ *
+ * See ARCHITECTURE.md §4.5 (FIBER_RUNNING -> FIBER_PARKED_TIMER transition)
+ * and §8.1 (cancellation of FIBER_PARKED_TIMER).
+ */
+int strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns);
 
 /* Function declarations added in later phases. */
 

@@ -2,9 +2,9 @@
 
 ## Status Overview
 
-**Last Updated**: 2026-04-06
-**Current Phase**: Phase 3 — Layer 2: Fiber Scheduler (ready to start)
-**Next Task**: Phase 3 — Layer 2: Fiber Scheduler
+**Last Updated**: 2026-04-16
+**Current Phase**: Phase 3 — Layer 2: Fiber Scheduler (in progress)
+**Next Task**: Phase 3 — Task 3.8: strand_fiber_cancel (partial)
 
 ### Phase Summary
 
@@ -12,7 +12,7 @@
 |---|---|---|---|---|
 | 1 | Foundation | DONE | 0/0 | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
-| 3 | Layer 2: Fiber Scheduler | NOT STARTED | — | Scheduler modes, fiber state machine, stack cache |
+| 3 | Layer 2: Fiber Scheduler | IN PROGRESS | 21/21 | Tasks 3.1–3.7 done; 3.8–3.10 remaining |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
 | 5 | Layer 4: Multi-Worker Runtime | NOT STARTED | — | Workers, inject queue, offload pool |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
@@ -31,8 +31,8 @@
 | M7 | clang-format clean | DONE |
 | M8 | clang-tidy zero warnings | DONE |
 | M9 | Context switch preserves all registers — verified by test | DONE (test_context_gpr_preserved passes) |
-| M10 | scheduler_advance is nonblocking — verified by test | NOT STARTED |
-| M11 | scheduler_stop interrupts indefinitely blocked worker — verified by test | NOT STARTED |
+| M10 | scheduler_advance is nonblocking — verified by test | DONE (test_advance_nonblocking passes) |
+| M11 | scheduler_stop interrupts indefinitely blocked worker — verified by test | DONE (test_scheduler_run_blocks passes) |
 | M12 | Post-re-arm readiness check correct — verified by test | NOT STARTED |
 | M13 | Offload CAS both outcomes exercised — verified by test | NOT STARTED |
 | M14 | Scope lifecycle all state transitions verified by test | NOT STARTED |
@@ -423,7 +423,7 @@ the poller is stubbed out for scheduler-only testing.
   - Append fiber to run queue tail
   - `strand_context_switch(f, sched->scheduler_ctx)` — switch back to scheduler
 
-**3.7 — strand_fiber_sleep_until**
+**3.7 — strand_fiber_sleep_until** ✓ DONE
 - Implement `strand_fiber_sleep_until(uint64_t deadline_ns)`:
   - Transition `f->state = FIBER_PARKED_TIMER`
   - Insert `(deadline_ns, f)` into timer heap

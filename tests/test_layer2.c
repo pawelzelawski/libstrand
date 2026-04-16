@@ -8,6 +8,7 @@
  *   Task 3.5: strand_fiber_spawn (within-worker path), advance nonblocking,
  *             FIFO run-queue ordering, budget limiting, shutdown error.
  *   Task 3.6: strand_fiber_yield — verify yield re-queues the fiber.
+ *   Task 3.7: strand_fiber_sleep_until — timer fires, timer order.
  *
  * See DEVELOPMENT.md §"Tests for Phase 3".
  */
@@ -26,6 +27,13 @@
 #include "../src/strand_fiber.h"
 #include "../src/strand_internal.h"
 #include "../src/strand_sched.h"
+
+/*
+ * strand_test_clock_ns — mock clock used by the scheduler when built with
+ * -DSTRAND_TEST_CLOCK.  Tests advance time by writing to this variable
+ * instead of sleeping.  See TESTING.md §2.3.
+ */
+extern uint64_t strand_test_clock_ns;
 
 /* -------------------------------------------------------------------------
  * Shared helpers
@@ -723,6 +731,189 @@ test_yield_requeues(void)
 	return (result);
 }
 
+/* =========================================================================
+ * Task 3.7 — test_timer_fires
+ *
+ * A fiber calls strand_fiber_sleep_until with a future deadline.  The mock
+ * clock is advanced past the deadline and then strand_scheduler_advance is
+ * called again.  The fiber must resume and record that it woke.
+ *
+ * Uses strand_test_clock_ns (compiled in with -DSTRAND_TEST_CLOCK) so the
+ * test does not need to sleep.  See TESTING.md §2.3.
+ * =========================================================================
+ */
+
+struct t37_sleep_arg {
+	strand_scheduler_t *sched;
+	uint64_t deadline_ns;
+	_Atomic int woke;
+	int rc; /* return value of strand_fiber_sleep_until */
+};
+
+static void
+t37_sleep_fiber_fn(void *varg)
+{
+	struct t37_sleep_arg *a = varg;
+
+	a->rc = strand_fiber_sleep_until(a->sched, a->deadline_ns);
+	atomic_store_explicit(&a->woke, 1, memory_order_release);
+	t35_switch_back(a->sched);
+}
+
+static int
+test_timer_fires(void)
+{
+	strand_scheduler_t *sched;
+	struct t37_sleep_arg arg;
+	int woke_before, woke_after;
+	int result;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	/* Start the mock clock well before the deadline. */
+	strand_test_clock_ns = 1000;
+	arg.deadline_ns = 2000;
+	arg.sched = sched;
+	arg.rc = -999;
+	atomic_init(&arg.woke, 0);
+
+	if (t35_push_fiber(sched, t37_sleep_fiber_fn, &arg) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+
+	/*
+	 * First advance: fiber runs, calls strand_fiber_sleep_until(2000),
+	 * parks on the timer heap, and returns control to the scheduler.
+	 * Clock is still at 1000 — deadline has not passed.
+	 */
+	strand_scheduler_advance(sched, NULL);
+	woke_before = atomic_load_explicit(&arg.woke, memory_order_acquire);
+
+	/*
+	 * Advance the mock clock past the deadline, then run another advance.
+	 * Step 2 must pop the timer entry and move the fiber to the run queue.
+	 * Step 5 runs the fiber, which resumes past sleep_until, sets woke = 1,
+	 * and calls t35_switch_back.
+	 */
+	strand_test_clock_ns = 2001;
+	strand_scheduler_advance(sched, NULL);
+	woke_after = atomic_load_explicit(&arg.woke, memory_order_acquire);
+
+	strand_scheduler_destroy(sched);
+
+	/*
+	 * Pass conditions:
+	 *   - fiber did NOT wake before deadline (woke_before == 0)
+	 *   - fiber DID wake after deadline (woke_after == 1)
+	 *   - sleep_until returned STRAND_OK (not cancelled)
+	 */
+	result = (woke_before == 0 && woke_after == 1 &&
+	          arg.rc == STRAND_OK)
+	             ? 0
+	             : 1;
+	return (result);
+}
+
+/* =========================================================================
+ * Task 3.7 — test_timer_order
+ *
+ * Two fibers sleep until different deadlines.  Fiber A sleeps until T=3000,
+ * fiber B until T=2000.  The mock clock is advanced past both deadlines in
+ * one step.  The scheduler's timer heap must pop B first (lower deadline),
+ * so B's run-order slot must be filled before A's.
+ * =========================================================================
+ */
+
+struct t37_order_arg {
+	strand_scheduler_t *sched;
+	uint64_t deadline_ns;
+	_Atomic int *next_slot;
+	int *order;
+	int id;
+};
+
+static void
+t37_order_fiber_fn(void *varg)
+{
+	struct t37_order_arg *a = varg;
+	int slot;
+
+	strand_fiber_sleep_until(a->sched, a->deadline_ns);
+
+	/* Record the order in which fibers wake after the sleep. */
+	slot = atomic_fetch_add_explicit(a->next_slot, 1, memory_order_relaxed);
+	a->order[slot] = a->id;
+	t35_switch_back(a->sched);
+}
+
+static int
+test_timer_order(void)
+{
+	strand_scheduler_t *sched;
+	_Atomic int next_slot;
+	int order[2];
+	struct t37_order_arg args[2];
+	int i;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+
+	strand_test_clock_ns = 1000;
+
+	atomic_init(&next_slot, 0);
+	for (i = 0; i < 2; i++) {
+		order[i] = -1;
+		args[i].sched = sched;
+		args[i].next_slot = &next_slot;
+		args[i].order = order;
+	}
+	/* A: id=0, later deadline */
+	args[0].id = 0;
+	args[0].deadline_ns = 3000;
+	/* B: id=1, earlier deadline — must wake first */
+	args[1].id = 1;
+	args[1].deadline_ns = 2000;
+
+	/* Push A then B to the run queue. */
+	for (i = 0; i < 2; i++) {
+		if (t35_push_fiber(sched, t37_order_fiber_fn, &args[i]) != 0) {
+			while (strand_scheduler_advance(sched, NULL) ==
+			       SCHED_PROGRESS)
+				;
+			strand_scheduler_destroy(sched);
+			return (1);
+		}
+	}
+
+	/*
+	 * First advance: both fibers run (budget=64), both call sleep_until,
+	 * both park on the timer heap.  A is at deadline 3000, B at 2000.
+	 */
+	strand_scheduler_advance(sched, NULL);
+
+	/*
+	 * Advance mock clock past both deadlines in one step.
+	 * Step 2 of the next advance pops min-heap entries in order:
+	 *   B (deadline 2000) is popped first → added to run queue head
+	 *   A (deadline 3000) is popped second → added to run queue tail
+	 * Step 5 runs them in FIFO order: B records slot 0, A records slot 1.
+	 */
+	strand_test_clock_ns = 4000;
+	strand_scheduler_advance(sched, NULL);
+
+	strand_scheduler_destroy(sched);
+
+	/*
+	 * Pass condition: B (id=1) woke first (order[0]==1),
+	 *                 A (id=0) woke second (order[1]==0).
+	 */
+	return ((order[0] == 1 && order[1] == 0) ? 0 : 1);
+}
+
 void
 run_layer2_tests(void)
 {
@@ -737,4 +928,6 @@ run_layer2_tests(void)
 	RUN("test_spawn_returns_error_after_stop",
 	    test_spawn_returns_error_after_stop);
 	RUN("test_yield_requeues", test_yield_requeues);
+	RUN("test_timer_fires", test_timer_fires);
+	RUN("test_timer_order", test_timer_order);
 }
