@@ -773,6 +773,99 @@ poller_poll(strand_scheduler_t *sched, int timeout_ms)
 }
 
 /* ---------------------------------------------------------------------------
+ * poller_cancel_io — cancel a fiber parked on an I/O wait (same-worker).
+ *
+ * Infers direction from f->state, clears the waiter from the entry, updates
+ * the OS registration, removes the entry if empty, and wakes f with
+ * STRAND_CANCELLED.  See ARCHITECTURE.md §5.8.
+ * ---------------------------------------------------------------------------
+ */
+void
+poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
+{
+	strand_poller_t   *p   = sched->poller;
+	int                fd  = f->parked_fd;
+	fiber_state_t      st  = atomic_load_explicit(&f->state,
+	                             memory_order_relaxed);
+	int                dir = (st == FIBER_PARKED_IO_READ) ? 0 : 1;
+	strand_fd_entry_t *e;
+
+	e = fd_table_lookup(p, fd);
+
+	/*
+	 * SAFETY: the fd table entry must exist while any fiber is parked on
+	 * the fd.  A missing entry indicates a lifecycle bug — the entry was
+	 * removed while a waiter was still registered.
+	 * See ARCHITECTURE.md §5.2.
+	 */
+	STRAND_DEBUG_ASSERT(e != NULL);
+	if (e == NULL) {
+		/* Release build: wake with error rather than leaving f parked. */
+		fiber_io_wake(sched, f, STRAND_ERR_IO);
+		return;
+	}
+
+	/* Clear the cancelled direction's waiter pointer. */
+	if (dir == 0)
+		e->read_waiter = NULL;
+	else
+		e->write_waiter = NULL;
+
+#ifdef STRAND_LINUX
+	if (e->read_waiter != NULL || e->write_waiter != NULL) {
+		/*
+		 * Other direction still has a waiter: MOD the registration to
+		 * cover only the remaining direction.  No post-cancel readiness
+		 * check is needed — the remaining waiter will wake on the next
+		 * genuine edge.  See ARCHITECTURE.md §5.8.
+		 */
+		uint32_t new_mask = EPOLLET | EPOLLONESHOT;
+		if (e->read_waiter  != NULL) new_mask |= EPOLLIN;
+		if (e->write_waiter != NULL) new_mask |= EPOLLOUT;
+		if (e->reg_state != FD_REG_NOT_REGISTERED)
+			(void)poller_arm_fd(p, fd, new_mask, 0, e);
+	} else {
+		/*
+		 * No remaining waiters: remove the fd from epoll entirely.
+		 * Errors are ignored — the fd may have been closed concurrently
+		 * by the application (same-worker path only here; cross-worker
+		 * close races are a Phase 5 concern).
+		 */
+		if (e->reg_state != FD_REG_NOT_REGISTERED) {
+			(void)epoll_ctl(p->pollfd, EPOLL_CTL_DEL, fd, NULL);
+			e->reg_state = FD_REG_NOT_REGISTERED;
+		}
+	}
+#endif /* STRAND_LINUX */
+
+#ifdef STRAND_OPENBSD
+	{
+		struct kevent kev;
+		int cancel_filter = (dir == 0) ? EVFILT_READ : EVFILT_WRITE;
+
+		/*
+		 * Delete the filter for the cancelled direction.
+		 * EVFILT_READ and EVFILT_WRITE are independent; the other
+		 * direction's filter, if registered, remains active.
+		 * Errors are ignored — the filter may already be gone if the
+		 * fd was closed by the application.
+		 * See ARCHITECTURE.md §5.7 and §5.8.
+		 */
+		EV_SET(&kev, (uintptr_t)fd, cancel_filter, EV_DELETE,
+		       0, 0, NULL);
+		(void)kevent(p->pollfd, &kev, 1, NULL, 0, NULL);
+	}
+#endif /* STRAND_OPENBSD */
+
+	/* Remove the table entry when both waiters are gone. */
+	if (e->read_waiter == NULL && e->write_waiter == NULL)
+		fd_table_remove(p, fd);
+
+	/* Wake the cancelled fiber with STRAND_CANCELLED. */
+	fiber_io_wake(sched, f, STRAND_CANCELLED);
+}
+
+/* ---------------------------------------------------------------------------
  * poller_register_wakeup_fd — register the scheduler wakeup fd with the
  * poller OS instance so that a write to the wakeup channel interrupts a
  * blocked epoll_wait / kevent call.

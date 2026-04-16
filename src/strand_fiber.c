@@ -16,6 +16,7 @@
 #include "strand_fiber.h"
 #include "strand_internal.h"
 #include "strand_sched.h"
+#include "strand_poller.h"
 
 /*
  * page_size() — system page size, cached after the first call.
@@ -510,7 +511,8 @@ strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns)
 /* ---------------------------------------------------------------------------
  * strand_fiber_cancel — cancel a fiber by ABA-safe handle.
  *
- * Phase 3: same-worker path only.  Acts based on current fiber state.
+ * Phase 3: timer and run-queue states.
+ * Phase 4 (Task 4.4): I/O parked states (FIBER_PARKED_IO_READ/WRITE).
  * See ARCHITECTURE.md §8.1 and the doc comment in include/strand.h.
  * ---------------------------------------------------------------------------
  */
@@ -573,12 +575,20 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 
 	case FIBER_PARKED_IO_READ:
 	case FIBER_PARKED_IO_WRITE:
+		/*
+		 * Remove the fiber from the fd waiter table, adjust the OS
+		 * registration (MOD to remaining direction or DEL), and wake
+		 * the fiber with STRAND_CANCELLED.
+		 * See ARCHITECTURE.md §5.8 and DEVELOPMENT.md Task 4.4.
+		 */
+		poller_cancel_io(sched, f);
+		break;
+
 	case FIBER_PARKED_OFFLOAD:
 	case FIBER_PARKED_CHANNEL:
 		/*
 		 * Placeholder — these states are handled when the respective
 		 * layers are implemented:
-		 *   FIBER_PARKED_IO_*  : Phase 4 (Task 4.4)
 		 *   FIBER_PARKED_OFFLOAD: Phase 5 (Task 5.5)
 		 *   FIBER_PARKED_CHANNEL: Phase 6
 		 */

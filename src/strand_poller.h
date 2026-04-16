@@ -195,6 +195,35 @@ void fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f,
 void poller_poll(struct strand_scheduler *sched, int timeout_ms);
 
 /*
+ * poller_cancel_io — cancel a fiber parked on an I/O wait (same-worker path).
+ *
+ * Removes the fiber's waiter from the fd table entry, adjusts the OS
+ * registration, and wakes the fiber with STRAND_CANCELLED.
+ *
+ * Direction is inferred from f->state (FIBER_PARKED_IO_READ or IO_WRITE).
+ * The fd is taken from f->parked_fd.
+ *
+ * Linux:
+ *   - If the other direction still has a waiter: epoll_ctl MOD to the
+ *     remaining direction only (EPOLLET | EPOLLONESHOT).
+ *     No post-cancel readiness check is needed — the remaining waiter
+ *     will wake on the next genuine edge or when the fd is re-armed.
+ *   - If no other waiter: epoll_ctl DEL; reg_state -> NOT_REGISTERED.
+ *
+ * OpenBSD:
+ *   - Delete the kevent filter for the cancelled direction (EV_DELETE).
+ *   - EVFILT_READ and EVFILT_WRITE are independent; the other direction's
+ *     filter, if any, remains registered without modification.
+ *
+ * The fd table entry is removed when both waiters are gone.
+ *
+ * Must be called from the owning worker (same-worker path only in Phase 4).
+ * Cross-worker cancel is enqueued to the inject queue (Phase 5, Task 5.5).
+ * See ARCHITECTURE.md §5.8.
+ */
+void poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f);
+
+/*
  * poller_register_wakeup_fd — register the scheduler wakeup fd with the
  * poller's OS instance so that a write to the wakeup fd wakes a blocked
  * epoll_wait / kevent call.
