@@ -2,9 +2,9 @@
 
 ## Status Overview
 
-**Last Updated**: 2026-04-16
-**Current Phase**: Phase 4 — Layer 3: I/O Integration
-**Next Task**: Phase 4 — Task 4.4: tests (test_layer3.c)
+**Last Updated**: 2026-04-17
+**Current Phase**: Phase 5 — Layer 4: Multi-Worker Runtime
+**Next Task**: Phase 5 — Task 5.2: strand_runtime_t and worker registry
 
 ### Phase Summary
 
@@ -13,9 +13,9 @@
 | 1 | Foundation | DONE | 0/0 | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
-| 4 | Layer 3: I/O Integration | IN PROGRESS | 31/31 | Tasks 4.1–4.5 done; Linux clean |
+| 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1–4.5 done; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
-| 5 | Layer 4: Multi-Worker Runtime | NOT STARTED | — | Workers, inject queue, offload pool |
+| 5 | Layer 4: Multi-Worker Runtime | IN PROGRESS | 50/50 | Task 5.1 done; Linux clean |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
 | 7 | Hardening, Benchmarks, and Release | NOT STARTED | — | Integration tests, benchmarks, documentation |
 
@@ -704,7 +704,7 @@ exponential backoff and never drops items.
 
 ### Tasks
 
-**5.1 — strand_inject_queue_t**
+**5.1 — strand_inject_queue_t** ✓ DONE
 - Implement bounded MPSC ring buffer in `src/strand_inject.c`:
   - Capacity configured at scheduler init (default: 4 × max fiber count)
   - `inject_queue_push_release`: enqueue with release memory ordering;

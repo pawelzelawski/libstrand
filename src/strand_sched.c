@@ -118,9 +118,14 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	if (sched == NULL)
 		return (NULL);
 
-	if (pthread_mutex_init(&sched->inject_queue.inject_mu, NULL) != 0) {
-		free(sched);
-		return (NULL);
+	{
+		size_t inject_cap = (cfg != NULL && cfg->inject_cap != 0)
+		    ? cfg->inject_cap
+		    : STRAND_DEFAULT_INJECT_CAP;
+		if (inject_queue_init(&sched->inject_queue, inject_cap) != 0) {
+			free(sched);
+			return (NULL);
+		}
 	}
 
 /*
@@ -146,7 +151,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 #ifdef STRAND_LINUX
 	sched->wakeup_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 	if (sched->wakeup_fd == -1) {
-		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
+		inject_queue_destroy(&sched->inject_queue);
 		free(sched);
 		return (NULL);
 	}
@@ -158,7 +163,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	 * F_SETFL are fully POSIX and always visible.
 	 */
 	if (pipe(sched->wakeup_pipe) == -1) {
-		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
+		inject_queue_destroy(&sched->inject_queue);
 		free(sched);
 		return (NULL);
 	}
@@ -168,7 +173,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	    fcntl(sched->wakeup_pipe[1], F_SETFL, O_NONBLOCK) == -1) {
 		close(sched->wakeup_pipe[0]);
 		close(sched->wakeup_pipe[1]);
-		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
+		inject_queue_destroy(&sched->inject_queue);
 		free(sched);
 		return (NULL);
 	}
@@ -178,7 +183,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	    malloc(TIMER_HEAP_INITIAL_CAP * sizeof(*sched->timer_heap));
 	if (sched->timer_heap == NULL) {
 		wakeup_close(sched);
-		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
+		inject_queue_destroy(&sched->inject_queue);
 		free(sched);
 		return (NULL);
 	}
@@ -189,7 +194,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	if (sched->stack_cache == NULL) {
 		free(sched->timer_heap);
 		wakeup_close(sched);
-		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
+		inject_queue_destroy(&sched->inject_queue);
 		free(sched);
 		return (NULL);
 	}
@@ -212,7 +217,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	sched->dead_pool = NULL;
 	sched->poller = poller_create(0);
 	if (sched->poller == NULL) {
-		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
+		inject_queue_destroy(&sched->inject_queue);
 		wakeup_close(sched);
 		free(sched->timer_heap);
 		free(sched->stack_cache);
@@ -229,7 +234,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	if (poller_register_wakeup_fd(sched->poller, sched->wakeup_fd) !=
 	    STRAND_OK) {
 		poller_destroy(sched->poller);
-		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
+		inject_queue_destroy(&sched->inject_queue);
 		wakeup_close(sched);
 		free(sched->timer_heap);
 		free(sched->stack_cache);
@@ -241,7 +246,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	if (poller_register_wakeup_fd(sched->poller,
 	    sched->wakeup_pipe[0]) != STRAND_OK) {
 		poller_destroy(sched->poller);
-		pthread_mutex_destroy(&sched->inject_queue.inject_mu);
+		inject_queue_destroy(&sched->inject_queue);
 		wakeup_close(sched);
 		free(sched->timer_heap);
 		free(sched->stack_cache);
@@ -249,8 +254,6 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 		return NULL;
 	}
 #endif
-	sched->inject_queue.head = NULL;
-	sched->inject_queue.tail = NULL;
 	atomic_init(&sched->stop_flag, 0);
 	sched->owner_thread = pthread_self();
 
@@ -291,10 +294,10 @@ strand_scheduler_destroy(strand_scheduler_t *sched)
 
 	/*
 	 * Scheduler destroy requires no active fibers; pending cross-worker
-	 * cancel requests are stale at this point and can be discarded.
+	 * inject items are stale at this point and can be discarded.
 	 */
-	inject_cancel_discard_all(sched);
-	pthread_mutex_destroy(&sched->inject_queue.inject_mu);
+	inject_queue_discard_all(&sched->inject_queue);
+	inject_queue_destroy(&sched->inject_queue);
 
 	wakeup_close(sched);
 
@@ -558,10 +561,13 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	STRAND_TSAN_BIND_CURRENT(&sched->scheduler_ctx);
 
 	/*
-	 * Step 1: drain injected cross-worker cancel requests.
-	 * Full generic inject queue semantics land in Phase 5.
+	 * Step 1: drain injected cross-worker items (bounded MPSC ring buffer).
+	 * Handles INJECT_CANCEL items by calling strand_fiber_cancel.
+	 * Additional item types (INJECT_SPAWN, INJECT_OFFLOAD_COMPLETE) are
+	 * added in Phase 5 Tasks 5.4 and 5.8.
+	 * See ARCHITECTURE.md §6.3.
 	 */
-	inject_cancel_drain(sched);
+	inject_queue_drain(sched);
 
 	/*
 	 * Step 2: expire timers.

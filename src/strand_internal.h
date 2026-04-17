@@ -223,13 +223,64 @@ _Static_assert(sizeof(strand_fiber_handle_t) == 16,
                "strand_fiber_handle_t size changed — ptr (8) + generation (8)");
 
 /*
- * strand_inject_queue_t — minimal Phase 4 injected-cancel queue.
- * Full bounded MPSC queue semantics land in Phase 5 (Task 5.1).
+ * inject_item_type_t — discriminator for items carried by the inject queue.
+ * See ARCHITECTURE.md §6.3.
+ *
+ * INJECT_CANCEL   — cross-worker fiber cancel request; payload is cancel_handle.
+ * Additional types (INJECT_SPAWN, INJECT_OFFLOAD_COMPLETE) are added in
+ * later Phase 5 tasks.
+ */
+typedef enum {
+	INJECT_CANCEL = 0,
+} inject_item_type_t;
+
+/*
+ * inject_item_t — one item in the bounded MPSC inject ring buffer.
+ * The type field selects which union member is valid.
+ */
+typedef struct inject_item {
+	inject_item_type_t     type;
+	union {
+		strand_fiber_handle_t cancel_handle; /* INJECT_CANCEL */
+	} u;
+} inject_item_t;
+
+/*
+ * inject_slot_t — one slot in the ring buffer array.
+ *
+ * sequence — atomic sequence number used by the Vyukov MPSC algorithm.
+ *   Initial value for slot[i] is i.
+ *   After producer writes:   sequence = pos + 1  (release)
+ *   After consumer reads:    sequence = pos + capacity (release)
+ * See strand_inject.c for the full protocol.
+ */
+typedef struct inject_slot {
+	_Atomic size_t sequence;
+	inject_item_t  item;
+} inject_slot_t;
+
+/*
+ * strand_inject_queue_t — bounded MPSC ring buffer, one per worker.
+ * See ARCHITECTURE.md §6.3 and strand_inject.c.
+ *
+ * slots    — heap-allocated ring of inject_slot_t; capacity must be power of 2.
+ * capacity — number of slots; always a power of 2 >= 1.
+ * mask     — capacity - 1; used instead of modulo.
+ * head     — atomic producer position; multiple producers increment atomically.
+ * tail     — consumer position; owned exclusively by the worker thread.
+ *
+ * Thread safety:
+ *   head: written by any thread via atomic_fetch_add.
+ *   tail: read/written only by the owning worker thread; plain size_t.
+ *   slots[i].sequence: the synchronisation point — release on write,
+ *     acquire on read.  See CODING_STANDARDS.md §4.2.
  */
 typedef struct strand_inject_queue {
-	pthread_mutex_t inject_mu;
-	struct strand_cancel_req *head;
-	struct strand_cancel_req *tail;
+	inject_slot_t    *slots;
+	size_t            capacity;
+	size_t            mask;
+	_Atomic size_t    head;
+	size_t            tail;
 } strand_inject_queue_t;
 
 /*
@@ -328,8 +379,9 @@ typedef struct strand_scheduler {
 	 * inspects the flag. */
 	_Atomic int stop_flag;
 
-	/* Inject queue — Phase 3 stub; no-op drain in Step 1.
-	 * Replaced with real MPSC ring buffer in Phase 5 (Task 5.1). */
+	/* Inject queue — bounded MPSC ring buffer (Task 5.1).
+	 * Capacity set from cfg->inject_cap at create time.
+	 * See ARCHITECTURE.md §6.3 and strand_inject.c. */
 	strand_inject_queue_t inject_queue;
 
 	/* I/O poller — NULL in Phase 3; initialised in Phase 4 (Task 4.1). */

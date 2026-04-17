@@ -535,20 +535,38 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 	if (sched == NULL)
 		return (STRAND_ERR_WRONGCTX);
 	if (!pthread_equal(pthread_self(), sched->owner_thread)) {
+		inject_item_t item;
+
 		/*
-		 * SAFETY: cross-worker cancel is enqueue-only. The request is
+		 * SAFETY: cross-worker cancel is enqueue-only.  The request is
 		 * pushed to the target scheduler's inject queue and processed in
 		 * Step 1 of strand_scheduler_advance on the owning worker.
 		 * Post-return fd-freedom guarantees do not apply until processed.
+		 * See ARCHITECTURE.md §5.3 and DEVELOPMENT.md Task 5.5.
 		 */
-		return (inject_cancel_enqueue(sched, handle));
+		item.type = INJECT_CANCEL;
+		item.u.cancel_handle = handle;
+		inject_queue_push_release(&sched->inject_queue, &item);
+		/* Wake the owner worker so Step 1 drains the item promptly. */
+#ifdef STRAND_LINUX
+		{
+			uint64_t v = 1;
+			(void)write(sched->wakeup_fd, &v, sizeof(v));
+		}
+#endif
+#ifdef STRAND_OPENBSD
+		{
+			char v = 1;
+			(void)write(sched->wakeup_pipe[1], &v, sizeof(v));
+		}
+#endif
+		return (STRAND_OK);
 	}
 
 	/*
-	 * Load the state once.  In Phase 3 this is always same-worker so no
-	 * concurrent state change is possible between the load and the action.
-	 * In Phase 5 the cross-worker path will use an inject operation
-	 * instead of directly manipulating state.
+	 * Load the state once.  The fiber is pinned to this worker; no
+	 * concurrent state change is possible on the same-worker path.
+	 * Cross-worker cancellation uses the inject queue path above.
 	 */
 	/* ATOMIC: seq_cst default for shared state loads (CODING_STANDARDS.md §4.1). */
 	state = atomic_load(&f->state);
