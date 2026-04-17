@@ -226,12 +226,14 @@ _Static_assert(sizeof(strand_fiber_handle_t) == 16,
  * inject_item_type_t — discriminator for items carried by the inject queue.
  * See ARCHITECTURE.md §6.3.
  *
- * INJECT_CANCEL   — cross-worker fiber cancel request; payload is cancel_handle.
- * Additional types (INJECT_SPAWN, INJECT_OFFLOAD_COMPLETE) are added in
- * later Phase 5 tasks.
+ * INJECT_CANCEL — cross-worker fiber cancel request; payload is cancel_handle.
+ * INJECT_SPAWN  — host-thread fiber spawn; payload is a fully-initialised
+ *                 strand_fiber_t * to be pushed onto the worker's run queue.
+ *                 Added in Task 5.4.
  */
 typedef enum {
 	INJECT_CANCEL = 0,
+	INJECT_SPAWN  = 1,
 } inject_item_type_t;
 
 /*
@@ -242,6 +244,7 @@ typedef struct inject_item {
 	inject_item_type_t     type;
 	union {
 		strand_fiber_handle_t cancel_handle; /* INJECT_CANCEL */
+		struct strand_fiber  *fiber;         /* INJECT_SPAWN  */
 	} u;
 } inject_item_t;
 
@@ -431,5 +434,60 @@ typedef struct strand_scheduler {
 	 * Set at create and refreshed by scheduler entry points. */
 	pthread_t owner_thread;
 } strand_scheduler_t;
+
+/*
+ * strand_worker_t — one worker thread and its scheduler.
+ *
+ * sched    — heap-allocated scheduler owned by this worker.
+ * thread   — the OS thread running strand_scheduler_run.
+ * runtime  — back-pointer to the owning runtime (for shutdown checks).
+ *
+ * Thread safety: read-only after strand_worker_start returns.
+ * strand_worker_stop / strand_worker_join may be called from any thread.
+ */
+typedef struct strand_worker {
+        strand_scheduler_t *sched;
+        pthread_t           thread;
+        struct strand_runtime *runtime;
+        /*
+         * joined — set to 1 after pthread_join completes on this worker.
+         * Prevents strand_runtime_destroy from double-joining a worker
+         * that was already joined by strand_worker_join.
+         * Protected by the runtime spinlock during destroy; set by join.
+         */
+        _Atomic int         joined;
+} strand_worker_t;
+
+/*
+ * strand_runtime_t — multi-worker runtime registry.
+ *
+ * workers[]      — fixed-size array of registered worker pointers.
+ * worker_count   — number of registered workers; protected by spinlock.
+ * workers_cap    — capacity of workers[] (set at init from max_workers).
+ * spinlock       — CAS-based spinlock protecting workers[] and worker_count.
+ *                  Round-robin counter is accessed WITHOUT the spinlock.
+ * rr_counter     — _Atomic round-robin position; incremented on each
+ *                  host-thread spawn; mod worker_count gives the slot.
+ *                  Accessed without the spinlock — a torn read at best
+ *                  selects a suboptimal worker, not a wrong one.
+ * shutdown_flag  — set atomically when the first worker is stopped.
+ *                  All spawn paths check this before proceeding.
+ *
+ * See ARCHITECTURE.md §6.1, §6.2, §6.4.
+ * See DEVELOPMENT.md Task 5.2.
+ */
+typedef struct strand_runtime {
+	strand_worker_t   **workers;
+	size_t              worker_count;
+	size_t              workers_cap;
+	/*
+	 * SAFETY: spinlock protects workers[] and worker_count.
+	 * Acquire before reading or modifying either; release after.
+	 * rr_counter and shutdown_flag are _Atomic and accessed lock-free.
+	 */
+	_Atomic int         spinlock;
+	_Atomic uint32_t    rr_counter;
+	_Atomic int         shutdown_flag;
+} strand_runtime_t;
 
 #endif /* STRAND_INTERNAL_H */

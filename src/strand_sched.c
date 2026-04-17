@@ -687,12 +687,12 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	if (progress) {
 		if (next_deadline_ns != NULL)
 			*next_deadline_ns = timer_heap_peek_deadline(sched);
-		return (SCHED_PROGRESS);
+		return (STRAND_SCHED_PROGRESS);
 	}
 
 	if (next_deadline_ns != NULL)
 		*next_deadline_ns = timer_heap_peek_deadline(sched);
-	return (SCHED_IDLE);
+	return (STRAND_SCHED_IDLE);
 }
 
 /* ---------------------------------------------------------------------------
@@ -777,7 +777,7 @@ strand_scheduler_stop(strand_scheduler_t *sched)
  * strand_scheduler_run -- blocking worker-mode loop.
  *
  * Calls strand_scheduler_advance in a loop.  When advance returns
- * SCHED_IDLE the worker blocks in poll() on the wakeup fd until either
+ * STRAND_SCHED_IDLE the worker blocks in poll() on the wakeup fd until either
  * the next timer deadline expires or strand_scheduler_stop writes a byte
  * to the wakeup fd.  Returns only after stop_flag is set.
  *
@@ -786,18 +786,36 @@ strand_scheduler_stop(strand_scheduler_t *sched)
  * See ARCHITECTURE.md §4.2.
  * ---------------------------------------------------------------------------
  */
+/*
+ * strand_sched_current_tls — thread-local pointer to the scheduler running
+ * on this thread.  Set at the start of strand_scheduler_run and read by
+ * strand_sched_current().  NULL on non-worker threads.
+ *
+ * Used internally by tests and by strand_sched_current() to retrieve the
+ * current worker's scheduler without requiring a fiber descriptor pointer.
+ * See DEVELOPMENT.md Task 5.3.
+ */
+_Thread_local strand_scheduler_t *strand_sched_current_tls = NULL;
+
 void
 strand_scheduler_run(strand_scheduler_t *sched)
 {
-	/*
-	 * In Phase 3, no context switches to user fibers happen in this test,
-	 * so no TSan rebinding is needed here.  Multi-worker TSan setup is
-	 * deferred to Phase 5 (Task 5.3) where the worker-thread lifecycle
-	 * is fully defined.
-	 */
+        /*
+         * Publish this scheduler as the current scheduler for this thread.
+         * Readable via strand_sched_current_tls from any code running on
+         * this worker thread (including fiber functions).
+         */
+        strand_sched_current_tls = sched;
 
-	/* Worker mode establishes scheduler ownership for same-worker APIs. */
-	sched->owner_thread = pthread_self();
+        /*
+         * In Phase 3, no context switches to user fibers happen in this test,
+         * so no TSan rebinding is needed here.  Multi-worker TSan setup is
+         * deferred to Phase 5 (Task 5.3) where the worker-thread lifecycle
+         * is fully defined.
+         */
+
+        /* Worker mode establishes scheduler ownership for same-worker APIs. */
+        sched->owner_thread = pthread_self();
 
 	/*
 	 * Rebind scheduler_ctx's TSan fiber handle to this worker thread.
@@ -821,7 +839,7 @@ strand_scheduler_run(strand_scheduler_t *sched)
 		                         memory_order_acquire))
 			return;
 
-		if (rc != SCHED_IDLE)
+		if (rc != STRAND_SCHED_IDLE)
 			continue;
 
 		/*

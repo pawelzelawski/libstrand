@@ -2,17 +2,7 @@
  * tests/test_layer4.c — Layer 4 (Phase 5) test suite.
  *
  * Task 5.1: bounded MPSC inject ring buffer tests.
- *
- * Tests covered here:
- *   - Single-threaded push/pop correctness (basic round-trip)
- *   - Push fills queue to capacity; drain clears all items; FIFO order
- *   - inject_queue_discard_all leaves queue empty
- *   - inject_queue capacity is rounded to next power of 2
- *   - inject_queue_drain delivers INJECT_CANCEL items to the scheduler
- *   - test_inject_queue_overflow_backoff: producer fills queue then blocks
- *     on the (capacity+1)th push until consumer frees a slot; no item lost
- *
- * Tests that require the runtime (Tasks 5.2+) will be added in later tasks.
+ * Tasks 5.2/5.3/5.4: strand_runtime_t, strand_worker_start, host-thread spawn.
  *
  * See DEVELOPMENT.md §"Tests for Phase 5", TESTING.md §2.4.
  */
@@ -32,6 +22,7 @@
 #include "../src/strand_inject.h"
 #include "../src/strand_sched.h"
 #include "../src/strand_fiber.h"
+#include "../src/strand_runtime.h"
 
 /* -------------------------------------------------------------------------
  * Shared helpers
@@ -434,6 +425,404 @@ test_inject_queue_overflow_backoff(void)
 }
 
 /* -------------------------------------------------------------------------
+ * Helpers shared by runtime tests
+ * -------------------------------------------------------------------------
+ */
+
+/*
+ * make_test_runtime -- create a runtime with defaults suitable for tests.
+ */
+static strand_runtime_t *
+make_test_runtime(void)
+{
+	return (strand_runtime_init(NULL));
+}
+
+/*
+ * make_test_worker -- start a worker with small scheduler defaults.
+ */
+static strand_worker_t *
+make_test_worker(strand_runtime_t *rt)
+{
+	strand_sched_config_t   scfg = {
+	    .budget     = 64,
+	    .inject_cap = 64,
+	    .cache_cap  = 8,
+	    .idle_floor = 2,
+	};
+	strand_worker_config_t  wcfg = {
+	    .sched_cfg    = &scfg,
+	    .cpu_affinity = -1,
+	};
+	return (strand_worker_start(rt, &wcfg));
+}
+
+/* -------------------------------------------------------------------------
+ * test_runtime_init_destroy
+ * Allocate a runtime and destroy it immediately — no workers started.
+ * -------------------------------------------------------------------------
+ */
+static int
+test_runtime_init_destroy(void)
+{
+	strand_runtime_t *rt;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+	strand_runtime_destroy(rt);
+	return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * test_no_workers_registered_error
+ * Host-thread spawn before any strand_worker_start must return
+ * STRAND_ERR_NO_WORKERS.
+ * -------------------------------------------------------------------------
+ */
+static int
+test_no_workers_registered_error(void)
+{
+	strand_runtime_t     *rt;
+	strand_fiber_handle_t handle;
+	int                   rc;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	rc = strand_runtime_spawn(rt, NULL, NULL, 0, NULL, &handle);
+	strand_runtime_destroy(rt);
+	return (rc == STRAND_ERR_NO_WORKERS) ? 0 : 1;
+}
+
+/* -------------------------------------------------------------------------
+ * test_spawn_during_shutdown_error
+ * After strand_worker_stop the runtime shutdown_flag is set; subsequent
+ * strand_runtime_spawn must return STRAND_ERR_SHUTDOWN.
+ * -------------------------------------------------------------------------
+ */
+static int
+test_spawn_during_shutdown_error(void)
+{
+	strand_runtime_t     *rt;
+	strand_worker_t      *w;
+	strand_fiber_handle_t handle;
+	int                   rc;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	w = make_test_worker(rt);
+	if (w == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	strand_worker_stop(w);
+	strand_worker_join(w);
+
+	rc = strand_runtime_spawn(rt, NULL, NULL, 0, NULL, &handle);
+	strand_runtime_destroy(rt);
+	return (rc == STRAND_ERR_SHUTDOWN) ? 0 : 1;
+}
+
+/* -------------------------------------------------------------------------
+ * test_inject_delivers_to_worker
+ * Spawn a fiber via strand_runtime_spawn; verify it runs on the target
+ * worker by recording the sched pointer inside the fiber.
+ * -------------------------------------------------------------------------
+ */
+typedef struct {
+	strand_scheduler_t *observed_sched;
+	_Atomic int         ran;
+} delivers_args_t;
+
+static void
+delivers_fiber(void *arg)
+{
+	delivers_args_t *a = arg;
+
+	/*
+	 * Record the scheduler this fiber is running on via the thread-local
+	 * set by strand_scheduler_run.  No UB, no data race.
+	 */
+	a->observed_sched = strand_sched_current_tls;
+	atomic_store(&a->ran, 1);
+}
+
+static int
+test_inject_delivers_to_worker(void)
+{
+	strand_runtime_t     *rt;
+	strand_worker_t      *w;
+	delivers_args_t       args;
+	struct timespec       ts;
+	int                   i;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	w = make_test_worker(rt);
+	if (w == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	atomic_init(&args.ran, 0);
+	args.observed_sched = NULL;
+
+	if (strand_runtime_spawn(rt, delivers_fiber, &args,
+	    STRAND_DEFAULT_STACK_SIZE, w, NULL) != STRAND_OK) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/* Save w->sched before destroy frees the worker descriptor. */
+	{
+		strand_scheduler_t *expected_sched = w->sched;
+
+		/* Wait up to 1 s for the fiber to run. */
+		ts.tv_sec = 0;
+		ts.tv_nsec = 5000000L; /* 5 ms */
+		for (i = 0; i < 200 && !atomic_load(&args.ran); i++)
+			nanosleep(&ts, NULL);
+
+		strand_runtime_destroy(rt);
+		return (atomic_load(&args.ran) == 1 &&
+		    args.observed_sched == expected_sched) ? 0 : 1;
+	}
+}
+
+/* -------------------------------------------------------------------------
+ * test_round_robin_selection
+ * Spawn 10 fibers with 2 workers; verify both workers receive fibers.
+ * Each fiber records which scheduler it ran on.
+ * -------------------------------------------------------------------------
+ */
+#define ROUND_ROBIN_FIBERS 10
+
+typedef struct {
+	strand_scheduler_t *sched_a;
+	strand_scheduler_t *sched_b;
+	_Atomic int         count_a;
+	_Atomic int         count_b;
+	_Atomic int         total;
+} rr_args_t;
+
+static void
+rr_fiber(void *arg)
+{
+	rr_args_t          *a = arg;
+	strand_scheduler_t *my_sched;
+
+	/*
+	 * Read the scheduler for this worker thread via the TLS variable set
+	 * by strand_scheduler_run.  No cross-thread pointer chasing, no races.
+	 */
+	my_sched = strand_sched_current_tls;
+	if (my_sched == a->sched_a)
+		atomic_fetch_add(&a->count_a, 1);
+	else if (my_sched == a->sched_b)
+		atomic_fetch_add(&a->count_b, 1);
+	atomic_fetch_add(&a->total, 1);
+}
+
+static int
+test_round_robin_selection(void)
+{
+	strand_runtime_t *rt;
+	strand_worker_t  *wa, *wb;
+	rr_args_t         args;
+	struct timespec   ts;
+	int               i;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	wa = make_test_worker(rt);
+	wb = make_test_worker(rt);
+	if (wa == NULL || wb == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	atomic_init(&args.count_a, 0);
+	atomic_init(&args.count_b, 0);
+	atomic_init(&args.total, 0);
+	args.sched_a = wa->sched;
+	args.sched_b = wb->sched;
+
+	for (i = 0; i < ROUND_ROBIN_FIBERS; i++) {
+		if (strand_runtime_spawn(rt, rr_fiber, &args,
+		    STRAND_DEFAULT_STACK_SIZE, NULL, NULL) != STRAND_OK) {
+			strand_runtime_destroy(rt);
+			return (1);
+		}
+	}
+
+	/* Wait up to 2 s for all fibers to complete. */
+	ts.tv_sec = 0;
+	ts.tv_nsec = 10000000L; /* 10 ms */
+	for (i = 0; i < 200 &&
+	    atomic_load(&args.total) < ROUND_ROBIN_FIBERS; i++)
+		nanosleep(&ts, NULL);
+
+	strand_runtime_destroy(rt);
+
+	/* Both workers must have received at least one fiber. */
+	if (atomic_load(&args.total) != ROUND_ROBIN_FIBERS)
+		return (1);
+	if (atomic_load(&args.count_a) == 0 || atomic_load(&args.count_b) == 0)
+		return (1);
+	return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * test_explicit_worker_override
+ * Spawn with explicit worker; verify the fiber runs on that worker's sched.
+ * -------------------------------------------------------------------------
+ */
+typedef struct {
+	strand_scheduler_t *expected_sched;
+	_Atomic int         correct;
+	_Atomic int         ran;
+} explicit_args_t;
+
+static void
+explicit_fiber(void *arg)
+{
+	explicit_args_t *a = arg;
+
+	/*
+	 * Verify the fiber is running on the expected scheduler via TLS.
+	 * No cross-thread pointer chasing.
+	 */
+	if (strand_sched_current_tls == a->expected_sched)
+		atomic_store(&a->correct, 1);
+	atomic_store(&a->ran, 1);
+}
+
+static int
+test_explicit_worker_override(void)
+{
+	strand_runtime_t *rt;
+	strand_worker_t  *wa, *wb;
+	explicit_args_t   args;
+	struct timespec   ts;
+	int               i;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	wa = make_test_worker(rt);
+	wb = make_test_worker(rt);
+	if (wa == NULL || wb == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	atomic_init(&args.correct, 0);
+	atomic_init(&args.ran, 0);
+	args.expected_sched = wb->sched; /* explicitly target worker B */
+
+	if (strand_runtime_spawn(rt, explicit_fiber, &args,
+	    STRAND_DEFAULT_STACK_SIZE, wb, NULL) != STRAND_OK) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = 5000000L;
+	for (i = 0; i < 200 && !atomic_load(&args.ran); i++)
+		nanosleep(&ts, NULL);
+
+	strand_runtime_destroy(rt);
+	return (atomic_load(&args.correct) == 1) ? 0 : 1;
+}
+
+/* -------------------------------------------------------------------------
+ * test_stopped_worker_excluded_roundrobin
+ * Stop one of two workers; all subsequent spawns must go to the live worker.
+ * -------------------------------------------------------------------------
+ */
+#define EXCL_FIBERS 4
+
+typedef struct {
+	strand_scheduler_t *live_sched;
+	_Atomic int         on_live;
+	_Atomic int         total;
+} excl_args_t;
+
+static void
+excl_fiber(void *arg)
+{
+	excl_args_t *a = arg;
+
+	/*
+	 * All fibers in this test must land on live_sched (wa is stopped).
+	 * Verify via TLS — no cross-thread pointer chasing.
+	 */
+	if (strand_sched_current_tls == a->live_sched)
+		atomic_fetch_add(&a->on_live, 1);
+	atomic_fetch_add(&a->total, 1);
+}
+
+static int
+test_stopped_worker_excluded_roundrobin(void)
+{
+	strand_runtime_t *rt;
+	strand_worker_t  *wa, *wb;
+	excl_args_t       args;
+	struct timespec   ts;
+	int               i;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	wa = make_test_worker(rt);
+	wb = make_test_worker(rt);
+	if (wa == NULL || wb == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/* Stop worker A; worker B is the live one. */
+	strand_scheduler_stop(wa->sched);
+	strand_worker_join(wa);
+
+	atomic_init(&args.on_live, 0);
+	atomic_init(&args.total, 0);
+	args.live_sched = wb->sched;
+
+	for (i = 0; i < EXCL_FIBERS; i++) {
+		if (strand_runtime_spawn(rt, excl_fiber, &args,
+		    STRAND_DEFAULT_STACK_SIZE, NULL, NULL) != STRAND_OK) {
+			strand_runtime_destroy(rt);
+			return (1);
+		}
+	}
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = 10000000L;
+	for (i = 0; i < 200 &&
+	    atomic_load(&args.total) < EXCL_FIBERS; i++)
+		nanosleep(&ts, NULL);
+
+	strand_runtime_destroy(rt);
+
+	if (atomic_load(&args.total) != EXCL_FIBERS)
+		return (1);
+	/* All fibers must have landed on the live worker. */
+	return (atomic_load(&args.on_live) == EXCL_FIBERS) ? 0 : 1;
+}
+
+/* -------------------------------------------------------------------------
  * Suite runner
  * -------------------------------------------------------------------------
  */
@@ -448,5 +837,19 @@ run_layer4_tests(void)
 	RUN("test_inject_drain_delivers_cancel", test_inject_drain_delivers_cancel);
 	RUN("test_inject_queue_overflow_backoff",
 	    test_inject_queue_overflow_backoff);
+	RUN("test_runtime_init_destroy",
+	    test_runtime_init_destroy);
+	RUN("test_no_workers_registered_error",
+	    test_no_workers_registered_error);
+	RUN("test_spawn_during_shutdown_error",
+	    test_spawn_during_shutdown_error);
+	RUN("test_inject_delivers_to_worker",
+	    test_inject_delivers_to_worker);
+	RUN("test_round_robin_selection",
+	    test_round_robin_selection);
+	RUN("test_explicit_worker_override",
+	    test_explicit_worker_override);
+	RUN("test_stopped_worker_excluded_roundrobin",
+	    test_stopped_worker_excluded_roundrobin);
 }
 

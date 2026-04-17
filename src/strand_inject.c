@@ -51,6 +51,7 @@
 
 #include "strand_inject.h"
 #include "strand_fiber.h"
+#include "strand_sched.h"
 
 #include <sched.h>
 #include <stdlib.h>
@@ -242,6 +243,16 @@ inject_queue_drain(strand_scheduler_t *sched)
 			 * safe to call directly here (same-worker path).
 			 */
 			(void)strand_fiber_cancel(item.u.cancel_handle);
+			break;
+		case INJECT_SPAWN:
+			/*
+			 * Fiber was fully initialised by the host thread via
+			 * strand_runtime_spawn.  home_sched is already set.
+			 * Transition to RUNNABLE and push to run queue.
+			 * See ARCHITECTURE.md §6.4 and DEVELOPMENT.md Task 5.4.
+			 */
+			atomic_store(&item.u.fiber->state, FIBER_RUNNABLE);
+			run_queue_push(sched, item.u.fiber);
 			break;
 		default:
 			/* Unknown type — silently ignore (forward compat). */

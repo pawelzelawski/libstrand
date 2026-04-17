@@ -209,7 +209,7 @@ test_stop_writes_wakeup_fd(void)
  *
  * Write a byte to the wakeup fd manually (simulating a stop signal),
  * then call strand_scheduler_advance.  Verify that:
- *   1. Advance returns SCHED_IDLE (no fibers ran — the byte is not a fiber
+ *   1. Advance returns STRAND_SCHED_IDLE (no fibers ran — the byte is not a fiber
  *      event, it is a control signal).
  *   2. After advance, the wakeup fd is empty (Step 3 drained it).
  *
@@ -253,9 +253,9 @@ test_wakeup_fd_drained_as_control(void)
 
 	fd_read = strand_scheduler_get_fd(sched);
 
-	/* Advance must return SCHED_IDLE — no fibers, no timer, no I/O. */
+	/* Advance must return STRAND_SCHED_IDLE — no fibers, no timer, no I/O. */
 	rc = strand_scheduler_advance(sched, NULL);
-	if (rc != SCHED_IDLE) {
+	if (rc != STRAND_SCHED_IDLE) {
 		strand_scheduler_destroy(sched);
 		return (1);
 	}
@@ -372,7 +372,7 @@ t35_push_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg)
  * test_advance_nonblocking
  *
  * Call strand_scheduler_advance with an empty run queue, no timers, and
- * no pending I/O.  Must return SCHED_IDLE without blocking.
+ * no pending I/O.  Must return STRAND_SCHED_IDLE without blocking.
  * =========================================================================
  */
 
@@ -388,7 +388,7 @@ test_advance_nonblocking(void)
 
 	r = strand_scheduler_advance(sched, NULL);
 	strand_scheduler_destroy(sched);
-	return (r == SCHED_IDLE ? 0 : 1);
+	return (r == STRAND_SCHED_IDLE ? 0 : 1);
 }
 
 /* =========================================================================
@@ -658,7 +658,7 @@ test_budget_limiting(void)
 		if (t35_push_fiber(sched, t35_budget_fiber_fn, &arg) != 0) {
 			/* Drain whatever was pushed before bailing. */
 			while (strand_scheduler_advance(sched, NULL) ==
-			       SCHED_PROGRESS)
+			       STRAND_SCHED_PROGRESS)
 				;
 			strand_scheduler_destroy(sched);
 			return (1);
@@ -670,7 +670,7 @@ test_budget_limiting(void)
 	count_after_one = atomic_load_explicit(&count, memory_order_acquire);
 
 	/* Drain remaining fibers so the scheduler is clean before destroy. */
-	while (strand_scheduler_advance(sched, NULL) == SCHED_PROGRESS)
+	while (strand_scheduler_advance(sched, NULL) == STRAND_SCHED_PROGRESS)
 		;
 
 	strand_scheduler_destroy(sched);
@@ -965,7 +965,7 @@ test_timer_order(void)
 	for (i = 0; i < 2; i++) {
 		if (t35_push_fiber(sched, t37_order_fiber_fn, &args[i]) != 0) {
 			while (strand_scheduler_advance(sched, NULL) ==
-			       SCHED_PROGRESS)
+			       STRAND_SCHED_PROGRESS)
 				;
 			strand_scheduler_destroy(sched);
 			return (1);
@@ -1190,7 +1190,7 @@ test_cancel_runnable(void)
 	    atomic_load_explicit(&f->cancel_pending, memory_order_acquire);
 
 	/* Drain the run queue so destroy finds a clean scheduler. */
-	while (strand_scheduler_advance(sched, NULL) == SCHED_PROGRESS)
+	while (strand_scheduler_advance(sched, NULL) == STRAND_SCHED_PROGRESS)
 		;
 
 	strand_scheduler_destroy(sched);
@@ -1311,7 +1311,7 @@ test_stale_handle_noop(void)
 	rc = strand_fiber_cancel(handle);
 
 	/* Drain so destroy is clean. */
-	while (strand_scheduler_advance(sched, NULL) == SCHED_PROGRESS)
+	while (strand_scheduler_advance(sched, NULL) == STRAND_SCHED_PROGRESS)
 		;
 
 	strand_scheduler_destroy(sched);

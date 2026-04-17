@@ -38,7 +38,9 @@ CFLAGS_COMMON = -std=c11 -Wall -Wextra -Wpedantic			\
                 $(HAVE_VALGRIND)
 
 # Platform flags — STRAND_LINUX or STRAND_OPENBSD
-CFLAGS_OS != if [ "$(OS)" = "Linux" ]; then echo "-DSTRAND_LINUX"; \
+# Linux also adds _GNU_SOURCE to expose cpu_set_t, CPU_ZERO/SET, and
+# pthread_setaffinity_np (used in strand_runtime.c Task 5.3).
+CFLAGS_OS != if [ "$(OS)" = "Linux" ]; then echo "-DSTRAND_LINUX -D_GNU_SOURCE"; \
              elif [ "$(OS)" = "OpenBSD" ]; then echo "-DSTRAND_OPENBSD"; \
              else echo ""; fi
 

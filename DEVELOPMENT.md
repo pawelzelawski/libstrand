@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-17
 **Current Phase**: Phase 5 — Layer 4: Multi-Worker Runtime
-**Next Task**: Phase 5 — Task 5.2: strand_runtime_t and worker registry
+**Next Task**: Phase 5 — Task 5.5: Cross-worker strand_fiber_cancel
 
 ### Phase Summary
 
@@ -15,7 +15,7 @@
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1–4.5 done; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
-| 5 | Layer 4: Multi-Worker Runtime | IN PROGRESS | 50/50 | Task 5.1 done; Linux clean |
+| 5 | Layer 4: Multi-Worker Runtime | IN PROGRESS | 57/57 | Tasks 5.1–5.4 done; Linux clean |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
 | 7 | Hardening, Benchmarks, and Release | NOT STARTED | — | Integration tests, benchmarks, documentation |
 
@@ -714,20 +714,20 @@ exponential backoff and never drops items.
   - `inject_queue_drain`: move all queued items to run queue — called in
     scheduler advance Step 1 (replace Phase 3 stub)
 
-**5.2 — strand_runtime_t and worker registry**
+**5.2 — strand_runtime_t and worker registry** ✓ DONE
 - Implement `strand_runtime_init()` / `strand_runtime_destroy()`
 - Worker list: fixed-size array of `strand_worker_t *`, protected by spinlock
 - Round-robin counter: `_Atomic uint32_t` — accessed without the spinlock
 - `_Atomic int shutdown_flag` — checked on all spawn paths
 
-**5.3 — strand_worker_start**
+**5.3 — strand_worker_start** ✓ DONE
 - Allocate and initialise `strand_worker_t` (wrapper around scheduler)
 - Create OS thread via `pthread_create`; thread calls `strand_scheduler_run`
 - Register worker in runtime worker list
 - Linux: apply `pthread_setaffinity_np` if `worker_config.cpu_affinity` set;
   document that OpenBSD does not support affinity — skip silently there
 
-**5.4 — Host-thread strand_fiber_spawn**
+**5.4 — Host-thread strand_fiber_spawn** ✓ DONE
 - Implement the host-thread path:
   - Check shutdown flag — return `STRAND_ERR_SHUTDOWN` if set
   - Check worker list non-empty — return error if none registered

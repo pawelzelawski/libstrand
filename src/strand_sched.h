@@ -57,4 +57,14 @@ uint64_t timer_heap_peek_deadline(const strand_scheduler_t *sched);
  */
 int timer_heap_remove(strand_scheduler_t *sched, strand_fiber_t *f);
 
+/*
+ * strand_sched_current_tls — thread-local pointer to the scheduler owning
+ * this worker thread.  Set by strand_scheduler_run at thread start.
+ * NULL on non-worker (host) threads.
+ *
+ * Accessible to internal code and tests that include this header.
+ * Not part of the public strand.h API.
+ */
+extern _Thread_local strand_scheduler_t *strand_sched_current_tls;
+
 #endif /* STRAND_SCHED_H */

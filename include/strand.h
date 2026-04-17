@@ -66,6 +66,7 @@ typedef void (*strand_destructor_t)(void *ptr);
 #define STRAND_CANCELLED (-6)    /* operation cancelled by strand_fiber_cancel */
 #define STRAND_ERR_IO (-7)       /* fd entered error or hangup state (EPOLLERR/EPOLLHUP/EV_EOF) */
 #define STRAND_ERR_IO_CONFLICT (-8) /* waiter already registered on fd in the same direction */
+#define STRAND_ERR_NO_WORKERS (-9)  /* host-thread spawn with no workers registered */
 /*
  * Default scheduler and stack cache parameters.
  * These are the values used when zero is passed in strand_sched_config_t.
@@ -114,7 +115,7 @@ void strand_scheduler_destroy(strand_scheduler_t *sched);
  *                  deadline as a nanosecond timestamp (UINT64_MAX = none).
  * See ARCHITECTURE.md §4.2.
  */
-typedef enum { SCHED_PROGRESS = 0, SCHED_IDLE = 1 } sched_result_t;
+typedef enum { STRAND_SCHED_PROGRESS = 0, STRAND_SCHED_IDLE = 1 } sched_result_t;
 
 /*
  * strand_scheduler_advance — perform one nonblocking scheduler pass.
@@ -302,6 +303,108 @@ void strand_fiber_local_set(strand_scheduler_t *sched, void *ptr,
 void *strand_fiber_local_get(strand_scheduler_t *sched);
 
 /* Function declarations added in later phases. */
+
+/*
+ * strand_runtime_config_t — runtime creation parameters.
+ * Pass NULL to strand_runtime_init to use all defaults.
+ *
+ * max_workers — maximum number of workers that may be registered with this
+ *               runtime.  0 uses STRAND_DEFAULT_MAX_WORKERS.
+ */
+typedef struct strand_runtime_config {
+	size_t max_workers;
+} strand_runtime_config_t;
+
+#define STRAND_DEFAULT_MAX_WORKERS ((size_t)64)
+
+/*
+ * strand_worker_config_t — per-worker creation parameters.
+ * Pass NULL to strand_worker_start to use all defaults.
+ *
+ * sched_cfg     — scheduler parameters (budget, inject_cap, caches).
+ *                 NULL means strand_scheduler_create defaults.
+ * cpu_affinity  — Linux: pin worker to this CPU index via
+ *                 pthread_setaffinity_np.  -1 = no affinity.
+ *                 OpenBSD: silently ignored (no affinity API available).
+ */
+typedef struct strand_worker_config {
+	const strand_sched_config_t *sched_cfg;
+	int                          cpu_affinity;
+} strand_worker_config_t;
+
+/*
+ * strand_runtime_init — allocate and initialise a multi-worker runtime.
+ * cfg may be NULL for defaults.
+ * Returns NULL on allocation failure.
+ * See ARCHITECTURE.md §6.1, §6.2.
+ */
+strand_runtime_t *strand_runtime_init(const strand_runtime_config_t *cfg);
+
+/*
+ * strand_runtime_destroy — stop all workers, join all threads, free memory.
+ *
+ * Calls strand_scheduler_stop on every registered worker, joins each worker
+ * thread, destroys each scheduler, then frees the runtime.
+ * Safe to call even if some workers were never started or already stopped.
+ * Must be called from the host thread only.
+ * See ARCHITECTURE.md §6.2 shutdown sequence.
+ */
+void strand_runtime_destroy(strand_runtime_t *rt);
+
+/*
+ * strand_worker_start — create and register a new worker thread.
+ *
+ * Allocates a strand_worker_t, creates a scheduler, spawns a pthread that
+ * calls strand_scheduler_run, and registers the worker with the runtime.
+ * The worker is immediately eligible for round-robin fiber assignment.
+ *
+ * cfg may be NULL for defaults.
+ * Returns NULL on allocation or thread creation failure.
+ * Returns NULL if the runtime's worker_count has reached max_workers or if
+ * shutdown has begun.
+ * See ARCHITECTURE.md §6.1, §6.2.
+ */
+strand_worker_t *strand_worker_start(strand_runtime_t *rt,
+    const strand_worker_config_t *cfg);
+
+/*
+ * strand_worker_stop — signal a worker to stop.
+ * Calls strand_scheduler_stop on the worker's scheduler.
+ * Safe to call from any thread.
+ * See ARCHITECTURE.md §6.2.
+ */
+void strand_worker_stop(strand_worker_t *w);
+
+/*
+ * strand_worker_join — wait for a worker thread to exit.
+ * Must be called after strand_worker_stop.
+ * Blocks until the worker's pthread_t exits.
+ * Must be called from the host thread only.
+ */
+void strand_worker_join(strand_worker_t *w);
+
+/*
+ * strand_runtime_spawn — spawn a fiber from the host thread.
+ *
+ * Selects a target worker via round-robin (worker == NULL) or uses the
+ * explicitly supplied worker.  Allocates the fiber on the host thread and
+ * injects it to the target worker's inject queue.  The fiber is made
+ * runnable on the target worker's next strand_scheduler_advance call.
+ *
+ * worker   — explicit target worker; NULL for automatic round-robin.
+ * fn, arg  — fiber entry function and argument.
+ * stack_sz — usable stack bytes; 0 uses STRAND_DEFAULT_STACK_SIZE.
+ * out      — if non-NULL, receives the ABA-safe handle on success.
+ *
+ * Returns STRAND_OK           on success.
+ * Returns STRAND_ERR_SHUTDOWN if the runtime's shutdown_flag is set.
+ * Returns STRAND_ERR_NO_WORKERS if no workers are registered.
+ * Returns STRAND_ERR_NOMEM    on allocation failure.
+ * See ARCHITECTURE.md §6.4.
+ */
+int strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
+    void *arg, size_t stack_sz, strand_worker_t *worker,
+    strand_fiber_handle_t *out);
 
 /*
  * strand_fiber_wait_readable — park the current fiber until fd is readable.
