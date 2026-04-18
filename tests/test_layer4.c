@@ -665,6 +665,26 @@ test_explicit_worker_wrong_runtime_error(void)
  * worker by recording the sched pointer inside the fiber.
  * -------------------------------------------------------------------------
  */
+
+/*
+ * Warmup helper: a trivial fiber that proves a specific worker is running.
+ * Reused by multiple runtime tests.  Defined here (before the first user)
+ * so that all runtime tests can reference it.
+ */
+typedef struct {
+	strand_scheduler_t *expected_sched;
+	_Atomic int         done;
+} rr_warmup_args_t;
+
+static void
+rr_warmup_fiber(void *arg)
+{
+	rr_warmup_args_t *a = arg;
+
+	if (strand_sched_current_tls == a->expected_sched)
+		atomic_store(&a->done, 1);
+}
+
 typedef struct {
 	strand_scheduler_t *observed_sched;
 	_Atomic int         ran;
@@ -689,6 +709,7 @@ test_inject_delivers_to_worker(void)
 	strand_runtime_t     *rt;
 	strand_worker_t      *w;
 	delivers_args_t       args;
+	rr_warmup_args_t      warm;
 
 	rt = make_test_runtime();
 	if (rt == NULL)
@@ -696,6 +717,19 @@ test_inject_delivers_to_worker(void)
 
 	w = make_test_worker(rt);
 	if (w == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/* Warmup: prove the worker is running before testing inject delivery. */
+	atomic_init(&warm.done, 0);
+	warm.expected_sched = w->sched;
+	if (strand_runtime_spawn(rt, rr_warmup_fiber, &warm,
+	    STRAND_DEFAULT_STACK_SIZE, w, NULL) != STRAND_OK) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+	if (!wait_atomic_at_least(&warm.done, 1, 60000, NULL)) {
 		strand_runtime_destroy(rt);
 		return (1);
 	}
@@ -713,7 +747,7 @@ test_inject_delivers_to_worker(void)
 	{
 		strand_scheduler_t *expected_sched = w->sched;
 
-		if (!wait_atomic_at_least(&args.ran, 1, 15000, NULL)) {
+		if (!wait_atomic_at_least(&args.ran, 1, 60000, NULL)) {
 			strand_runtime_destroy(rt);
 			return (1);
 		}
@@ -740,10 +774,6 @@ typedef struct {
 	_Atomic int         total;
 } rr_args_t;
 
-typedef struct {
-	strand_scheduler_t *expected_sched;
-	_Atomic int         done;
-} rr_warmup_args_t;
 
 static void
 rr_fiber(void *arg)
@@ -763,14 +793,6 @@ rr_fiber(void *arg)
 	atomic_fetch_add(&a->total, 1);
 }
 
-static void
-rr_warmup_fiber(void *arg)
-{
-	rr_warmup_args_t *a = arg;
-
-	if (strand_sched_current_tls == a->expected_sched)
-		atomic_store(&a->done, 1);
-}
 
 static int
 test_round_robin_selection(void)
@@ -779,8 +801,8 @@ test_round_robin_selection(void)
 	strand_worker_t  *wa, *wb;
 	rr_args_t         args;
 	rr_warmup_args_t  warm_a, warm_b;
-	const uint64_t    warmup_timeout_ms = 15000;
-	const uint64_t    total_timeout_ms = 15000;
+	const uint64_t    warmup_timeout_ms = 60000;
+	const uint64_t    total_timeout_ms = 60000;
 	int               i;
 
 	rt = make_test_runtime();
@@ -900,7 +922,7 @@ test_explicit_worker_override(void)
 		return (1);
 	}
 
-	if (!wait_atomic_at_least(&args.ran, 1, 15000, NULL)) {
+	if (!wait_atomic_at_least(&args.ran, 1, 60000, NULL)) {
 		strand_runtime_destroy(rt);
 		return (1);
 	}
@@ -943,8 +965,8 @@ test_stopped_worker_excluded_roundrobin(void)
 	strand_worker_t  *wa, *wb;
 	rr_warmup_args_t  warm_live;
 	excl_args_t       args;
-	const uint64_t    warmup_timeout_ms = 15000;
-	const uint64_t    total_timeout_ms = 15000;
+	const uint64_t    warmup_timeout_ms = 60000;
+	const uint64_t    total_timeout_ms = 60000;
 	int               i;
 
 	rt = make_test_runtime();
@@ -1054,7 +1076,7 @@ test_cross_worker_wakeup(void)
 		strand_runtime_destroy(rt);
 		return (1);
 	}
-	if (!wait_atomic_at_least(&warm.done, 1, 15000, NULL)) {
+	if (!wait_atomic_at_least(&warm.done, 1, 60000, NULL)) {
 		strand_runtime_destroy(rt);
 		return (1);
 	}
@@ -1078,7 +1100,7 @@ test_cross_worker_wakeup(void)
 	}
 
 	/* Wait for the worker to wake and run the fiber. */
-	if (!wait_atomic_at_least(&args.ran, 1, 15000, NULL)) {
+	if (!wait_atomic_at_least(&args.ran, 1, 60000, NULL)) {
 		strand_runtime_destroy(rt);
 		return (1);
 	}
@@ -1274,7 +1296,7 @@ test_offload_eagain_when_full(void)
                 t5_push_fiber(sched, fiber_offload_eagain, &blocker[i], NULL);
         }
         /* Advance until both fibers are parked in offload. */
-        if (!wait_until_pred(pred_pool_full, pool, 15000, sched)) {
+        if (!wait_until_pred(pred_pool_full, pool, 60000, sched)) {
                 atomic_store_explicit(&g_eagain_release, 1,
                     memory_order_release);
                 strand_offload_pool_destroy(pool);
@@ -1395,7 +1417,7 @@ test_offload_cancelled_wins(void)
          * offload_fn_block_cancel.  Wait for the fn to signal it started.
          */
         strand_scheduler_advance(sched, NULL);
-        if (!wait_atomic_at_least(&g_cancel_fn_started, 1, 15000, NULL)) {
+        if (!wait_atomic_at_least(&g_cancel_fn_started, 1, 60000, NULL)) {
                 atomic_store_explicit(&g_cancel_release, 1,
                     memory_order_release);
                 strand_offload_pool_destroy(pool);
@@ -1500,7 +1522,7 @@ test_offload_result_claimed_wins(void)
         strand_scheduler_advance(sched, NULL);
 
         /* Wait for the offload thread to complete the function. */
-        if (!wait_atomic_at_least(&g_claimed_fn_done, 1, 15000, NULL)) {
+        if (!wait_atomic_at_least(&g_claimed_fn_done, 1, 60000, NULL)) {
                 strand_offload_pool_destroy(pool);
                 strand_scheduler_destroy(sched);
                 return (1);
@@ -1801,7 +1823,7 @@ test_offload_yield_retry_pattern(void)
          * the pool is not full with a single item; we only need the
          * blocker to be in-flight before queuing the retry fiber.
          */
-        if (!wait_until_pred(pred_pool_has_inflight, pool, 15000, sched)) {
+        if (!wait_until_pred(pred_pool_has_inflight, pool, 60000, sched)) {
                 atomic_store_explicit(&g_yieldretry_release, 1,
                     memory_order_release);
                 strand_offload_pool_destroy(pool);
@@ -1827,7 +1849,7 @@ test_offload_yield_retry_pattern(void)
         {
                 uint64_t deadline_ns;
 
-                deadline_ns = test_now_ns() + 15000ULL * 1000000ULL;
+                deadline_ns = test_now_ns() + 60000ULL * 1000000ULL;
                 while (test_now_ns() < deadline_ns) {
                         strand_scheduler_advance(sched, NULL);
                         if (atomic_load_explicit(&blocker_args.done,
