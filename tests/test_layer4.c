@@ -42,6 +42,100 @@ make_test_scheduler(void)
 	return (strand_scheduler_create(&cfg));
 }
 
+typedef int (*wait_pred_fn)(void *);
+
+static uint64_t
+test_now_ns(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec);
+}
+
+static void
+test_sleep_1ms(void)
+{
+	struct timespec ts;
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = 1000000L;
+	nanosleep(&ts, NULL);
+}
+
+static int
+wait_until_pred(wait_pred_fn pred, void *ctx, uint64_t timeout_ms,
+    strand_scheduler_t *drive_sched)
+{
+	uint64_t deadline_ns;
+
+	deadline_ns = test_now_ns() + timeout_ms * 1000000ULL;
+	for (;;) {
+		if (pred(ctx))
+			return (1);
+		if (drive_sched != NULL)
+			strand_scheduler_advance(drive_sched, NULL);
+		if (test_now_ns() >= deadline_ns)
+			break;
+		test_sleep_1ms();
+	}
+	return (pred(ctx));
+}
+
+typedef struct {
+	_Atomic int *value;
+	int          target;
+} wait_atomic_ctx_t;
+
+static int
+pred_atomic_at_least(void *ctx)
+{
+	wait_atomic_ctx_t *a = ctx;
+
+	return (atomic_load_explicit(a->value, memory_order_acquire) >= a->target);
+}
+
+static int
+wait_atomic_at_least(_Atomic int *value, int target, uint64_t timeout_ms,
+    strand_scheduler_t *drive_sched)
+{
+	wait_atomic_ctx_t ctx;
+
+	ctx.value  = value;
+	ctx.target = target;
+	return (wait_until_pred(pred_atomic_at_least, &ctx, timeout_ms,
+	    drive_sched));
+}
+
+
+typedef struct {
+	strand_fiber_handle_t *handle;
+	fiber_state_t          expected;
+} wait_state_ctx_t;
+
+static int
+pred_fiber_state_is(void *ctx)
+{
+	wait_state_ctx_t *a = ctx;
+
+	if (a->handle->ptr == NULL)
+		return (0);
+	return (atomic_load_explicit(&a->handle->ptr->state,
+	    memory_order_acquire) == a->expected);
+}
+
+static int
+wait_fiber_state(strand_fiber_handle_t *handle, fiber_state_t expected,
+    uint64_t timeout_ms, strand_scheduler_t *drive_sched)
+{
+	wait_state_ctx_t ctx;
+
+	ctx.handle   = handle;
+	ctx.expected = expected;
+	return (wait_until_pred(pred_fiber_state_is, &ctx, timeout_ms,
+	    drive_sched));
+}
+
 /*
  * t5_push_fiber -- bootstrap a fiber into the run queue from the host thread.
  *
@@ -595,8 +689,6 @@ test_inject_delivers_to_worker(void)
 	strand_runtime_t     *rt;
 	strand_worker_t      *w;
 	delivers_args_t       args;
-	struct timespec       ts;
-	int                   i;
 
 	rt = make_test_runtime();
 	if (rt == NULL)
@@ -621,11 +713,10 @@ test_inject_delivers_to_worker(void)
 	{
 		strand_scheduler_t *expected_sched = w->sched;
 
-		/* Wait up to 1 s for the fiber to run. */
-		ts.tv_sec = 0;
-		ts.tv_nsec = 5000000L; /* 5 ms */
-		for (i = 0; i < 200 && !atomic_load(&args.ran); i++)
-			nanosleep(&ts, NULL);
+		if (!wait_atomic_at_least(&args.ran, 1, 15000, NULL)) {
+			strand_runtime_destroy(rt);
+			return (1);
+		}
 
 		strand_runtime_destroy(rt);
 		return (atomic_load(&args.ran) == 1 &&
@@ -688,7 +779,8 @@ test_round_robin_selection(void)
 	strand_worker_t  *wa, *wb;
 	rr_args_t         args;
 	rr_warmup_args_t  warm_a, warm_b;
-	struct timespec   ts;
+	const uint64_t    warmup_timeout_ms = 15000;
+	const uint64_t    total_timeout_ms = 15000;
 	int               i;
 
 	rt = make_test_runtime();
@@ -725,14 +817,8 @@ test_round_robin_selection(void)
 		return (1);
 	}
 
-	ts.tv_sec = 0;
-	ts.tv_nsec = 10000000L; /* 10 ms */
-	for (i = 0; i < 500; i++) {
-		if (atomic_load(&warm_a.done) && atomic_load(&warm_b.done))
-			break;
-		nanosleep(&ts, NULL);
-	}
-	if (!atomic_load(&warm_a.done) || !atomic_load(&warm_b.done)) {
+	if (!wait_atomic_at_least(&warm_a.done, 1, warmup_timeout_ms, NULL) ||
+	    !wait_atomic_at_least(&warm_b.done, 1, warmup_timeout_ms, NULL)) {
 		strand_runtime_destroy(rt);
 		return (1);
 	}
@@ -745,10 +831,11 @@ test_round_robin_selection(void)
 		}
 	}
 
-	/* Wait up to 10 s for all fibers to complete on slow Valgrind runners. */
-	for (i = 0; i < 1000 &&
-	    atomic_load(&args.total) < ROUND_ROBIN_FIBERS; i++)
-		nanosleep(&ts, NULL);
+	if (!wait_atomic_at_least(&args.total, ROUND_ROBIN_FIBERS,
+	    total_timeout_ms, NULL)) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
 
 	strand_runtime_destroy(rt);
 
@@ -791,8 +878,6 @@ test_explicit_worker_override(void)
 	strand_runtime_t *rt;
 	strand_worker_t  *wa, *wb;
 	explicit_args_t   args;
-	struct timespec   ts;
-	int               i;
 
 	rt = make_test_runtime();
 	if (rt == NULL)
@@ -815,10 +900,10 @@ test_explicit_worker_override(void)
 		return (1);
 	}
 
-	ts.tv_sec = 0;
-	ts.tv_nsec = 5000000L;
-	for (i = 0; i < 200 && !atomic_load(&args.ran); i++)
-		nanosleep(&ts, NULL);
+	if (!wait_atomic_at_least(&args.ran, 1, 15000, NULL)) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
 
 	strand_runtime_destroy(rt);
 	return (atomic_load(&args.correct) == 1) ? 0 : 1;
@@ -856,8 +941,10 @@ test_stopped_worker_excluded_roundrobin(void)
 {
 	strand_runtime_t *rt;
 	strand_worker_t  *wa, *wb;
+	rr_warmup_args_t  warm_live;
 	excl_args_t       args;
-	struct timespec   ts;
+	const uint64_t    warmup_timeout_ms = 15000;
+	const uint64_t    total_timeout_ms = 15000;
 	int               i;
 
 	rt = make_test_runtime();
@@ -872,8 +959,21 @@ test_stopped_worker_excluded_roundrobin(void)
 	}
 
 	/* Stop worker A; worker B is the live one. */
-	strand_scheduler_stop(wa->sched);
+	strand_worker_stop(wa);
 	strand_worker_join(wa);
+
+	/* Warmup live worker to avoid asserting before it has started running. */
+	atomic_init(&warm_live.done, 0);
+	warm_live.expected_sched = wb->sched;
+	if (strand_runtime_spawn(rt, rr_warmup_fiber, &warm_live,
+	    STRAND_DEFAULT_STACK_SIZE, wb, NULL) != STRAND_OK) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+	if (!wait_atomic_at_least(&warm_live.done, 1, warmup_timeout_ms, NULL)) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
 
 	atomic_init(&args.on_live, 0);
 	atomic_init(&args.total, 0);
@@ -887,11 +987,11 @@ test_stopped_worker_excluded_roundrobin(void)
 		}
 	}
 
-	ts.tv_sec = 0;
-	ts.tv_nsec = 10000000L;
-	for (i = 0; i < 200 &&
-	    atomic_load(&args.total) < EXCL_FIBERS; i++)
-		nanosleep(&ts, NULL);
+	if (!wait_atomic_at_least(&args.total, EXCL_FIBERS,
+	    total_timeout_ms, NULL)) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
 
 	strand_runtime_destroy(rt);
 
@@ -931,8 +1031,7 @@ test_cross_worker_wakeup(void)
 	strand_runtime_t *rt;
 	strand_worker_t  *w;
 	cww_args_t        args;
-	struct timespec   ts;
-	int               i;
+	rr_warmup_args_t  warm;
 
 	rt = make_test_runtime();
 	if (rt == NULL)
@@ -944,10 +1043,30 @@ test_cross_worker_wakeup(void)
 		return (1);
 	}
 
-	/* Let the worker settle into its idle poll loop. */
-	ts.tv_sec = 0;
-	ts.tv_nsec = 50000000L; /* 50 ms */
-	nanosleep(&ts, NULL);
+	/*
+	 * Warmup: prove the worker is running before we test the wakeup path.
+	 * After this returns, we know the worker has entered its run loop.
+	 */
+	atomic_init(&warm.done, 0);
+	warm.expected_sched = w->sched;
+	if (strand_runtime_spawn(rt, rr_warmup_fiber, &warm,
+	    STRAND_DEFAULT_STACK_SIZE, w, NULL) != STRAND_OK) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+	if (!wait_atomic_at_least(&warm.done, 1, 15000, NULL)) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/*
+	 * Let the worker settle into its idle poll loop.  Use a generous
+	 * sleep because Valgrind slows execution 20-50x.
+	 */
+	{
+		struct timespec ts = { 0, 200000000L }; /* 200 ms */
+		nanosleep(&ts, NULL);
+	}
 
 	atomic_init(&args.ran, 0);
 
@@ -958,11 +1077,11 @@ test_cross_worker_wakeup(void)
 		return (1);
 	}
 
-	/* Wait up to 1 s for the worker to wake and run the fiber. */
-	ts.tv_nsec = 5000000L; /* 5 ms */
-	for (i = 0; i < 200 &&
-	    !atomic_load_explicit(&args.ran, memory_order_acquire); i++)
-		nanosleep(&ts, NULL);
+	/* Wait for the worker to wake and run the fiber. */
+	if (!wait_atomic_at_least(&args.ran, 1, 15000, NULL)) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
 
 	strand_runtime_destroy(rt);
 	return (atomic_load_explicit(&args.ran, memory_order_acquire) == 1) ? 0 : 1;
@@ -1113,6 +1232,18 @@ fiber_offload_eagain(void *varg)
 }
 
 static int
+pred_pool_full(void *ctx)
+{
+        strand_offload_pool_t *pool = ctx;
+        int full;
+
+        pthread_mutex_lock(&pool->mutex);
+        full = ((pool->count + pool->in_flight) >= pool->capacity);
+        pthread_mutex_unlock(&pool->mutex);
+        return (full);
+}
+
+static int
 test_offload_eagain_when_full(void)
 {
         strand_scheduler_t    *sched;
@@ -1120,7 +1251,6 @@ test_offload_eagain_when_full(void)
         offload_eagain_args_t  blocker[EAGAIN_BLOCKER_COUNT];
         offload_eagain_args_t  checker;
         size_t                 i;
-        struct timespec        ts = { 0, 20000000L }; /* 20 ms */
         int                    rc = 1;
 
         atomic_store(&g_eagain_release, 0);
@@ -1144,15 +1274,12 @@ test_offload_eagain_when_full(void)
                 t5_push_fiber(sched, fiber_offload_eagain, &blocker[i], NULL);
         }
         /* Advance until both fibers are parked in offload. */
-        for (i = 0; i < 20; i++) {
-                strand_scheduler_advance(sched, NULL);
-                nanosleep(&ts, NULL);
-                /* Both parked when in_flight + count == capacity. */
-                pthread_mutex_lock(&pool->mutex);
-                int full = ((pool->count + pool->in_flight) >= pool->capacity);
-                pthread_mutex_unlock(&pool->mutex);
-                if (full)
-                        break;
+        if (!wait_until_pred(pred_pool_full, pool, 15000, sched)) {
+                atomic_store_explicit(&g_eagain_release, 1,
+                    memory_order_release);
+                strand_offload_pool_destroy(pool);
+                strand_scheduler_destroy(sched);
+                return (1);
         }
 
         /* Now a third fiber must get STRAND_EAGAIN. */
@@ -1169,9 +1296,12 @@ test_offload_eagain_when_full(void)
 
         /* Release blockers and drain all completions. */
         atomic_store_explicit(&g_eagain_release, 1, memory_order_release);
-        for (i = 0; i < 30; i++) {
-                strand_scheduler_advance(sched, NULL);
-                nanosleep(&ts, NULL);
+        {
+                struct timespec drain_ts = { 0, 20000000L }; /* 20 ms */
+                for (i = 0; i < 30; i++) {
+                        strand_scheduler_advance(sched, NULL);
+                        nanosleep(&drain_ts, NULL);
+                }
         }
 
         strand_offload_pool_destroy(pool);
@@ -1192,12 +1322,14 @@ test_offload_eagain_when_full(void)
  */
 
 static _Atomic int g_cancel_release;
+static _Atomic int g_cancel_fn_started;
 
 static void
 offload_fn_block_cancel(void *arg, void *result_slot)
 {
         (void)arg;
         (void)result_slot;
+        atomic_store_explicit(&g_cancel_fn_started, 1, memory_order_release);
         while (!atomic_load_explicit(&g_cancel_release, memory_order_acquire))
                 ; /* spin until released by the test */
         /*
@@ -1231,10 +1363,10 @@ test_offload_cancelled_wins(void)
         strand_scheduler_t    *sched;
         strand_offload_pool_t *pool;
         offload_cancel_args_t  args;
-        struct timespec        ts = { 0, 20000000L }; /* 20 ms */
         int                    i, rc;
 
         atomic_store(&g_cancel_release, 0);
+        atomic_store(&g_cancel_fn_started, 0);
 
         sched = make_test_scheduler();
         if (sched == NULL)
@@ -1259,10 +1391,17 @@ test_offload_cancelled_wins(void)
 
         /*
          * Advance once: fiber parks on FIBER_PARKED_OFFLOAD.
-         * The offload thread picks up the item and blocks inside offload_fn_block_cancel.
+         * The offload thread picks up the item and blocks inside
+         * offload_fn_block_cancel.  Wait for the fn to signal it started.
          */
         strand_scheduler_advance(sched, NULL);
-        nanosleep(&ts, NULL); /* let offload thread pick up item */
+        if (!wait_atomic_at_least(&g_cancel_fn_started, 1, 15000, NULL)) {
+                atomic_store_explicit(&g_cancel_release, 1,
+                    memory_order_release);
+                strand_offload_pool_destroy(pool);
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
 
         /* Cancel from same scheduler context (same-worker CANCELLED CAS path). */
         strand_fiber_cancel(args.handle);
@@ -1278,7 +1417,10 @@ test_offload_cancelled_wins(void)
          * offload thread to finish so pool_destroy does not deadlock.
          */
         atomic_store_explicit(&g_cancel_release, 1, memory_order_release);
-        nanosleep(&ts, NULL);
+        {
+                struct timespec drain_ts = { 0, 20000000L }; /* 20 ms */
+                nanosleep(&drain_ts, NULL);
+        }
 
         /* Correctness check: fiber received STRAND_CANCELLED. */
         rc = (args.offload_rc == STRAND_CANCELLED) ? 0 : 1;
@@ -1305,11 +1447,14 @@ typedef struct {
         int                    offload_rc;
 } offload_claimed_args_t;
 
+static _Atomic int g_claimed_fn_done;
+
 static void
 offload_fn_write99(void *arg, void *result_slot)
 {
         (void)arg;
         *(int *)result_slot = 99;
+        atomic_store_explicit(&g_claimed_fn_done, 1, memory_order_release);
 }
 
 static void
@@ -1327,7 +1472,6 @@ test_offload_result_claimed_wins(void)
         strand_scheduler_t     *sched;
         strand_offload_pool_t  *pool;
         offload_claimed_args_t  args;
-        struct timespec         ts = { 0, 20000000L }; /* 20 ms */
         int                     i;
 
         sched = make_test_scheduler();
@@ -1343,6 +1487,7 @@ test_offload_result_claimed_wins(void)
         memset(&args, 0, sizeof(args));
         args.sched = sched;
         args.pool  = pool;
+        atomic_store(&g_claimed_fn_done, 0);
 
         if (t5_push_fiber(sched, fiber_offload_claimed_target, &args,
                           &args.handle) != 0) {
@@ -1354,8 +1499,12 @@ test_offload_result_claimed_wins(void)
         /* Advance once so fiber parks. */
         strand_scheduler_advance(sched, NULL);
 
-        /* Wait long enough for the offload thread to complete and inject. */
-        nanosleep(&ts, NULL);
+        /* Wait for the offload thread to complete the function. */
+        if (!wait_atomic_at_least(&g_claimed_fn_done, 1, 15000, NULL)) {
+                strand_offload_pool_destroy(pool);
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
 
         /*
          * Attempt cancel AFTER offload has already completed (RESULT_CLAIMED
@@ -1417,6 +1566,8 @@ test_offload_refcount_released_exactly_once(void)
 
 static _Atomic int g_arg_release2;
 static _Atomic int g_arg_fn_started; /* set to 1 when fn enters spin loop */
+static _Atomic int g_arg_cancel_phase;
+static _Atomic int g_arg_post_cancel_touches;
 
 typedef struct {
         _Atomic int count;
@@ -1434,8 +1585,15 @@ offload_fn_increment(void *arg, void *result_slot)
          */
         atomic_store_explicit(&g_arg_fn_started, 1, memory_order_release);
         /* Spin until released, incrementing count each iteration. */
-		while (!atomic_load_explicit(&g_arg_release2, memory_order_acquire))
-                atomic_fetch_add_explicit(&a->count, 1, memory_order_relaxed);
+	while (!atomic_load_explicit(&g_arg_release2, memory_order_acquire)) {
+		atomic_fetch_add_explicit(&a->count, 1, memory_order_relaxed);
+		if (atomic_load_explicit(&g_arg_cancel_phase,
+		    memory_order_acquire)) {
+			/* One-way latch: offload observed the post-cancel phase. */
+			atomic_store_explicit(&g_arg_post_cancel_touches, 1,
+			    memory_order_release);
+		}
+	}
 }
 
 typedef struct {
@@ -1464,12 +1622,17 @@ test_offload_arg_outlives_cancel(void)
         outlive_args_t         args;
         outlive_arg_t          shared_arg;
         struct timespec        ts = { 0, 20000000L }; /* 20 ms */
-		int                    i, rc;
-		int                    before_cancel;
-		int                    after_cancel_progress;
+		const uint64_t         park_timeout_ms = 60000;
+		const uint64_t         start_timeout_ms = 60000;
+		const uint64_t         cancel_seen_timeout_ms = 60000;
+		const uint64_t         post_cancel_timeout_ms = 60000;
+		int                    i, rc = 1;
+		int                    post_cancel_progress;
 
         atomic_store(&g_arg_release2, 0);
         atomic_store(&g_arg_fn_started, 0);
+		atomic_store(&g_arg_cancel_phase, 0);
+		atomic_store(&g_arg_post_cancel_touches, 0);
         atomic_init(&shared_arg.count, 0);
 
         sched = make_test_scheduler();
@@ -1497,51 +1660,41 @@ test_offload_arg_outlives_cancel(void)
 		/* Let fiber park and enqueue the offload item. */
         strand_scheduler_advance(sched, NULL);
 
-		/* Wait until the fiber is definitely in PARKED_OFFLOAD. */
-		for (i = 0; i < 5000; i++) {
-				if (args.handle.ptr != NULL &&
-					atomic_load(&args.handle.ptr->state) ==
-					FIBER_PARKED_OFFLOAD)
-						break;
-                struct timespec tw = { 0, 1000000L }; /* 1 ms */
-                nanosleep(&tw, NULL);
-				strand_scheduler_advance(sched, NULL);
-        }
-		if (args.handle.ptr == NULL ||
-			atomic_load(&args.handle.ptr->state) != FIBER_PARKED_OFFLOAD) {
-				strand_offload_pool_destroy(pool);
-				strand_scheduler_destroy(sched);
-				return (1);
-		}
+		if (!wait_fiber_state(&args.handle, FIBER_PARKED_OFFLOAD,
+		    park_timeout_ms, sched))
+			goto cleanup;
 
-		before_cancel = atomic_load_explicit(&shared_arg.count,
-											 memory_order_relaxed);
+		/* Ensure cancel races with a running offload function. */
+		if (!wait_atomic_at_least(&g_arg_fn_started, 1,
+		    start_timeout_ms, NULL))
+			goto cleanup;
 
 		/* Cancel while the offload work is still pending/running. */
         strand_fiber_cancel(args.handle);
+		atomic_store_explicit(&g_arg_cancel_phase, 1, memory_order_release);
 
-		/* Verify the offload thread keeps touching arg after cancellation. */
-		after_cancel_progress = 0;
-		for (i = 0; i < 5000; i++) {
-				struct timespec tw = { 0, 1000000L }; /* 1 ms */
-				if (atomic_load_explicit(&shared_arg.count,
-										 memory_order_relaxed) > before_cancel) {
-						after_cancel_progress = 1;
-						break;
-				}
-				nanosleep(&tw, NULL);
-		}
+		/* Verify offload thread observes the post-cancel phase and continues. */
+		post_cancel_progress = wait_atomic_at_least(&g_arg_post_cancel_touches,
+		    1, post_cancel_timeout_ms, NULL);
 
 		/* Let the cancelled fiber resume and publish offload_rc. */
-		for (i = 0; i < 100; i++)
-                strand_scheduler_advance(sched, NULL);
+		for (i = 0; i < (int)cancel_seen_timeout_ms; i++) {
+				strand_scheduler_advance(sched, NULL);
+				if (args.offload_rc == STRAND_CANCELLED)
+						break;
+			test_sleep_1ms();
+		}
 
         /* Now release the offload thread. */
         atomic_store_explicit(&g_arg_release2, 1, memory_order_release);
         nanosleep(&ts, NULL);
 
 		rc = (args.offload_rc == STRAND_CANCELLED &&
-			  after_cancel_progress == 1) ? 0 : 1;
+			  post_cancel_progress == 1) ? 0 : 1;
+
+	cleanup:
+		/* Always release so offload_pool_destroy cannot block on a spinning fn. */
+		atomic_store_explicit(&g_arg_release2, 1, memory_order_release);
 
         strand_offload_pool_destroy(pool);
         strand_scheduler_destroy(sched);
@@ -1603,13 +1756,24 @@ fiber_offload_yieldretry(void *varg)
 }
 
 static int
+pred_pool_has_inflight(void *ctx)
+{
+        strand_offload_pool_t *pool = ctx;
+        int                    has;
+
+        pthread_mutex_lock(&pool->mutex);
+        has = (pool->in_flight > 0);
+        pthread_mutex_unlock(&pool->mutex);
+        return (has);
+}
+
+static int
 test_offload_yield_retry_pattern(void)
 {
         strand_scheduler_t    *sched;
         strand_offload_pool_t *pool;
         yieldretry_args_t      blocker_args, retry_args;
-        struct timespec        ts = { 0, 5000000L }; /* 5 ms */
-        int                    i, rc;
+        int                    rc;
 
         atomic_store(&g_yieldretry_release, 0);
 
@@ -1631,15 +1795,18 @@ test_offload_yield_retry_pattern(void)
         atomic_init(&blocker_args.done, 0);
         t5_push_fiber(sched, fiber_offload_yieldretry, &blocker_args, NULL);
 
-        /* Advance until blocker is parked inside offload (pool full). */
-        for (i = 0; i < 20; i++) {
-                strand_scheduler_advance(sched, NULL);
-                nanosleep(&ts, NULL);
-                pthread_mutex_lock(&pool->mutex);
-                int full = ((pool->count + pool->in_flight) >= pool->capacity);
-                pthread_mutex_unlock(&pool->mutex);
-                if (full)
-                        break;
+        /*
+         * Advance until the blocker is parked and the offload thread has
+         * picked up the item (in_flight >= 1).  Note: capacity is 2 so
+         * the pool is not full with a single item; we only need the
+         * blocker to be in-flight before queuing the retry fiber.
+         */
+        if (!wait_until_pred(pred_pool_has_inflight, pool, 15000, sched)) {
+                atomic_store_explicit(&g_yieldretry_release, 1,
+                    memory_order_release);
+                strand_offload_pool_destroy(pool);
+                strand_scheduler_destroy(sched);
+                return (1);
         }
 
         /* Queue the retry fiber; it should eventually succeed after yielding. */
@@ -1657,12 +1824,19 @@ test_offload_yield_retry_pattern(void)
         atomic_store_explicit(&g_yieldretry_release, 1, memory_order_release);
 
         /* Drive until both fibers finish. */
-        for (i = 0; i < 200; i++) {
-                strand_scheduler_advance(sched, NULL);
-                if (atomic_load_explicit(&blocker_args.done, memory_order_acquire) &&
-                    atomic_load_explicit(&retry_args.done, memory_order_acquire))
-                        break;
-                nanosleep(&ts, NULL);
+        {
+                uint64_t deadline_ns;
+
+                deadline_ns = test_now_ns() + 15000ULL * 1000000ULL;
+                while (test_now_ns() < deadline_ns) {
+                        strand_scheduler_advance(sched, NULL);
+                        if (atomic_load_explicit(&blocker_args.done,
+                            memory_order_acquire) &&
+                            atomic_load_explicit(&retry_args.done,
+                            memory_order_acquire))
+                                break;
+                        test_sleep_1ms();
+                }
         }
 
         rc = (atomic_load_explicit(&retry_args.done, memory_order_acquire) &&
