@@ -1392,7 +1392,7 @@ offload_fn_increment(void *arg, void *result_slot)
          */
         atomic_store_explicit(&g_arg_fn_started, 1, memory_order_release);
         /* Spin until released, incrementing count each iteration. */
-        while (!atomic_load_explicit(&g_arg_release2, memory_order_acquire))
+		while (!atomic_load_explicit(&g_arg_release2, memory_order_acquire))
                 atomic_fetch_add_explicit(&a->count, 1, memory_order_relaxed);
 }
 
@@ -1422,7 +1422,9 @@ test_offload_arg_outlives_cancel(void)
         outlive_args_t         args;
         outlive_arg_t          shared_arg;
         struct timespec        ts = { 0, 20000000L }; /* 20 ms */
-        int                    i, rc;
+		int                    i, rc;
+		int                    before_cancel;
+		int                    after_cancel_progress;
 
         atomic_store(&g_arg_release2, 0);
         atomic_store(&g_arg_fn_started, 0);
@@ -1450,24 +1452,54 @@ test_offload_arg_outlives_cancel(void)
                 return (1);
         }
 
-        /* Let fiber park; then wait for offload fn to signal it has started. */
+		/* Let fiber park and enqueue the offload item. */
         strand_scheduler_advance(sched, NULL);
-        while (!atomic_load_explicit(&g_arg_fn_started, memory_order_acquire)) {
+
+		/* Wait until the fiber is definitely in PARKED_OFFLOAD. */
+		for (i = 0; i < 5000; i++) {
+				if (args.handle.ptr != NULL &&
+					atomic_load(&args.handle.ptr->state) ==
+					FIBER_PARKED_OFFLOAD)
+						break;
                 struct timespec tw = { 0, 1000000L }; /* 1 ms */
                 nanosleep(&tw, NULL);
+				strand_scheduler_advance(sched, NULL);
         }
+		if (args.handle.ptr == NULL ||
+			atomic_load(&args.handle.ptr->state) != FIBER_PARKED_OFFLOAD) {
+				strand_offload_pool_destroy(pool);
+				strand_scheduler_destroy(sched);
+				return (1);
+		}
 
-        /* Cancel while offload is definitely running inside fn. */
+		before_cancel = atomic_load_explicit(&shared_arg.count,
+											 memory_order_relaxed);
+
+		/* Cancel while the offload work is still pending/running. */
         strand_fiber_cancel(args.handle);
-        for (i = 0; i < 5; i++)
+
+		/* Verify the offload thread keeps touching arg after cancellation. */
+		after_cancel_progress = 0;
+		for (i = 0; i < 5000; i++) {
+				struct timespec tw = { 0, 1000000L }; /* 1 ms */
+				if (atomic_load_explicit(&shared_arg.count,
+										 memory_order_relaxed) > before_cancel) {
+						after_cancel_progress = 1;
+						break;
+				}
+				nanosleep(&tw, NULL);
+		}
+
+		/* Let the cancelled fiber resume and publish offload_rc. */
+		for (i = 0; i < 100; i++)
                 strand_scheduler_advance(sched, NULL);
 
         /* Now release the offload thread. */
         atomic_store_explicit(&g_arg_release2, 1, memory_order_release);
         nanosleep(&ts, NULL);
 
-        rc = (args.offload_rc == STRAND_CANCELLED &&
-              atomic_load(&shared_arg.count) > 0) ? 0 : 1;
+		rc = (args.offload_rc == STRAND_CANCELLED &&
+			  after_cancel_progress == 1) ? 0 : 1;
 
         strand_offload_pool_destroy(pool);
         strand_scheduler_destroy(sched);
