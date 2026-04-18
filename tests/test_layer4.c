@@ -649,6 +649,11 @@ typedef struct {
 	_Atomic int         total;
 } rr_args_t;
 
+typedef struct {
+	strand_scheduler_t *expected_sched;
+	_Atomic int         done;
+} rr_warmup_args_t;
+
 static void
 rr_fiber(void *arg)
 {
@@ -667,12 +672,22 @@ rr_fiber(void *arg)
 	atomic_fetch_add(&a->total, 1);
 }
 
+static void
+rr_warmup_fiber(void *arg)
+{
+	rr_warmup_args_t *a = arg;
+
+	if (strand_sched_current_tls == a->expected_sched)
+		atomic_store(&a->done, 1);
+}
+
 static int
 test_round_robin_selection(void)
 {
 	strand_runtime_t *rt;
 	strand_worker_t  *wa, *wb;
 	rr_args_t         args;
+	rr_warmup_args_t  warm_a, warm_b;
 	struct timespec   ts;
 	int               i;
 
@@ -693,6 +708,35 @@ test_round_robin_selection(void)
 	args.sched_a = wa->sched;
 	args.sched_b = wb->sched;
 
+	/*
+	 * Warmup: prove both workers are running and able to execute targeted
+	 * work before validating round-robin spread.
+	 */
+	atomic_init(&warm_a.done, 0);
+	atomic_init(&warm_b.done, 0);
+	warm_a.expected_sched = wa->sched;
+	warm_b.expected_sched = wb->sched;
+
+	if (strand_runtime_spawn(rt, rr_warmup_fiber, &warm_a,
+	    STRAND_DEFAULT_STACK_SIZE, wa, NULL) != STRAND_OK ||
+	    strand_runtime_spawn(rt, rr_warmup_fiber, &warm_b,
+	    STRAND_DEFAULT_STACK_SIZE, wb, NULL) != STRAND_OK) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	ts.tv_sec = 0;
+	ts.tv_nsec = 10000000L; /* 10 ms */
+	for (i = 0; i < 500; i++) {
+		if (atomic_load(&warm_a.done) && atomic_load(&warm_b.done))
+			break;
+		nanosleep(&ts, NULL);
+	}
+	if (!atomic_load(&warm_a.done) || !atomic_load(&warm_b.done)) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
 	for (i = 0; i < ROUND_ROBIN_FIBERS; i++) {
 		if (strand_runtime_spawn(rt, rr_fiber, &args,
 		    STRAND_DEFAULT_STACK_SIZE, NULL, NULL) != STRAND_OK) {
@@ -701,10 +745,8 @@ test_round_robin_selection(void)
 		}
 	}
 
-	/* Wait up to 2 s for all fibers to complete. */
-	ts.tv_sec = 0;
-	ts.tv_nsec = 10000000L; /* 10 ms */
-	for (i = 0; i < 200 &&
+	/* Wait up to 10 s for all fibers to complete on slow Valgrind runners. */
+	for (i = 0; i < 1000 &&
 	    atomic_load(&args.total) < ROUND_ROBIN_FIBERS; i++)
 		nanosleep(&ts, NULL);
 
