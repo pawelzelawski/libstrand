@@ -175,8 +175,17 @@ typedef struct strand_fiber {
 	void *tsan_fiber; /* __tsan_create_fiber handle; NULL if no TSan */
 	unsigned long
 	    valgrind_stack_id; /* VALGRIND_STACK_REGISTER id; 0 if unused */
-	/*
-	 * cancel_pending - set by strand_fiber_cancel when the fiber is
+        /*
+         * offload_item - pointer to the in-flight strand_offload_item_t while
+         * the fiber is in FIBER_PARKED_OFFLOAD state.  Set by
+         * strand_fiber_offload before transitioning to PARKED_OFFLOAD; cleared
+         * to NULL on resume.  Used by strand_fiber_cancel to locate the work
+         * item for the CANCELLED CAS without scanning any pool data structure.
+         * Valid only while state == FIBER_PARKED_OFFLOAD.
+         */
+        struct strand_offload_item *offload_item;
+        /*
+         * cancel_pending - set by strand_fiber_cancel when the fiber is
 	 * FIBER_RUNNABLE or FIBER_RUNNING (FIBER_CANCELLATION_PENDING flag).
 	 * Also consulted by strand_fiber_sleep_until on return to detect a
 	 * cancellation that raced with timer expiry.
@@ -230,10 +239,15 @@ _Static_assert(sizeof(strand_fiber_handle_t) == 16,
  * INJECT_SPAWN  - host-thread fiber spawn; payload is a fully-initialised
  *                 strand_fiber_t * to be pushed onto the worker's run queue.
  *                 Added in Task 5.4.
+ * INJECT_OFFLOAD_COMPLETE - offload thread finished; payload is the completed
+ *                 strand_offload_item_t *.  The fiber's home worker resumes
+ *                 the parked fiber with the result already written to
+ *                 result_slot.  Added in Task 5.8.
  */
 typedef enum {
-	INJECT_CANCEL = 0,
-	INJECT_SPAWN  = 1,
+        INJECT_CANCEL = 0,
+        INJECT_SPAWN  = 1,
+        INJECT_OFFLOAD_COMPLETE = 2,
 } inject_item_type_t;
 
 /*
@@ -241,11 +255,12 @@ typedef enum {
  * The type field selects which union member is valid.
  */
 typedef struct inject_item {
-	inject_item_type_t     type;
-	union {
-		strand_fiber_handle_t cancel_handle; /* INJECT_CANCEL */
-		struct strand_fiber  *fiber;         /* INJECT_SPAWN  */
-	} u;
+        inject_item_type_t     type;
+        union {
+                strand_fiber_handle_t  cancel_handle; /* INJECT_CANCEL */
+                struct strand_fiber   *fiber;         /* INJECT_SPAWN  */
+                struct strand_offload_item *offload;  /* INJECT_OFFLOAD_COMPLETE */
+        } u;
 } inject_item_t;
 
 /*

@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-18
 **Current Phase**: Phase 5 - Layer 4: Multi-Worker Runtime
-**Next Task**: Phase 5 - Task 5.6: strand_offload_pool_init and offload pool
+**Next Task**: Phase 5 - Task 5.9: Phase 5 completion criteria review and merge
 
 ### Phase Summary
 
@@ -747,14 +747,14 @@ exponential backoff and never drops items.
   - Inject queue processes cancel in Step 1 before I/O poll in Step 4 -
     cross-worker cancel wins over readiness per ARCHITECTURE.md §5.3
 
-**5.6 - strand_offload_pool_init and offload pool**
+**5.6 - strand_offload_pool_init and offload pool** ✓ DONE
 - Implement `strand_offload_pool_init(size_t thread_count)`:
   - Create N `pthread_t` offload threads, each blocking on a mutex-protected
     work queue
   - Work queue: linked list of `strand_offload_item_t *`
 - Implement `strand_offload_pool_destroy()`: signal threads to exit, join all
 
-**5.7 - strand_fiber_offload**
+**5.7 - strand_fiber_offload** ✓ DONE
 - Implement per ARCHITECTURE.md §6.6:
   - Validate called from a running fiber
   - Allocate work item: `refcount=2`, `state=OFFLOAD_PENDING`
@@ -765,7 +765,7 @@ exponential backoff and never drops items.
   - If pool full: return `STRAND_EAGAIN` immediately (do not park)
   - Add mandatory yield retry pattern comment per ARCHITECTURE.md §6.5
 
-**5.8 - Offload thread completion and CAS**
+**5.8 - Offload thread completion and CAS** ✓ DONE
 - Offload thread on `fn(arg)` completion:
   - `CAS(state, PENDING -> RESULT_CLAIMED)` with **release** semantics.
     Add `ATOMIC:` comment with full ordering chain reference.
@@ -819,13 +819,13 @@ File: `tests/test_layer4.c`
 
 ### Phase 5 Completion Criteria
 
-- [ ] All Layer 4 tests pass on Linux and OpenBSD
-- [ ] RESULT_CLAIMED and CANCELLED CAS outcomes both exercised - M13 confirmed
-- [ ] Refcount freed exactly once in both CAS outcomes (Valgrind confirms)
-- [ ] Round-robin and explicit override worker selection correct
-- [ ] Inject queue never drops items - overflow backoff confirmed
-- [ ] Valgrind clean; ASan/UBSan clean on both platforms
-- [ ] TSan clean - inject queue acquire/release ordering verified
+- [x] All Layer 4 tests pass on Linux and OpenBSD
+- [x] RESULT_CLAIMED and CANCELLED CAS outcomes both exercised - M13 confirmed
+- [x] Refcount freed exactly once in both CAS outcomes (Valgrind confirms)
+- [x] Round-robin and explicit override worker selection correct
+- [x] Inject queue never drops items - overflow backoff confirmed
+- [x] Valgrind clean; ASan/UBSan clean on both platforms
+- [x] TSan clean - inject queue acquire/release ordering verified
 
 ---
 

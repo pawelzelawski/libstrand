@@ -50,7 +50,9 @@
  */
 
 #include "strand_inject.h"
+#include "strand_sched.h"
 #include "strand_fiber.h"
+#include "strand_offload.h"
 #include "strand_sched.h"
 
 #include <sched.h>
@@ -251,9 +253,32 @@ inject_queue_drain(strand_scheduler_t *sched)
 			 * Transition to RUNNABLE and push to run queue.
 			 * See ARCHITECTURE.md §6.4 and DEVELOPMENT.md Task 5.4.
 			 */
-			atomic_store(&item.u.fiber->state, FIBER_RUNNABLE);
-			run_queue_push(sched, item.u.fiber);
-			break;
+                        atomic_store(&item.u.fiber->state, FIBER_RUNNABLE);
+                        run_queue_push(sched, item.u.fiber);
+                        break;
+                case INJECT_OFFLOAD_COMPLETE: {
+                        /*
+                         * Offload thread won RESULT_CLAIMED CAS and injected
+                         * this completion.  result_slot was written before the
+                         * inject enqueue (ARCHITECTURE.md 6.7).
+                         *
+                         * Validate the handle: a cancel that arrived after the
+                         * inject was enqueued may have already moved the fiber
+                         * to RUNNABLE.  If the handle matches, the fiber is
+                         * still parked (cancel did not win) - make it runnable.
+                         * If stale, release the fiber-side refcount that was
+                         * held for the now-recycled fiber.
+                         */
+                        strand_offload_item_t *oi = item.u.offload;
+                        if (fiber_handle_validate(oi->home_fiber) == STRAND_OK) {
+                                strand_fiber_t *of = oi->home_fiber.ptr;
+                                atomic_store(&of->state, FIBER_RUNNABLE);
+                                run_queue_push(sched, of);
+                        } else {
+                                offload_item_release(oi);
+                        }
+                        break;
+                }
 		default:
 			/* Unknown type - silently ignore (forward compat). */
 			break;

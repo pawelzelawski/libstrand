@@ -18,6 +18,7 @@
 #include "strand_inject.h"
 #include "strand_sched.h"
 #include "strand_poller.h"
+#include "strand_offload.h"
 
 /*
  * page_size() - system page size, cached after the first call.
@@ -610,15 +611,72 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 		poller_cancel_io(sched, f);
 		break;
 
-	case FIBER_PARKED_OFFLOAD:
-	case FIBER_PARKED_CHANNEL:
-		/*
-		 * Placeholder - these states are handled when the respective
-		 * layers are implemented:
-		 *   FIBER_PARKED_OFFLOAD: Phase 5 (Task 5.5)
-		 *   FIBER_PARKED_CHANNEL: Phase 6
-		 */
-		break;
+        case FIBER_PARKED_OFFLOAD:
+                /*
+                 * ATOMIC: CAS(PENDING -> CANCELLED) with seq_cst.
+                 * This races with the offload thread's CAS(PENDING -> RESULT_CLAIMED).
+                 * Exactly one side wins.  See ARCHITECTURE.md 6.6.
+                 *
+                 * If CANCELLED wins:
+                 *   - Set cancel_pending so strand_fiber_offload returns
+                 *     STRAND_CANCELLED on resume.
+                 *   - Transition fiber to FIBER_RUNNABLE and push to run queue.
+                 *   - Decrement fiber-side refcount (offload_item_release).
+                 *     The offload thread will still run fn to completion but
+                 *     will skip the result_slot write and inject.
+                 *
+                 * If RESULT_CLAIMED already won:
+                 *   - DO NOT touch refcount.  The fiber-side reference is still
+                 *     live; strand_fiber_offload will release it on resume.
+                 *   - DO NOT push the fiber - the inject will do that.
+                 *
+                 * ATOMIC: the fiber's home_sched is already this worker (same-
+                 * worker path).  Accessing f->offload_item requires that the
+                 * item pointer was set before FIBER_PARKED_OFFLOAD was stored
+                 * (guaranteed by strand_fiber_offload ordering).
+                 */
+                {
+                        strand_offload_item_t *oi = f->offload_item;
+                        offload_state_t expected_state = OFFLOAD_PENDING;
+
+                        /*
+                         * offload_item is set by strand_fiber_offload before
+                         * transitioning to PARKED_OFFLOAD (same worker thread,
+                         * no race).  SAFETY: same-worker cancel path only.
+                         */
+                        if (oi == NULL)
+                                break; /* defensive; should not happen */
+
+                        if (atomic_compare_exchange_strong_explicit(
+                                &oi->state,
+                                &expected_state,
+                                OFFLOAD_CANCELLED,
+                                memory_order_seq_cst,
+                                memory_order_seq_cst)) {
+                                /*
+                                 * CANCELLED CAS won.  Wake fiber with cancel
+                                 * result and release fiber-side refcount.
+                                 */
+                                atomic_store(&f->cancel_pending, 1);
+                                atomic_store(&f->state, FIBER_RUNNABLE);
+                                run_queue_push(sched, f);
+                                offload_item_release(oi);
+                        }
+                        /*
+                         * else: RESULT_CLAIMED already won.
+                         * ATOMIC: RESULT_CLAIMED wins; fiber-side reference is
+                         * still live and will be released by strand_fiber_offload
+                         * on resume.  Do not touch refcount here.
+                         * The inject completion will push the fiber to RUNNABLE.
+                         */
+                }
+                break;
+
+        case FIBER_PARKED_CHANNEL:
+                /*
+                 * Placeholder - handled when channels are implemented (Phase 6).
+                 */
+                break;
 	}
 
 	return (STRAND_OK);

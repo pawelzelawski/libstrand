@@ -67,6 +67,8 @@ typedef void (*strand_destructor_t)(void *ptr);
 #define STRAND_ERR_IO (-7)       /* fd entered error or hangup state (EPOLLERR/EPOLLHUP/EV_EOF) */
 #define STRAND_ERR_IO_CONFLICT (-8) /* waiter already registered on fd in the same direction */
 #define STRAND_ERR_NO_WORKERS (-9)  /* host-thread spawn with no workers registered */
+#define STRAND_ERR_NO_OFFLOAD_POOL (-10) /* strand_fiber_offload called with no pool initialised */
+#define STRAND_EAGAIN (-11)         /* offload pool full; caller must yield and retry */
 /*
  * Default scheduler and stack cache parameters.
  * These are the values used when zero is passed in strand_sched_config_t.
@@ -437,8 +439,83 @@ int strand_fiber_wait_readable(strand_scheduler_t *sched, int fd);
  *
  * Returns STRAND_ERR_IO_CONFLICT if a write waiter is already registered on fd.
  *
- * See ARCHITECTURE.md §5.
+ * See ARCHITECTURE.md 5.
  */
 int strand_fiber_wait_writable(strand_scheduler_t *sched, int fd);
+
+/* ---------------------------------------------------------------------------
+ * Blocking syscall offload pool (Layer 4 - ARCHITECTURE.md 6.5, 6.6)
+ * ---------------------------------------------------------------------------
+ */
+
+/*
+ * blocking_fn_t - function prototype for offloaded blocking calls.
+ *
+ * The function receives arg (as passed to strand_fiber_offload) and must
+ * write its result into result_slot before returning.  The function runs
+ * on a plain OS thread and must not call any fiber or scheduler APIs.
+ */
+typedef void (*blocking_fn_t)(void *arg, void *result_slot);
+
+/*
+ * strand_offload_pool_t - opaque handle to the global offload thread pool.
+ * One pool per process; initialised by strand_offload_pool_init.
+ */
+typedef struct strand_offload_pool strand_offload_pool_t;
+
+/*
+ * strand_offload_pool_init - create the global offload thread pool.
+ *
+ * Spawns thread_count plain OS threads that service blocking_fn_t work items.
+ * Must be called at most once before any strand_fiber_offload calls.
+ * The returned pointer is owned by the library; do not free it directly.
+ *
+ * Returns non-NULL on success, NULL on allocation or thread-creation failure.
+ * See ARCHITECTURE.md 6.5.
+ */
+strand_offload_pool_t *strand_offload_pool_init(size_t thread_count);
+
+/*
+ * strand_offload_pool_destroy - shut down the offload pool and join all threads.
+ *
+ * Signals all offload threads to exit, waits for them to finish any in-flight
+ * work item, then joins and frees the pool.  Must not be called while any
+ * fiber may still call strand_fiber_offload.
+ * See ARCHITECTURE.md 6.5.
+ */
+void strand_offload_pool_destroy(strand_offload_pool_t *pool);
+
+/*
+ * strand_fiber_offload - run a blocking function on an offload thread.
+ *
+ * Parks the calling fiber (FIBER_PARKED_OFFLOAD) and submits fn(arg) to the
+ * offload pool.  When fn completes, the result is injected back to this
+ * fiber's worker and the fiber resumes.
+ *
+ * result_slot: pointer to caller-owned storage that fn will write its result
+ * into.  Must remain valid until fn completes even if the fiber is cancelled.
+ *
+ * Pool full behaviour: returns STRAND_EAGAIN immediately without parking.
+ * The caller MUST yield before retrying; spinning without yielding is a
+ * liveness violation that starves other fibers:
+ *
+ *   while ((rc = strand_fiber_offload(sched, pool, fn, arg, &result)) ==
+ *          STRAND_EAGAIN) {
+ *       strand_fiber_yield(sched);
+ *   }
+ *
+ * Returns STRAND_OK       on successful completion (fn ran, result written).
+ * Returns STRAND_CANCELLED if strand_fiber_cancel was called on this fiber.
+ * Returns STRAND_EAGAIN   if the offload pool is full (do not park; retry).
+ * Returns STRAND_ERR_NO_OFFLOAD_POOL if pool is NULL.
+ * Returns STRAND_ERR_WRONGCTX if called from outside a running fiber.
+ * Returns STRAND_ERR_NOMEM on work item allocation failure.
+ *
+ * Must be called from inside a running fiber.
+ * See ARCHITECTURE.md 6.5, 6.6, 6.7.
+ */
+int strand_fiber_offload(strand_scheduler_t *sched,
+                         strand_offload_pool_t *pool,
+                         blocking_fn_t fn, void *arg, void *result_slot);
 
 #endif /* STRAND_H */
