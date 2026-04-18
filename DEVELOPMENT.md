@@ -2,9 +2,9 @@
 
 ## Status Overview
 
-**Last Updated**: 2026-04-17
+**Last Updated**: 2026-04-18
 **Current Phase**: Phase 5 — Layer 4: Multi-Worker Runtime
-**Next Task**: Phase 5 — Task 5.5: Cross-worker strand_fiber_cancel
+**Next Task**: Phase 5 — Task 5.6: strand_offload_pool_init and offload pool
 
 ### Phase Summary
 
@@ -15,7 +15,7 @@
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1–4.5 done; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
-| 5 | Layer 4: Multi-Worker Runtime | IN PROGRESS | 57/57 | Tasks 5.1–5.4 done; Linux clean |
+| 5 | Layer 4: Multi-Worker Runtime | IN PROGRESS | 58/58 | Tasks 5.1–5.5 done; Linux + OpenBSD clean |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
 | 7 | Hardening, Benchmarks, and Release | NOT STARTED | — | Integration tests, benchmarks, documentation |
 
@@ -738,7 +738,7 @@ exponential backoff and never drops items.
   - Inject fiber to target worker's inject queue
   - Return handle
 
-**5.5 — Cross-worker strand_fiber_cancel**
+**5.5 — Cross-worker strand_fiber_cancel** ✓ DONE
 - Complete the cross-worker path in `strand_fiber_cancel`:
   - For all parked states on a different worker: enqueue cancel operation
     to target worker's inject queue

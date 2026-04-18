@@ -1678,6 +1678,164 @@ test_ev_dispatch_openbsd(void)
 #endif /* STRAND_OPENBSD */
 
 /* =========================================================================
+ * test_cross_worker_cancel_wins
+ *
+ * Verify that a cross-worker cancel beats I/O readiness when both occur in
+ * the same strand_scheduler_advance call.
+ *
+ * The inject queue is drained in Step 1; the I/O poller runs in Step 4.
+ * A cancel injected before advance therefore wins: by the time Step 4 polls,
+ * the fiber is already FIBER_RUNNABLE with io_result = STRAND_CANCELLED and
+ * no longer registered with the poller.
+ *
+ * Setup:
+ *   1. Spawn fiber A that parks on the read end of a pipe.
+ *   2. Run advance once so A parks on FIBER_PARKED_IO_READ.
+ *   3. From a helper thread, call strand_fiber_cancel(handle_a).
+ *      strand_fiber_cancel detects a cross-thread caller (pthread_self !=
+ *      sched->owner_thread) and enqueues INJECT_CANCEL.
+ *   4. Write one byte to the write end of the pipe so it becomes readable.
+ *   5. Run advance again:
+ *        Step 1 — inject drain cancels A (FIBER_RUNNABLE, STRAND_CANCELLED).
+ *        Step 4 — poller_poll: fd is readable but no waiter remains.
+ *        Step 5 — A runs; result must be STRAND_CANCELLED.
+ *
+ * See ARCHITECTURE.md 5.3 and TESTING.md 6.2.
+ * =========================================================================
+ */
+
+struct cwcw_state {
+        strand_scheduler_t   *sched;
+        int                   rd;
+        int                   wr;
+        strand_fiber_handle_t handle_a;
+        int                   result_a;
+        _Atomic int           fiber_parked; /* set 1 when A is parked */
+};
+
+static void
+fiber_cwcw_a(void *varg)
+{
+        struct cwcw_state *s = varg;
+        /*
+         * Signal that we are about to park so the helper thread knows it is
+         * safe to call strand_fiber_cancel.
+         */
+        atomic_store_explicit(&s->fiber_parked, 1, memory_order_release);
+        s->result_a = strand_fiber_wait_readable(s->sched, s->rd);
+}
+
+struct cwcw_cancel_args {
+        strand_fiber_handle_t handle;
+        int                   wr;
+        _Atomic int          *fiber_parked;
+};
+
+static void *
+cwcw_cancel_thread(void *varg)
+{
+        struct cwcw_cancel_args *a = varg;
+        struct timespec          ts;
+
+        /*
+         * Poll until the fiber signals that it has parked.  Each iteration
+         * yields the CPU briefly to avoid burning a core.
+         */
+        while (!atomic_load_explicit(a->fiber_parked, memory_order_acquire)) {
+                ts.tv_sec  = 0;
+                ts.tv_nsec = 1000000L; /* 1 ms */
+                nanosleep(&ts, NULL);
+        }
+
+        /*
+         * Call strand_fiber_cancel from a different thread.  This exercises
+         * the cross-worker inject path: pthread_self() != sched->owner_thread,
+         * so the cancel is enqueued to the target scheduler's inject queue.
+         * See ARCHITECTURE.md 5.3 and DEVELOPMENT.md Task 5.5.
+         */
+        (void)strand_fiber_cancel(a->handle);
+
+        /*
+         * Also write data to the pipe so the fd becomes readable.  The cancel
+         * (Step 1) should win over readiness (Step 4).
+         */
+        (void)write(a->wr, "x", 1);
+
+        return (NULL);
+}
+
+static int
+test_cross_worker_cancel_wins(void)
+{
+        strand_scheduler_t       *sched;
+        struct cwcw_state         s;
+        struct cwcw_cancel_args   ca;
+        pthread_t                 helper;
+        int                       rc;
+
+        memset(&s, 0, sizeof(s));
+        atomic_init(&s.fiber_parked, 0);
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        make_test_pipe(&s.rd, &s.wr);
+        if (s.rd < 0) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        s.sched = sched;
+
+        /* Spawn fiber A and advance once so it parks on the read end. */
+        if (t4_push_fiber(sched, fiber_cwcw_a, &s, &s.handle_a) != 0) {
+                close(s.rd); close(s.wr);
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        strand_scheduler_advance(sched, NULL); /* A parks on FIBER_PARKED_IO_READ */
+
+        if (s.result_a != 0) {
+                /* A must not have returned yet */
+                close(s.rd); close(s.wr);
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+
+        /*
+         * Launch the helper thread.  It waits for fiber_parked, then calls
+         * strand_fiber_cancel (cross-worker path) and writes to the pipe.
+         */
+        ca.handle       = s.handle_a;
+        ca.wr           = s.wr;
+        ca.fiber_parked = &s.fiber_parked;
+        if (pthread_create(&helper, NULL, cwcw_cancel_thread, &ca) != 0) {
+                close(s.rd); close(s.wr);
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        pthread_join(helper, NULL);
+
+        /*
+         * Advance:
+         *   Step 1 — INJECT_CANCEL is drained; A transitions to
+         *             FIBER_RUNNABLE with io_result = STRAND_CANCELLED.
+         *             The fd is removed from the poller.
+         *   Step 4 — fd is readable but no waiter remains; no wakeup.
+         *   Step 5 — A runs and returns; result_a == STRAND_CANCELLED.
+         */
+        strand_scheduler_advance(sched, NULL);
+        strand_scheduler_advance(sched, NULL); /* ensure A has run */
+
+        rc = (s.result_a == STRAND_CANCELLED) ? 0 : 1;
+
+        close(s.rd);
+        close(s.wr);
+        strand_scheduler_destroy(sched);
+        return (rc);
+}
+
+/* =========================================================================
  * run_layer3_tests — register all Layer 3 tests with the harness.
  * =========================================================================
  */
@@ -1691,9 +1849,11 @@ run_layer3_tests(void)
 	RUN("test_cancel_one_direction_leaves_other",
 	    test_cancel_one_direction_leaves_other);
 	RUN("test_cancel_both_directions", test_cancel_both_directions);
-	RUN("test_same_worker_readiness_wins",
-	    test_same_worker_readiness_wins);
-	RUN("test_scheduler_stop_interrupts_io_wait",
+        RUN("test_same_worker_readiness_wins",
+            test_same_worker_readiness_wins);
+        RUN("test_cross_worker_cancel_wins",
+            test_cross_worker_cancel_wins);
+        RUN("test_scheduler_stop_interrupts_io_wait",
 	    test_scheduler_stop_interrupts_io_wait);
 
 #ifdef STRAND_LINUX
