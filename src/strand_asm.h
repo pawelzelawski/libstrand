@@ -1,5 +1,5 @@
 /*
- * strand_asm.h — shared macro definitions for assembly files.
+ * strand_asm.h - shared macro definitions for assembly files.
  *
  * Included by every .S file via:
  *   #include "../../strand_asm.h"

@@ -2,7 +2,7 @@
 #define STRAND_POLLER_H
 
 /*
- * strand_poller.h — I/O poller internal interface.
+ * strand_poller.h - I/O poller internal interface.
  * epoll (Linux) and kqueue (OpenBSD). See ARCHITECTURE.md §5.
  *
  * Task 4.1: strand_poller_t definition and fd waiter hash table interface.
@@ -26,13 +26,13 @@
 #define FD_ENTRY_TOMBSTONE (-2) /* slot was removed; probe chain continues */
 
 /*
- * fd_reg_state_t — Linux EPOLLONESHOT registration state per fd.
+ * fd_reg_state_t - Linux EPOLLONESHOT registration state per fd.
  *
- * NOT_REGISTERED — fd has never been registered, or was DEL'd.
+ * NOT_REGISTERED - fd has never been registered, or was DEL'd.
  *                  Re-arm must use epoll_ctl ADD.
- * ACTIVE         — fd is currently registered and armed.
- * DISABLED       — fd fired; registration auto-disabled by EPOLLONESHOT.
- *                  Re-arm must use epoll_ctl MOD (not ADD — would get EEXIST).
+ * ACTIVE         - fd is currently registered and armed.
+ * DISABLED       - fd fired; registration auto-disabled by EPOLLONESHOT.
+ *                  Re-arm must use epoll_ctl MOD (not ADD - would get EEXIST).
  *
  * See ARCHITECTURE.md §5.2 and §5.4.
  */
@@ -43,22 +43,22 @@ typedef enum {
 } fd_reg_state_t;
 
 /*
- * strand_fd_entry_t — one slot in the open-addressed fd waiter hash table.
+ * strand_fd_entry_t - one slot in the open-addressed fd waiter hash table.
  *
- * fd           — registered fd key; FD_ENTRY_EMPTY or FD_ENTRY_TOMBSTONE
+ * fd           - registered fd key; FD_ENTRY_EMPTY or FD_ENTRY_TOMBSTONE
  *                when the slot is not live.
- * read_waiter  — fiber parked in FIBER_PARKED_IO_READ on this fd, or NULL.
- * write_waiter — fiber parked in FIBER_PARKED_IO_WRITE on this fd, or NULL.
- * event_mask   — current registration interest mask (epoll/kqueue flags).
+ * read_waiter  - fiber parked in FIBER_PARKED_IO_READ on this fd, or NULL.
+ * write_waiter - fiber parked in FIBER_PARKED_IO_WRITE on this fd, or NULL.
+ * event_mask   - current registration interest mask (epoll/kqueue flags).
  *                Reflects the union of active read and write waiter interests.
- * reg_state    — Linux EPOLLONESHOT registration state.
+ * reg_state    - Linux EPOLLONESHOT registration state.
  *                Ignored on OpenBSD (EV_DISPATCH has no equivalent tracking).
- * arm_token    — per-registration generation counter; bumped on each arm.
+ * arm_token    - per-registration generation counter; bumped on each arm.
  *                Linux: packed with fd into epoll_event.data.u64 and
  *                validated on delivery to discard stale events.
  *                OpenBSD: entry pointer carried in kevent.udata.
  *                See ARCHITECTURE.md §5.3.
- * dbg_gen      — debug-only generation counter; incremented when fd reuse
+ * dbg_gen      - debug-only generation counter; incremented when fd reuse
  *                is detected (fd closed and reopened with same number).
  *                Used in debug builds to assert fd lifecycle correctness.
  *                See ARCHITECTURE.md §5.3 and CODING_STANDARDS.md §6.1.
@@ -76,12 +76,12 @@ typedef struct strand_fd_entry {
 } strand_fd_entry_t;
 
 /*
- * struct strand_poller — complete I/O poller.
+ * struct strand_poller - complete I/O poller.
  *
- * pollfd     — epoll fd (Linux) or kqueue fd (OpenBSD); -1 if not open.
- * table      — open-addressed fd waiter hash table; linear probing.
- * table_cap  — table capacity; always a power of 2.
- * table_len  — number of live entries (tombstones are not counted).
+ * pollfd     - epoll fd (Linux) or kqueue fd (OpenBSD); -1 if not open.
+ * table      - open-addressed fd waiter hash table; linear probing.
+ * table_cap  - table capacity; always a power of 2.
+ * table_len  - number of live entries (tombstones are not counted).
  *
  * The table grows (doubles) when load exceeds 75% (table_len * 4 >= table_cap * 3).
  * The hash function is: fd & (table_cap - 1).
@@ -100,35 +100,35 @@ struct strand_poller {
 #define FD_TABLE_INITIAL_CAP ((size_t)64)
 
 /*
- * POLLER_MAX_EVENTS — maximum number of events to retrieve in a single
+ * POLLER_MAX_EVENTS - maximum number of events to retrieve in a single
  * epoll_wait / kevent call.  A batch of 64 balances per-call overhead
  * against the cost of processing many events per loop iteration.
  */
 #define POLLER_MAX_EVENTS ((int)64)
 
 /*
- * poller_create — allocate and initialise an I/O poller.
- * initial_cap — initial fd table capacity; rounded up to next power of 2.
+ * poller_create - allocate and initialise an I/O poller.
+ * initial_cap - initial fd table capacity; rounded up to next power of 2.
  *               Pass 0 to use FD_TABLE_INITIAL_CAP.
  * Returns NULL on error (epoll_create1/kqueue or allocation failure).
  */
 strand_poller_t *poller_create(size_t initial_cap);
 
 /*
- * poller_destroy — close the poller fd and free all memory.
+ * poller_destroy - close the poller fd and free all memory.
  * Debug builds assert that no active waiters remain in the table.
  * Safe to call with NULL.
  */
 void poller_destroy(strand_poller_t *p);
 
 /*
- * fd_table_lookup — find the entry for fd.
+ * fd_table_lookup - find the entry for fd.
  * Returns a pointer to the entry, or NULL if fd is not registered.
  */
 strand_fd_entry_t *fd_table_lookup(strand_poller_t *p, int fd);
 
 /*
- * fd_table_insert — add a new entry for fd and return a pointer to it.
+ * fd_table_insert - add a new entry for fd and return a pointer to it.
  * The caller must verify (via fd_table_lookup) that fd is not already
  * present before calling this function.
  * Grows the table if the load factor would exceed 75%.
@@ -137,7 +137,7 @@ strand_fd_entry_t *fd_table_lookup(strand_poller_t *p, int fd);
 strand_fd_entry_t *fd_table_insert(strand_poller_t *p, int fd);
 
 /*
- * fd_table_remove — remove the entry for fd from the table.
+ * fd_table_remove - remove the entry for fd from the table.
  * Must only be called when both read_waiter and write_waiter are NULL.
  * Debug builds assert this precondition.
  * No-op if fd is not found in the table.
@@ -145,7 +145,7 @@ strand_fd_entry_t *fd_table_insert(strand_poller_t *p, int fd);
 void fd_table_remove(strand_poller_t *p, int fd);
 
 /*
- * poller_arm_fd — arm or re-arm fd in the OS poller.
+ * poller_arm_fd - arm or re-arm fd in the OS poller.
  *
  * Linux: calls epoll_ctl ADD (if NOT_REGISTERED) or MOD (otherwise)
  *        with new_mask | EPOLLET | EPOLLONESHOT.
@@ -166,7 +166,7 @@ int poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
                   int filter, strand_fd_entry_t *e);
 
 /*
- * fiber_io_wake — wake a fiber parked on an IO wait with a given result.
+ * fiber_io_wake - wake a fiber parked on an IO wait with a given result.
  *
  * Sets f->io_result = result, transitions f to FIBER_RUNNABLE, and
  * pushes f onto sched's run queue.  Called from poller_deliver_event
@@ -178,7 +178,7 @@ void fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f,
                    int result);
 
 /*
- * poller_poll — drain the OS polling fd and deliver all ready events.
+ * poller_poll - drain the OS polling fd and deliver all ready events.
  *
  * Calls epoll_wait (Linux) or kevent (OpenBSD) with the given timeout_ms,
  * then calls poller_deliver_event for every returned event.  Ready fibers
@@ -195,7 +195,7 @@ void fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f,
 void poller_poll(struct strand_scheduler *sched, int timeout_ms);
 
 /*
- * poller_cancel_io — cancel a fiber parked on an I/O wait (same-worker path).
+ * poller_cancel_io - cancel a fiber parked on an I/O wait (same-worker path).
  *
  * Removes the fiber's waiter from the fd table entry, adjusts the OS
  * registration, and wakes the fiber with STRAND_CANCELLED.
@@ -206,7 +206,7 @@ void poller_poll(struct strand_scheduler *sched, int timeout_ms);
  * Linux:
  *   - If the other direction still has a waiter: epoll_ctl MOD to the
  *     remaining direction only (EPOLLET | EPOLLONESHOT).
- *     No post-cancel readiness check is needed — the remaining waiter
+ *     No post-cancel readiness check is needed - the remaining waiter
  *     will wake on the next genuine edge or when the fd is re-armed.
  *   - If no other waiter: epoll_ctl DEL; reg_state -> NOT_REGISTERED.
  *
@@ -224,7 +224,7 @@ void poller_poll(struct strand_scheduler *sched, int timeout_ms);
 void poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f);
 
 /*
- * poller_register_wakeup_fd — register the scheduler wakeup fd with the
+ * poller_register_wakeup_fd - register the scheduler wakeup fd with the
  * poller's OS instance so that a write to the wakeup fd wakes a blocked
  * epoll_wait / kevent call.
  *

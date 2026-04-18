@@ -1,5 +1,5 @@
 /*
- * tests/test_layer3.c — Layer 3 (Phase 4) test suite.
+ * tests/test_layer3.c - Layer 3 (Phase 4) test suite.
  *
  * Tests fd parking, epoll/kqueue event delivery, post-re-arm readiness check,
  * cancellation, error/hangup/EOF events, and scheduler stop while I/O parked.
@@ -8,9 +8,9 @@
  * The scheduler pointer is passed inside each per-test arg struct.
  *
  * Platform guards:
- *   STRAND_LINUX   — EPOLLET/EPOLLONESHOT-specific tests
- *   STRAND_OPENBSD — EV_DISPATCH/EV_EOF-specific tests
- *   STRAND_DEBUG   — O_NONBLOCK assertion test (uses fork/SIGABRT)
+ *   STRAND_LINUX   - EPOLLET/EPOLLONESHOT-specific tests
+ *   STRAND_OPENBSD - EV_DISPATCH/EV_EOF-specific tests
+ *   STRAND_DEBUG   - O_NONBLOCK assertion test (uses fork/SIGABRT)
  *
  * See DEVELOPMENT.md §"Tests for Phase 4", TESTING.md §2.4, §5.2, §6.1, §6.2.
  */
@@ -200,7 +200,7 @@ wait_for_flag(const _Atomic int *flag, int timeout_ms)
  * test_wait_readable_wakes
  *
  * Park a fiber on the read end of a pipe.  Write one byte from outside
- * the scheduler to trigger readiness.  Advance — fiber must wake with
+ * the scheduler to trigger readiness.  Advance - fiber must wake with
  * STRAND_OK.
  *
  * See TESTING.md §2.4.
@@ -272,7 +272,7 @@ test_wait_readable_wakes(void)
  * test_wait_writable_wakes
  *
  * Fill the pipe buffer so the write end is not writable.  Park a fiber on
- * write readiness.  Drain the read end to free buffer space.  Advance —
+ * write readiness.  Drain the read end to free buffer space.  Advance -
  * fiber must wake with STRAND_OK.
  * =========================================================================
  */
@@ -415,7 +415,7 @@ test_cancel_read_waiter(void)
  *
  * Park fiber A on READ and fiber B on WRITE of the same pipe.  Cancel the
  * READ waiter (A).  Verify A wakes with STRAND_CANCELLED.  Then make the
- * pipe writable and verify B wakes with STRAND_OK — the WRITE registration
+ * pipe writable and verify B wakes with STRAND_OK - the WRITE registration
  * must have survived the READ cancellation.
  * =========================================================================
  */
@@ -464,8 +464,8 @@ test_cancel_one_direction_leaves_other(void)
 	 *   receive buffer.  sv[0] is now NOT WRITABLE (backpressure) and
 	 *   NOT READABLE (no one has written to sv[1]).
 	 *
-	 *   A: wait_readable(sched, sv[0])  — parks (not readable)
-	 *   B: wait_writable(sched, sv[0])  — parks (not writable)
+	 *   A: wait_readable(sched, sv[0])  - parks (not readable)
+	 *   B: wait_writable(sched, sv[0])  - parks (not writable)
 	 *
 	 *   Both use sv[0]: one entry in the fd table with read_waiter=A
 	 *   and write_waiter=B.  Linux registers EPOLLIN|EPOLLOUT|EPOLLET|
@@ -525,7 +525,7 @@ test_cancel_one_direction_leaves_other(void)
 		return (1);
 	}
 
-	/* Cancel A — must MOD sv[0] to EPOLLOUT only, leaving B parked. */
+	/* Cancel A - must MOD sv[0] to EPOLLOUT only, leaving B parked. */
 	strand_fiber_cancel(handle_a);
 	strand_scheduler_advance(sched, NULL); /* A wakes with CANCELLED */
 
@@ -638,7 +638,7 @@ test_cancel_both_directions(void)
  *   Fiber B: yields once (so A parks first), then tries to cancel A.
  *   Data is written to the pipe before the second advance, so the next
  *   Step 4 delivers readiness to A and places A at the tail of the run
- *   queue.  Step 5 then runs B (head of queue) which calls cancel —
+ *   queue.  Step 5 then runs B (head of queue) which calls cancel -
  *   but A is already FIBER_RUNNABLE with io_result = STRAND_OK.
  *   Cancel on FIBER_RUNNABLE only sets cancel_pending; it does not
  *   overwrite io_result.  A returns STRAND_OK.
@@ -671,7 +671,7 @@ fiber_rw_b(void *varg)
 	 * run queue when advance fires.  Step 4 (poller_poll) runs before
 	 * Step 5, so readiness is delivered to A (RUNNABLE, io_result=OK)
 	 * before B runs.  B's cancel call finds A FIBER_RUNNABLE and only
-	 * sets cancel_pending — it cannot overwrite io_result.
+	 * sets cancel_pending - it cannot overwrite io_result.
 	 * A then runs and returns STRAND_OK.
 	 */
 	strand_fiber_cancel(s->handle_a);
@@ -716,9 +716,9 @@ test_same_worker_readiness_wins(void)
 	 * Push B now (after A is parked) and write data.
 	 *
 	 * In the next advance:
-	 *   Step 4 — poller_poll delivers EPOLLIN; A pushed to queue tail.
+	 *   Step 4 - poller_poll delivers EPOLLIN; A pushed to queue tail.
 	 *             Queue: [B, A]
-	 *   Step 5 — B runs first (head), calls cancel(A).  A is already
+	 *   Step 5 - B runs first (head), calls cancel(A).  A is already
 	 *             FIBER_RUNNABLE → cancel only sets cancel_pending.
 	 *             B returns (cancel_called=1).  Then A runs → STRAND_OK.
 	 *
@@ -842,7 +842,7 @@ test_scheduler_stop_interrupts_io_wait(void)
 
 	/*
 	 * The fiber is still parked on rd.  Cancel it from the main thread
-	 * before destroying — strand_scheduler_advance resets owner_thread
+	 * before destroying - strand_scheduler_advance resets owner_thread
 	 * to the current (main) thread, allowing strand_fiber_cancel to
 	 * proceed.
 	 */
@@ -868,7 +868,7 @@ test_scheduler_stop_interrupts_io_wait(void)
  *
  * Verify that EPOLLONESHOT auto-disables the registration after a single
  * event fires.  Feed data to a pipe, park a fiber, advance to wake it.
- * Feed more data.  Advance again with no re-arm — verify no second wake
+ * Feed more data.  Advance again with no re-arm - verify no second wake
  * (the fiber completed, the entry was cleaned up, no spurious delivery).
  *
  * See ARCHITECTURE.md §5.4 and TESTING.md §5.2.
@@ -888,7 +888,7 @@ fiber_oneshot(void *varg)
 	struct oneshot_args *a = varg;
 	a->result = strand_fiber_wait_readable(a->sched, a->fd);
 	a->wake_count++;
-	/* Fiber does NOT drain the pipe — it just records the wake. */
+	/* Fiber does NOT drain the pipe - it just records the wake. */
 }
 
 static int
@@ -919,7 +919,7 @@ test_edge_triggered_oneshot_linux(void)
 
 	strand_scheduler_advance(sched, NULL); /* fiber parks */
 
-	/* Write first byte — triggers the EPOLLIN edge. */
+	/* Write first byte - triggers the EPOLLIN edge. */
 	(void)write(wr, "a", 1);
 	strand_scheduler_advance(sched, NULL); /* fiber wakes (wake_count = 1) */
 
@@ -941,7 +941,7 @@ test_edge_triggered_oneshot_linux(void)
 	close(wr);
 	strand_scheduler_destroy(sched);
 
-	/* wake_count must still be exactly 1 — no second delivery. */
+	/* wake_count must still be exactly 1 - no second delivery. */
 	return (args.wake_count == 1) ? 0 : 1;
 }
 
@@ -956,7 +956,7 @@ test_edge_triggered_oneshot_linux(void)
  * EPOLLIN|EPOLLOUT both set → both waiters wake directly.
  *
  * Also covers the post-re-arm zero-timeout path when only one direction
- * fires (EPOLLIN only on a full pipe) and we re-arm for the other —
+ * fires (EPOLLIN only on a full pipe) and we re-arm for the other -
  * a complementary scenario implemented in test_all_events_processed below.
  *
  * See ARCHITECTURE.md §5.5, TESTING.md §6.1.
@@ -1006,7 +1006,7 @@ test_post_rearm_readiness_check_linux(void)
 	 *      Registration: EPOLLIN|EPOLLOUT|EPOLLET|EPOLLONESHOT on sv[0].
 	 *   3. write(sv[1], 1 byte) → sv[0] becomes READABLE.  sv[0] is still
 	 *      NOT writable (sv[1]'s receive buffer still full).
-	 *   4. Advance: EPOLLIN fires (EPOLLOUT not set — not writable yet).
+	 *   4. Advance: EPOLLIN fires (EPOLLOUT not set - not writable yet).
 	 *      poller_deliver_event: A woken (woke_read=1).  B still waiting →
 	 *      re-arm sv[0] with EPOLLOUT.  Zero-timeout: NOT writable yet →
 	 *      nothing returned.  B remains parked.
@@ -1082,7 +1082,7 @@ test_post_rearm_readiness_check_linux(void)
 /* =========================================================================
  * test_all_events_processed_in_rearm_check
  *
- * Two different pipes — pipe_a and pipe_b.
+ * Two different pipes - pipe_a and pipe_b.
  *   pipe_a: FULL (not writable).  Fiber A waits READ, Fiber B waits WRITE.
  *   pipe_b: has data (readable).  Fiber C waits READ.
  *
@@ -1093,7 +1093,7 @@ test_post_rearm_readiness_check_linux(void)
  *
  * Verify A and C wake in the same advance, and B stays parked.
  * The zero-timeout poll inside the re-arm path must process ALL returned
- * events — if it discarded pipe_b's event, C would not wake.
+ * events - if it discarded pipe_b's event, C would not wake.
  *
  * See ARCHITECTURE.md §5.5, TESTING.md §6.1.
  * =========================================================================
@@ -1186,7 +1186,7 @@ test_all_events_processed_in_rearm_check(void)
 
 	s.sched   = sched;
 	s.fd_a_rd = sv_a[0]; /* A reads from sv_a[0]  */
-	s.fd_a_wr = sv_a[0]; /* B writes to sv_a[0] — SAME fd */
+	s.fd_a_wr = sv_a[0]; /* B writes to sv_a[0] - SAME fd */
 	s.fd_b_rd = b_rd;
 	s.fd_b_wr = b_wr;
 
@@ -1224,7 +1224,7 @@ test_all_events_processed_in_rearm_check(void)
 	 * Single advance:
 	 *   EPOLLIN for sv_a[0] → A wakes; B re-armed with EPOLLOUT; zero-
 	 *   timeout finds nothing (sv_a[0] not writable) but must also process
-	 *   any other events (b_rd EPOLLIN) — verifying that poller_deliver_event
+	 *   any other events (b_rd EPOLLIN) - verifying that poller_deliver_event
 	 *   does not drop them.  EPOLLIN for b_rd → C wakes.
 	 */
 	strand_scheduler_advance(sched, NULL);
@@ -1399,7 +1399,7 @@ test_epollhup_wakes_waiter(void)
 
 	/*
 	 * Close the read end.  The kernel delivers EPOLLHUP on the write end
-	 * (broken pipe — no reader).
+	 * (broken pipe - no reader).
 	 */
 	close(rd);
 	rd = -1;
@@ -1418,7 +1418,7 @@ test_epollhup_wakes_waiter(void)
  * Verify that passing a blocking fd to strand_fiber_wait_readable triggers
  * the O_NONBLOCK debug assertion.  Only meaningful in STRAND_DEBUG builds.
  *
- * The assertion calls abort() (via STRAND_DEBUG_ASSERT) — we use fork() to
+ * The assertion calls abort() (via STRAND_DEBUG_ASSERT) - we use fork() to
  * isolate the abort in a child process.  The child is expected to exit via
  * SIGABRT (non-zero exit status from signal).
  *
@@ -1462,7 +1462,7 @@ test_nonblock_assertion_debug(void)
 	}
 
 	if (pid == 0) {
-		/* Child: set up scheduler, spawn fiber, advance — expect abort. */
+		/* Child: set up scheduler, spawn fiber, advance - expect abort. */
 		strand_scheduler_t          *sched;
 		struct nonblock_assert_args  args;
 
@@ -1476,7 +1476,7 @@ test_nonblock_assertion_debug(void)
 		(void)t4_push_fiber(sched, fiber_nonblock_assert, &args,
 		    NULL);
 		strand_scheduler_advance(sched, NULL);
-		_exit(0); /* should not reach here — assert should abort */
+		_exit(0); /* should not reach here - assert should abort */
 	}
 
 	/* Parent: close fds and wait for child. */
@@ -1487,12 +1487,12 @@ test_nonblock_assertion_debug(void)
 		return (1);
 
 	/*
-	 * Child should have aborted (SIGABRT from assert) — WIFSIGNALED &&
+	 * Child should have aborted (SIGABRT from assert) - WIFSIGNALED &&
 	 * WTERMSIG == SIGABRT, or abnormal exit.  Any non-clean exit is
 	 * acceptable here since the assertion fired.
 	 */
 	if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
-		return (1); /* child exited normally — assertion did NOT fire */
+		return (1); /* child exited normally - assertion did NOT fire */
 
 	return (0); /* non-zero / signal exit means assertion fired */
 }
@@ -1568,7 +1568,7 @@ test_ev_eof_openbsd(void)
 		return (1);
 	}
 
-	/* Close write end — kernel delivers EV_EOF on the read filter. */
+	/* Close write end - kernel delivers EV_EOF on the read filter. */
 	close(wr);
 	wr = -1;
 
@@ -1696,9 +1696,9 @@ test_ev_dispatch_openbsd(void)
  *      sched->owner_thread) and enqueues INJECT_CANCEL.
  *   4. Write one byte to the write end of the pipe so it becomes readable.
  *   5. Run advance again:
- *        Step 1 — inject drain cancels A (FIBER_RUNNABLE, STRAND_CANCELLED).
- *        Step 4 — poller_poll: fd is readable but no waiter remains.
- *        Step 5 — A runs; result must be STRAND_CANCELLED.
+ *        Step 1 - inject drain cancels A (FIBER_RUNNABLE, STRAND_CANCELLED).
+ *        Step 4 - poller_poll: fd is readable but no waiter remains.
+ *        Step 5 - A runs; result must be STRAND_CANCELLED.
  *
  * See ARCHITECTURE.md 5.3 and TESTING.md 6.2.
  * =========================================================================
@@ -1818,11 +1818,11 @@ test_cross_worker_cancel_wins(void)
 
         /*
          * Advance:
-         *   Step 1 — INJECT_CANCEL is drained; A transitions to
+         *   Step 1 - INJECT_CANCEL is drained; A transitions to
          *             FIBER_RUNNABLE with io_result = STRAND_CANCELLED.
          *             The fd is removed from the poller.
-         *   Step 4 — fd is readable but no waiter remains; no wakeup.
-         *   Step 5 — A runs and returns; result_a == STRAND_CANCELLED.
+         *   Step 4 - fd is readable but no waiter remains; no wakeup.
+         *   Step 5 - A runs and returns; result_a == STRAND_CANCELLED.
          */
         strand_scheduler_advance(sched, NULL);
         strand_scheduler_advance(sched, NULL); /* ensure A has run */
@@ -1836,7 +1836,7 @@ test_cross_worker_cancel_wins(void)
 }
 
 /* =========================================================================
- * run_layer3_tests — register all Layer 3 tests with the harness.
+ * run_layer3_tests - register all Layer 3 tests with the harness.
  * =========================================================================
  */
 

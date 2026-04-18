@@ -1,20 +1,20 @@
-# Makefile — libstrand
+# Makefile - libstrand
 #
 # Targets:
-#   make / make dev  — debug build with ASan/UBSan (Linux only)
-#   make release     — optimised build
-#   make test        — build and run test suite (wired in Task 1.2)
-#   make test-tsan   — TSan build, Clang only, Linux only
-#   make valgrind    — run tests under Valgrind, Linux only
-#   make bench       — build and run benchmarks (Phase 7)
-#   make lint        — clang-tidy + cppcheck
-#   make format      — clang-format -i on all sources
-#   make clean       — remove build artefacts
-#   make install     — install libstrand.a and include/strand.h
+#   make / make dev  - debug build with ASan/UBSan (Linux only)
+#   make release     - optimised build
+#   make test        - build and run test suite (wired in Task 1.2)
+#   make test-tsan   - TSan build, Clang only, Linux only
+#   make valgrind    - run tests under Valgrind, Linux only
+#   make bench       - build and run benchmarks (Phase 7)
+#   make lint        - clang-tidy + cppcheck
+#   make format      - clang-format -i on all sources
+#   make clean       - remove build artefacts
+#   make install     - install libstrand.a and include/strand.h
 #
 # Compatible with GNU make (Linux) and BSD make (OpenBSD).
-# Uses != for shell assignment — supported by GNU make >= 3.82 and BSD make.
-# Explicit per-file compile rules — no pattern rules (BSD make portable).
+# Uses != for shell assignment - supported by GNU make >= 3.82 and BSD make.
+# Explicit per-file compile rules - no pattern rules (BSD make portable).
 # See TECH_STACK.md §5 for full build system specification.
 
 # --- Platform and architecture detection ------------------------------------
@@ -37,17 +37,17 @@ CFLAGS_COMMON = -std=c11 -Wall -Wextra -Wpedantic			\
                 -D_XOPEN_SOURCE=700				\
                 $(HAVE_VALGRIND)
 
-# Platform flags — STRAND_LINUX or STRAND_OPENBSD
+# Platform flags - STRAND_LINUX or STRAND_OPENBSD
 # Linux also adds _GNU_SOURCE to expose cpu_set_t, CPU_ZERO/SET, and
 # pthread_setaffinity_np (used in strand_runtime.c Task 5.3).
 CFLAGS_OS != if [ "$(OS)" = "Linux" ]; then echo "-DSTRAND_LINUX -D_GNU_SOURCE"; \
              elif [ "$(OS)" = "OpenBSD" ]; then echo "-DSTRAND_OPENBSD"; \
              else echo ""; fi
 
-# ASan/UBSan — Linux only; OpenBSD clang does not support -fsanitize=address
+# ASan/UBSan - Linux only; OpenBSD clang does not support -fsanitize=address
 SANITIZERS != if [ "$(OS)" = "Linux" ]; then echo "-fsanitize=address,undefined"; else echo ""; fi
 
-# Valgrind client request macros — present when valgrind-devel (Fedora/RHEL),
+# Valgrind client request macros - present when valgrind-devel (Fedora/RHEL),
 # valgrind-dev (Debian/Ubuntu), or valgrind (OpenBSD ports) is installed.
 # The macros are no-ops in non-Valgrind runs; compiled in whenever the header
 # is present so Valgrind can track fiber stack boundaries.
@@ -81,7 +81,7 @@ PREFIX     ?= /usr/local
 LIBDIR     ?= $(PREFIX)/lib
 INCLUDEDIR ?= $(PREFIX)/include
 
-# --- ASM source — selected by architecture ----------------------------------
+# --- ASM source - selected by architecture ----------------------------------
 #
 # OpenBSD reports x86_64 as "amd64" from uname -m.
 ASM_SRC != if [ "$(ARCH)" = "x86_64" ] || [ "$(ARCH)" = "amd64" ]; then \
@@ -118,7 +118,7 @@ TEST_BIN_TSAN   = $(BUILD_TESTS_DIR)/run_tests_tsan
 
 INCLUDES = -I include/
 
-# --- ASM object paths — empty when ASM_SRC is empty ------------------------
+# --- ASM object paths - empty when ASM_SRC is empty ------------------------
 #
 # Defined after BUILD_DIR so $(BUILD_DIR) is available for expansion.
 ASM_OBJ_DEV != if [ -n "$(ASM_SRC)" ]; then echo "$(BUILD_DIR)/strand_context_asm.o"; else echo ""; fi
@@ -132,13 +132,13 @@ ASM_OBJ_TSAN != if [ -n "$(ASM_SRC)" ]; then echo "$(TSAN_DIR)/strand_context_as
 
 all: dev
 
-# Development build with ASan/UBSan (Linux) — also builds test binary
+# Development build with ASan/UBSan (Linux) - also builds test binary
 dev: $(LIB_DEV) $(TEST_BIN)
 
-# Release — optimised static library
+# Release - optimised static library
 release: $(LIB_RELEASE)
 
-# Test suite — ASan/UBSan build
+# Test suite - ASan/UBSan build
 # LSAN (LeakSanitizer) is disabled here: its tracer process uses ptrace to
 # scan all mapped pages and crashes (SIGSEGV in the tracer) when it
 # encounters PROT_NONE fiber guard pages.  Leak checking is covered by the
@@ -146,7 +146,7 @@ release: $(LIB_RELEASE)
 test: $(TEST_BIN)
 	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN)
 
-# TSan — Clang only, Linux only
+# TSan - Clang only, Linux only
 test-tsan:
 	@command -v clang >/dev/null 2>&1 || \
 	    { echo "TSan target requires Clang"; exit 1; }
@@ -175,9 +175,9 @@ test-tsan:
 	    -o $(TEST_BIN_TSAN)
 	TSAN_OPTIONS=die_after_fork=0 $(TEST_BIN_TSAN)
 
-# Valgrind — Linux only, no sanitizers (ASan + Valgrind conflict)
+# Valgrind - Linux only, no sanitizers (ASan + Valgrind conflict)
 valgrind: $(TEST_BIN_VG)
-	# --child-silent-after-fork=yes: intentional — Valgrind re-instruments any
+	# --child-silent-after-fork=yes: intentional - Valgrind re-instruments any
 	# forked child process and then crashes (SIGSEGV in the tracer) when it
 	# walks the PROT_NONE fiber guard pages.  Silencing child output avoids
 	# spurious "Invalid read" / leak reports from those short-lived children
@@ -190,9 +190,9 @@ valgrind: $(TEST_BIN_VG)
 	         $(TEST_BIN_VG)
 	rm -f vgcore.*
 
-# Benchmarks — Phase 7
+# Benchmarks - Phase 7
 bench:
-	@echo "No benchmarks yet — implement Phase 7"
+	@echo "No benchmarks yet - implement Phase 7"
 
 # clang-tidy + cppcheck
 lint: $(LIB_DEV)

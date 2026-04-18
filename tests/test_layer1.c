@@ -1,12 +1,12 @@
 /*
- * tests/test_layer1.c — Layer 1 (Phase 2) test suite.
+ * tests/test_layer1.c - Layer 1 (Phase 2) test suite.
  *
  * Tests the raw context switch in isolation: strand_context_switch,
  * strand_context_init, stack allocation with guard pages, register
  * preservation, errno save/restore, FP control register save/restore,
  * and documentation correctness.
  *
- * No scheduler, no run queue — purely Layer 1 primitives.
+ * No scheduler, no run queue - purely Layer 1 primitives.
  * See DEVELOPMENT.md §"Tests for Phase 2".
  */
 
@@ -63,7 +63,7 @@ tear_down_sched_fiber(strand_fiber_t *sched)
 }
 
 /*
- * set_up_fiber — allocate a stack and initialise a fiber context so that
+ * set_up_fiber - allocate a stack and initialise a fiber context so that
  * the first strand_context_switch to it begins at entry(arg).
  * Returns 0 on success, -1 on failure.
  */
@@ -113,7 +113,7 @@ fiber_01(void *arg)
 	(void)arg;
 	g_switch_01_entered = 1;
 	strand_context_switch(&g_tf_01.fiber, g_sched_01);
-	/* Must not be reached — fiber must not return to trampoline. */
+	/* Must not be reached - fiber must not return to trampoline. */
 	abort();
 }
 
@@ -271,7 +271,7 @@ static void
 fiber_04(void *arg)
 {
 	(void)arg;
-	/* Switching MXCSR FTZ flag (bit 15) — harmless test mutation. */
+	/* Switching MXCSR FTZ flag (bit 15) - harmless test mutation. */
 	write_mxcsr(read_mxcsr() | 0x8000u);
 	strand_context_switch(&g_tf_04.fiber, g_sched_04);
 	abort();
@@ -324,7 +324,7 @@ static void
 fiber_04(void *arg)
 {
 	(void)arg;
-	/* Set DN (default NaN) bit in FPCR — bit 25, harmless mutation. */
+	/* Set DN (default NaN) bit in FPCR - bit 25, harmless mutation. */
 	write_fpcr(read_fpcr() | (1UL << 25));
 	strand_context_switch(&g_tf_04.fiber, g_sched_04);
 	abort();
@@ -368,7 +368,7 @@ test_context_fpcr_preserved(void)
  * x86_64 (SysV AMD64): at the call-site sp%16==0, the `call` instruction
  * pushes 8 bytes so sp%16==8 at function entry; the standard prologue
  * (`push rbp`) then decrements sp by another 8, leaving sp%16==0 inside
- * the function body — which is what this test measures.
+ * the function body - which is what this test measures.
  *
  * AArch64 (AAPCS64): sp must be 16-byte aligned at all times; the
  * prologue (`stp x29,x30,[sp,#-N]!`) preserves alignment, so sp%16==0
@@ -619,7 +619,7 @@ test_x87_unsupported_documented(void)
 }
 
 /* =========================================================================
- * Suite runner — called from run_tests.c
+ * Suite runner - called from run_tests.c
  * =========================================================================
  */
 

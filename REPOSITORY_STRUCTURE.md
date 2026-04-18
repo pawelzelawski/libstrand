@@ -9,7 +9,7 @@ libstrand/
 ├── .clang-tidy                 # Static analysis configuration
 ├── README.md                   # Embedder-facing introduction and quickstart
 ├── PROJECT.md                  # Overview, goals, scope, design philosophy
-├── ARCHITECTURE.md             # Full technical architecture — layers, state machines,
+├── ARCHITECTURE.md             # Full technical architecture - layers, state machines,
 │                               #   platform specifics, data structures, decision rationale
 ├── TECH_STACK.md               # Build system, compiler flags, assembly conventions, tools
 ├── CODING_STANDARDS.md         # C style, assembly conventions, atomics, safety patterns
@@ -29,7 +29,7 @@ installs exactly two files: `libstrand.a` into `$(LIBDIR)` and
 
 ---
 
-## 2. include/ — Public Header
+## 2. include/ - Public Header
 
 ```
 include/
@@ -49,17 +49,17 @@ include/
 
 ---
 
-## 3. src/ — Library Source Files
+## 3. src/ - Library Source Files
 
 Library source is organised by layer. Each layer is a set of `.c` files with
 corresponding internal `.h` files. Assembly lives in `src/arch/`. The public
-API (`include/strand.h`) is the only header embedders ever include — internal
+API (`include/strand.h`) is the only header embedders ever include - internal
 headers are never installed and never included by callers.
 
 ```
 src/
 │
-│   — Internal shared definitions —
+│   - Internal shared definitions -
 │
 ├── strand_internal.h   # Internal shared types, forward declarations,
 │                       #   and compile-time assertions.
@@ -71,18 +71,18 @@ src/
 │                       # All _Static_assert size and offset checks.
 │                       #   Critically: sizeof(strand_context_t) ==
 │                       #   STRAND_CONTEXT_SIZE and offsetof(strand_fiber_t,
-│                       #   context) == 0 — assembly stubs depend on these.
+│                       #   context) == 0 - assembly stubs depend on these.
 │                       # STRAND_DEBUG_ASSERT macro definition.
-│                       # NOT included by embedders — internal only.
+│                       # NOT included by embedders - internal only.
 │                       # See CODING_STANDARDS.md §1.3 for assertion rules.
 │
-│   — Layer 1: Execution Contexts —
+│   - Layer 1: Execution Contexts -
 │
 ├── arch/
 │   ├── x86_64/
 │   │   └── strand_context.S    # x86_64 context save and restore.
 │   │                           # Saves and restores: rbx, rbp, r12–r15, rsp.
-│   │                           # XMM registers NOT saved — all caller-saved
+│   │                           # XMM registers NOT saved - all caller-saved
 │   │                           #   under SysV AMD64 ABI. See ARCHITECTURE.md §3.2.
 │   │                           # Complete CFI annotations throughout.
 │   │                           # Exports: strand_context_swap(old, new).
@@ -105,7 +105,7 @@ src/
 │                       #   __sanitizer_finish_switch_fiber (after),
 │                       #   __tsan_switch_to_fiber (TSan builds).
 │                       # Valgrind stack registration/deregistration macros called
-│                       #   at stack alloc and dealloc — not in this file but
+│                       #   at stack alloc and dealloc - not in this file but
 │                       #   documented here as the Layer 1 boundary.
 │                       # strand_context_init(): fabricate initial context for a
 │                       #   new fiber stack so that strand_context_swap to it
@@ -113,16 +113,16 @@ src/
 │                       # See ARCHITECTURE.md §3.4, §3.7.
 │
 ├── strand_context.h    # Layer 1 internal interface.
-│                       # strand_context_t definition — register save area.
+│                       # strand_context_t definition - register save area.
 │                       # strand_context_swap(), strand_context_init() declarations.
 │                       # STRAND_CONTEXT_SIZE constant (used in _Static_assert).
 │
-│   — Layer 2: Fiber Scheduler —
+│   - Layer 2: Fiber Scheduler -
 │
 ├── strand_fiber.c      # Fiber descriptor lifecycle and stack cache.
 │                       # Fiber descriptor allocation and initialisation:
-│                       #   fiber_alloc() — from dead pool if available, else malloc.
-│                       #   fiber_free() — return descriptor to dead pool.
+│                       #   fiber_alloc() - from dead pool if available, else malloc.
+│                       #   fiber_free() - return descriptor to dead pool.
 │                       # Generation counter increment on descriptor reuse.
 │                       # Stack allocation: stack_alloc() via mmap + mprotect guard.
 │                       # Stack cache: per-scheduler cache, cap 64 stacks (default),
@@ -146,15 +146,15 @@ src/
 │                       # fiber_state_t enum (FIBER_NEW through FIBER_FINISHED).
 │                       # strand_fiber_handle_t struct (ptr + generation).
 │                       # fiber_alloc(), fiber_free(), stack_alloc(), stack_free().
-│                       # fiber_handle_validate() inline — null check + generation.
+│                       # fiber_handle_validate() inline - null check + generation.
 │                       # run_queue_push(), run_queue_pop(), run_queue_len().
 │
 ├── strand_sched.c      # Fiber scheduler: Layer 2 operating modes.
 │                       # strand_scheduler_advance(): five-step nonblocking pass.
-│                       #   Step 1: inject queue drain — move to run queue FIFO.
-│                       #   Step 2: timer heap — expire deadlines, move to run queue.
-│                       #   Step 3: wakeup fd drain — read and discard control bytes.
-│                       #   Step 4: I/O poll timeout=0 — move ready fibers to queue.
+│                       #   Step 1: inject queue drain - move to run queue FIFO.
+│                       #   Step 2: timer heap - expire deadlines, move to run queue.
+│                       #   Step 3: wakeup fd drain - read and discard control bytes.
+│                       #   Step 4: I/O poll timeout=0 - move ready fibers to queue.
 │                       #   Step 5: run up to budget fibers (default 64).
 │                       #   Returns SCHED_PROGRESS or SCHED_IDLE + next deadline.
 │                       # strand_scheduler_run(): blocking worker mode loop.
@@ -178,7 +178,7 @@ src/
 │                       # Timer heap types and operations.
 │                       # scheduler_advance_step_*() internal function declarations.
 │
-│   — Layer 3: I/O Integration —
+│   - Layer 3: I/O Integration -
 │
 ├── strand_poller.c     # I/O multiplexing: epoll (Linux) and kqueue (OpenBSD).
 │                       # fd waiter table: open-addressed hash table.
@@ -218,18 +218,18 @@ src/
 │                       #   wake affected waiters.
 │                       # fd_waiter_table_t and related types.
 │
-│   — Layer 4: Multi-Worker Runtime —
+│   - Layer 4: Multi-Worker Runtime -
 │
 ├── strand_inject.c     # Inject queue: bounded MPSC queue, one per worker.
 │                       # Fixed-capacity ring buffer allocated at scheduler init.
 │                       # inject_queue_push(): enqueue with exponential backoff
-│                       #   on full — never drops items silently.
+│                       #   on full - never drops items silently.
 │                       #   Release memory ordering on enqueue.
 │                       # inject_queue_pop(): acquire memory ordering on dequeue.
 │                       #   Establishes happens-before with result_slot writes
 │                       #   in the offload completion path.
 │                       # inject_queue_drain(): move all queued items to the
-│                       #   scheduler's run queue — called in advance Step 1.
+│                       #   scheduler's run queue - called in advance Step 1.
 │                       # See ARCHITECTURE.md §6.3, §6.7.
 │
 ├── strand_inject.h     # Inject queue internal interface.
@@ -254,7 +254,7 @@ src/
 │                       #   registered or if shutdown begun.
 │                       # CPU affinity: pthread_setaffinity_np on Linux when
 │                       #   worker_config.cpu_affinity is set. Not available on
-│                       #   OpenBSD — documented difference.
+│                       #   OpenBSD - documented difference.
 │                       # Public API: strand_runtime_init, strand_runtime_destroy,
 │                       #   strand_worker_start.
 │                       # See ARCHITECTURE.md §6.1, §6.2.
@@ -266,7 +266,7 @@ src/
 │
 ├── strand_offload.c    # Blocking syscall offload pool.
 │                       # Optional pool of plain OS threads. Not initialised by
-│                       #   default — strand_offload_pool_init() required.
+│                       #   default - strand_offload_pool_init() required.
 │                       # Work queue: mutex-protected list of pending work items.
 │                       # strand_fiber_offload(): allocate work item (refcount=2,
 │                       #   state=PENDING), park fiber, enqueue work item.
@@ -277,7 +277,7 @@ src/
 │                       #   Only one party wins. See ARCHITECTURE.md §6.6.
 │                       # Memory ordering: release on CAS and inject enqueue;
 │                       #   acquire on inject dequeue. See ARCHITECTURE.md §6.7.
-│                       # EAGAIN when pool is full — caller must yield before retry.
+│                       # EAGAIN when pool is full - caller must yield before retry.
 │                       # strand_offload_pool_init(), strand_offload_pool_destroy().
 │                       # Public API: strand_fiber_offload, strand_offload_pool_init,
 │                       #   strand_offload_pool_destroy.
@@ -288,7 +288,7 @@ src/
 │                       # offload_item_alloc(), offload_item_release().
 │                       # offload_pool_submit(), offload_pool_worker_thread().
 │
-│   — Layer 5: Coordination Primitives —
+│   - Layer 5: Coordination Primitives -
 │
 ├── strand_scope.c      # Structured concurrency scopes.
 │                       # strand_scope_open(): initialise control block,
@@ -297,7 +297,7 @@ src/
 │                       #   append handle to spawn-order list, increment
 │                       #   live_child_count.
 │                       # strand_scope_wait(): block until SCOPE_COMPLETED.
-│                       #   Terminal — no follow-up.
+│                       #   Terminal - no follow-up.
 │                       # strand_scope_wait_timeout(): block until SCOPE_COMPLETED
 │                       #   or deadline. Non-terminal if timeout fires.
 │                       # strand_scope_cancel(): transition ACTIVE -> CANCELLING,
@@ -330,12 +330,12 @@ src/
 
 ---
 
-## 4. tests/ — Unit and Integration Tests
+## 4. tests/ - Unit and Integration Tests
 
 ```
 tests/
 │
-├── test_harness.h      # Minimal test harness — no external framework.
+├── test_harness.h      # Minimal test harness - no external framework.
 │                       # RUN(name, fn) macro: calls fn(), tracks pass/fail.
 │                       # Each test function returns 0 on success, non-zero on
 │                       #   failure. Test binary exits 0 if all pass, 1 if any fail.
@@ -345,7 +345,7 @@ tests/
 ├── run_tests.c         # Test binary entry point.
 │                       # Calls RUN() for every test function across all suites.
 │                       # Prints summary and exits with pass/fail code.
-│                       # Links against libstrand.a — verifies exported symbols.
+│                       # Links against libstrand.a - verifies exported symbols.
 │
 ├── test_layer1.c       # Layer 1: execution context correctness.
 │                       # Context switch preserves all callee-saved GPRs.
@@ -360,17 +360,17 @@ tests/
 │                       #   switch back, verify registers unchanged.
 │
 ├── test_layer2.c       # Layer 2: scheduler operating modes.
-│                       # strand_scheduler_advance is nonblocking — returns
+│                       # strand_scheduler_advance is nonblocking - returns
 │                       #   without blocking even with no work.
 │                       # strand_scheduler_run blocks until strand_scheduler_stop.
-│                       # strand_scheduler_stop writes wakeup fd — blocked worker
+│                       # strand_scheduler_stop writes wakeup fd - blocked worker
 │                       #   actually returns (not just sets flag).
-│                       # Wakeup fd bytes drained as control events — not
+│                       # Wakeup fd bytes drained as control events - not
 │                       #   misinterpreted as fiber waiter events (Step 3).
-│                       # FIFO run queue order — fibers execute in spawn order.
-│                       # Budget limiting — advance runs at most N fibers per call.
-│                       # Timer expiry — fiber_sleep_until wakes at correct time.
-│                       # Inject drain before run queue — injected fibers run first.
+│                       # FIFO run queue order - fibers execute in spawn order.
+│                       # Budget limiting - advance runs at most N fibers per call.
+│                       # Timer expiry - fiber_sleep_until wakes at correct time.
+│                       # Inject drain before run queue - injected fibers run first.
 │                       # Stack cache: stack reused on second fiber spawn.
 │                       # Stack cache cap: at cap, incoming stack freed immediately.
 │                       # Idle reclamation: cache shrinks to floor after idle period.
@@ -383,18 +383,18 @@ tests/
 │                       # Post-re-arm readiness check (Linux): if remaining direction
 │                       #   already ready when MOD is called, waiter wakes
 │                       #   immediately without waiting for next edge.
-│                       # All events from zero-timeout poll processed — not only
+│                       # All events from zero-timeout poll processed - not only
 │                       #   the rearmed fd. Test: two fds ready simultaneously;
 │                       #   verify both waiters wake.
 │                       # EV_DISPATCH (OpenBSD): filter fires on re-enable if
-│                       #   condition still true — no post-re-arm check needed.
+│                       #   condition still true - no post-re-arm check needed.
 │                       # Simultaneous read/write on same fd: both waiters wake
 │                       #   when both directions fire.
 │                       # Cancel one direction: other direction remains registered.
 │                       # Cancel both directions: fd fully free.
-│                       # Same-worker cancel: readiness wins — fd ready + cancel
+│                       # Same-worker cancel: readiness wins - fd ready + cancel
 │                       #   in same advance call, fiber wakes with ready result.
-│                       # Cross-worker cancel: cancel wins — injected cancel
+│                       # Cross-worker cancel: cancel wins - injected cancel
 │                       #   processed in Step 1 before I/O polled in Step 4.
 │                       # EPOLLERR/EPOLLHUP (Linux): fiber woken with error result.
 │                       # EV_EOF (OpenBSD): EVFILT_READ waiter woken with EOF result.
@@ -427,13 +427,13 @@ tests/
 │                       # scope_open from host thread returns error.
 │                       # scope_wait is terminal: no follow-up after return.
 │                       # scope_wait_timeout: scope state after timeout is whatever
-│                       #   state it was in when timeout fired — scope unaffected.
+│                       #   state it was in when timeout fired - scope unaffected.
 │                       # scope_abandon: OWNER_RUNTIME set; caller pointer invalid.
 │                       # scope_abandon debug check: stack-allocated scope asserts.
 │                       # Reverse-spawn-order cancellation verified.
 │                       # First-error-wins: second child failure discarded.
 │                       # CANCELLING -> COMPLETED shortcut: last child finishes
-│                       #   before walk completes — scope completes; walk
+│                       #   before walk completes - scope completes; walk
 │                       #   continues safely (stale handles are no-ops).
 │                       # walk_ref_count: control block not freed while walk active.
 │                       # Stale handle no-ops: all API calls on stale handles
@@ -461,14 +461,14 @@ tests/
                         # Simultaneous read/write on same fd with post-re-arm
                         #   readiness check: both waiters wake in same advance call.
                         # strand_scheduler_stop interrupts indefinitely blocked
-                        #   worker — verify return within bounded time.
+                        #   worker - verify return within bounded time.
                         # Guest mode: scheduler_advance drives fibers from a host
                         #   event loop; verify correct timer and I/O integration.
 ```
 
 ---
 
-## 5. bench/ — Performance Benchmarks
+## 5. bench/ - Performance Benchmarks
 
 Benchmarks are built separately under release flags. They do not run as part
 of `make test`. Each benchmark prints results with full hardware context
@@ -497,7 +497,7 @@ bench/
 │
 ├── bench_multiworker.c     # Multi-worker scaling.
 │                           # Measures: throughput vs worker count (1..N).
-│                           # Per-worker pinned model — no migration overhead.
+│                           # Per-worker pinned model - no migration overhead.
 │
 ├── bench_offload.c         # Offload pool throughput and latency.
 │                           # Measures: blocking_fn submissions per second.
@@ -510,7 +510,7 @@ bench/
 
 ---
 
-## 6. tools/ — Developer Tools
+## 6. tools/ - Developer Tools
 
 ```
 tools/
@@ -522,7 +522,7 @@ tools/
                         #   state, wakeup fd type, stack cache depth.
                         # Intended for use in test harnesses and debug builds
                         #   where the scheduler object is accessible.
-                        # Built from tools/strand_inspect.c only — links
+                        # Built from tools/strand_inspect.c only - links
                         #   against libstrand.a.
                         # Built by `make tools`.
 ```
@@ -538,7 +538,7 @@ architecture detected at build time.
 
 ```makefile
 # Key targets
-make              # same as make release — builds libstrand.a
+make              # same as make release - builds libstrand.a
 make dev          # debug build with ASan/UBSan and STRAND_DEBUG=1
 make release      # optimised build
 make test         # build and run tests/run_tests (dev flags)
@@ -554,8 +554,8 @@ make install      # install libstrand.a and include/strand.h to PREFIX
 
 Platform detected via `$(shell uname)`. Architecture detected via
 `$(shell uname -m)`. The correct assembly file from `src/arch/` is selected
-at build time. The `make install` target installs exactly two files —
-`libstrand.a` into `$(LIBDIR)` and `strand.h` into `$(INCLUDEDIR)` — and
+at build time. The `make install` target installs exactly two files -
+`libstrand.a` into `$(LIBDIR)` and `strand.h` into `$(INCLUDEDIR)` - and
 nothing else.
 
 `make dev` defines `-DSTRAND_DEBUG=1` which enables:
@@ -632,7 +632,7 @@ navigation unambiguous across the codebase.
 | Scope | `src/strand_scope.c` | `scope_` | `scope_walk_cancel()` |
 
 Public API functions (declared in `include/strand.h`) use the `strand_`
-prefix throughout. No internal function name begins with `strand_` — that
+prefix throughout. No internal function name begins with `strand_` - that
 prefix is reserved exclusively for the public API.
 
 | Public namespace | Functions |

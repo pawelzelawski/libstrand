@@ -11,10 +11,10 @@ libstrand is written in C11. No C++, no scripting languages, no code generation.
 **Why C11 over C99**:
 - `_Atomic` and `<stdatomic.h>` for lock-free operations throughout the
   scheduler, inject queues, fiber handle generation counters, offload work
-  item state, and scope lifecycle state — C11 atomics are the correct tool
+  item state, and scope lifecycle state - C11 atomics are the correct tool
   for this and avoid dependence on GCC/Clang intrinsics
 - `_Static_assert` for compile-time checks on struct sizes, register save
-  frame layout, and platform assumptions — for example, verifying that the
+  frame layout, and platform assumptions - for example, verifying that the
   context save region is the expected size before assembly stubs use it
 - `_Alignas` / `_Alignof` for aligned stack allocations and cache-line
   alignment of hot scheduler structures
@@ -27,7 +27,7 @@ _POSIX_C_SOURCE=200809L   /* POSIX.1-2008 */
 _XOPEN_SOURCE=700         /* XSI extensions */
 ```
 
-Do not define `_GNU_SOURCE` — it pulls in non-portable extensions and
+Do not define `_GNU_SOURCE` - it pulls in non-portable extensions and
 breaks OpenBSD builds.
 
 ---
@@ -35,14 +35,14 @@ breaks OpenBSD builds.
 ## 2. Assembly
 
 libstrand requires hand-written assembly for context switching. There is no
-portable pure-C alternative — saving and restoring the stack pointer and
+portable pure-C alternative - saving and restoring the stack pointer and
 callee-saved registers requires direct register access.
 
 ### 2.1 Target Files
 
 ```
-src/arch/x86_64/strand_context.S   — x86_64 context save and restore
-src/arch/arm64/strand_context.S    — AArch64 context save and restore
+src/arch/x86_64/strand_context.S   - x86_64 context save and restore
+src/arch/arm64/strand_context.S    - AArch64 context save and restore
 ```
 
 Platform selection is handled in the Makefile via `$(ARCH)` detection.
@@ -70,7 +70,7 @@ state.
 
 **x87 FP environment**: Not saved. Code that modifies x87 state (including
 `long double` computations) across yield points is unsupported. This is
-documented explicitly — programs using `long double` may see corrupted
+documented explicitly - programs using `long double` may see corrupted
 floating-point behaviour after a yield.
 
 **errno**: Saved and restored on every context switch by reading and writing
@@ -93,7 +93,7 @@ x30 (link register), sp
 ```
 v8, v9, v10, v11, v12, v13, v14, v15
 ```
-Only the lower 64 bits (d8–d15) need to be saved per AAPCS64 — the upper
+Only the lower 64 bits (d8–d15) need to be saved per AAPCS64 - the upper
 64 bits of v8–v15 are not callee-saved.
 
 **Floating-point control registers (FPCR and FPSR)**: Saved and restored on
@@ -123,7 +123,7 @@ may not apply, but the emitted FDE/unwind metadata must still be valid.
 This ensures that stack unwinding, backtraces, gdb, perf, and crash
 reporters all produce correct output on fiber stacks. Incorrect or missing
 CFI annotations produce misleading stack traces and incorrect unwind during
-exception handling. Every assembly stub is annotated correctly — this is
+exception handling. Every assembly stub is annotated correctly - this is
 not optional.
 
 ---
@@ -155,16 +155,16 @@ installation.
 #include <stddef.h>     /* offsetof, NULL, size_t */
 #include <stdatomic.h>  /* _Atomic, atomic_load, atomic_store, atomic_compare_exchange */
 #include <string.h>     /* memcpy, memset */
-#include <stdlib.h>     /* malloc, free — fiber stack and descriptor allocation */
-#include <errno.h>      /* errno — saved/restored on every context switch */
-#include <assert.h>     /* assert — debug builds only */
+#include <stdlib.h>     /* malloc, free - fiber stack and descriptor allocation */
+#include <errno.h>      /* errno - saved/restored on every context switch */
+#include <assert.h>     /* assert - debug builds only */
 ```
 
 ### 4.2 Threads
 
 ```c
-#include <pthread.h>    /* pthread_t, pthread_create — worker threads (Layer 4) */
-                        /* pthread_mutex_t — inject queue lock, worker list lock */
+#include <pthread.h>    /* pthread_t, pthread_create - worker threads (Layer 4) */
+                        /* pthread_mutex_t - inject queue lock, worker list lock */
 ```
 
 libstrand uses pthreads only for creating and managing worker OS threads and
@@ -176,21 +176,21 @@ requires no locking. `-lpthread` is required when linking.
 ### 4.3 Memory Management
 
 ```c
-#include <sys/mman.h>   /* mmap, mprotect, munmap — stack allocation and guard pages */
+#include <sys/mman.h>   /* mmap, mprotect, munmap - stack allocation and guard pages */
 ```
 
 Fiber stacks are allocated with `mmap(MAP_ANONYMOUS | MAP_PRIVATE)`. Guard
 pages are installed at the low end of each stack with
-`mprotect(PROT_NONE)` — a stack overflow hits the guard page and generates
+`mprotect(PROT_NONE)` - a stack overflow hits the guard page and generates
 a SIGSEGV rather than silently corrupting adjacent memory.
 
 Stack memory is managed by the scheduler's stack cache. The stack allocator
-never calls `malloc` — all stack memory goes through `mmap` and `munmap`.
+never calls `malloc` - all stack memory goes through `mmap` and `munmap`.
 
 ### 4.4 Clocks and Timers
 
 ```c
-#include <time.h>       /* clock_gettime(CLOCK_MONOTONIC) — timer heap deadlines */
+#include <time.h>       /* clock_gettime(CLOCK_MONOTONIC) - timer heap deadlines */
 ```
 
 `clock_gettime(CLOCK_MONOTONIC, ...)` is used exclusively for timer heap
@@ -199,11 +199,11 @@ is correct because deadlines are relative to process uptime, not wall-clock
 time. All internal timestamps are `uint64_t` nanoseconds since an arbitrary
 epoch (first clock read at scheduler initialisation).
 
-### 4.5 I/O Multiplexing — Linux
+### 4.5 I/O Multiplexing - Linux
 
 ```c
-#include <sys/epoll.h>  /* epoll_create1, epoll_ctl, epoll_wait — Layer 3 */
-#include <sys/eventfd.h>/* eventfd — cross-worker wakeup */
+#include <sys/epoll.h>  /* epoll_create1, epoll_ctl, epoll_wait - Layer 3 */
+#include <sys/eventfd.h>/* eventfd - cross-worker wakeup */
 #include <unistd.h>     /* read, write, close */
 #include <fcntl.h>      /* fcntl, O_NONBLOCK, O_CLOEXEC, FD_CLOEXEC */
 ```
@@ -215,22 +215,22 @@ re-delivery before the fiber has re-armed.
 
 **Cross-worker wakeup**: `eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)`. Writing
 any value wakes a worker blocked in `epoll_wait`. The wakeup fd is drained
-as a control event in Step 3 of `strand_scheduler_advance` — the bytes are
+as a control event in Step 3 of `strand_scheduler_advance` - the bytes are
 read and discarded, never interpreted as fiber waiter events.
 
 All internal file descriptors are created with `O_CLOEXEC` /
 `EFD_CLOEXEC`. They do not leak into child processes after `exec`.
 
-### 4.6 I/O Multiplexing — OpenBSD
+### 4.6 I/O Multiplexing - OpenBSD
 
 ```c
-#include <sys/event.h>  /* kqueue, kevent — Layer 3 */
+#include <sys/event.h>  /* kqueue, kevent - Layer 3 */
 #include <unistd.h>     /* pipe2, read, write, close */
 #include <fcntl.h>      /* O_NONBLOCK, O_CLOEXEC */
 ```
 
 **Trigger mode**: `EV_DISPATCH` without `EV_CLEAR`. EV_DISPATCH is
-level-triggered with one-shot disable — the filter fires once and is
+level-triggered with one-shot disable - the filter fires once and is
 disabled until explicitly re-enabled with `EV_ENABLE`. On re-enable, if the
 condition is still true, the filter fires again automatically. No
 post-re-arm readiness check is needed on OpenBSD (unlike Linux with
@@ -297,15 +297,15 @@ support, `-fsanitize=address,undefined`, and the sanitizer fiber hooks
 GCC is a supported secondary compiler for the C portions of the library.
 The assembly stubs use `.S` syntax compatible with both the GNU assembler
 (Linux) and LLVM's integrated assembler (OpenBSD). GCC does not support
-the TSan fiber APIs — the `make test-tsan` target requires Clang.
+the TSan fiber APIs - the `make test-tsan` target requires Clang.
 
 ### 5.3 Compiler Flags
 
 ```makefile
-# Common flags — all builds
+# Common flags - all builds
 CFLAGS_BASE = -std=c11 -Wall -Wextra -Werror -fno-omit-frame-pointer
 
-# Feature test macros — defined here, not in source
+# Feature test macros - defined here, not in source
 CFLAGS_FT   = -D_POSIX_C_SOURCE=200809L -D_XOPEN_SOURCE=700
 
 # Platform detection
@@ -328,7 +328,7 @@ ifeq ($(ARCH), aarch64)
     ASM_SRC = src/arch/arm64/strand_context.S
 endif
 
-# Development build — ASan + UBSan + debug assertions
+# Development build - ASan + UBSan + debug assertions
 CFLAGS_DEV  = $(CFLAGS_BASE) $(CFLAGS_FT) $(CFLAGS_OS) \
               -O1 -g -DSTRAND_DEBUG \
               -fsanitize=address,undefined
@@ -337,7 +337,7 @@ CFLAGS_DEV  = $(CFLAGS_BASE) $(CFLAGS_FT) $(CFLAGS_OS) \
 CFLAGS_REL  = $(CFLAGS_BASE) $(CFLAGS_FT) $(CFLAGS_OS) \
               -O2 -DNDEBUG
 
-# TSan build — mutually exclusive with ASan
+# TSan build - mutually exclusive with ASan
 CFLAGS_TSAN = $(CFLAGS_BASE) $(CFLAGS_FT) $(CFLAGS_OS) \
               -O1 -g -DSTRAND_DEBUG \
               -fsanitize=thread
@@ -357,10 +357,10 @@ and for backtraces in crash reports. This flag is never relaxed.
 ### 5.4 Build Targets
 
 ```makefile
-make              # Release build — libstrand.a
-make dev          # Development build — libstrand.a with ASan/UBSan
+make              # Release build - libstrand.a
+make dev          # Development build - libstrand.a with ASan/UBSan
 make release      # Explicit release build
-make shared       # Shared library — libstrand.so
+make shared       # Shared library - libstrand.so
 make test         # Build and run unit and integration tests (dev flags)
 make test-tsan    # Build and run tests under ThreadSanitizer (Clang only)
 make bench        # Build and run performance benchmarks (release flags)
@@ -442,7 +442,7 @@ speed). Numbers are not comparable across machines without this context.
 
 ### 7.1 Valgrind (Linux only)
 
-**Purpose**: Memory error detection — leaks, use-after-free, uninitialised
+**Purpose**: Memory error detection - leaks, use-after-free, uninitialised
 reads.
 
 **Installation**: `apt install valgrind`
@@ -473,12 +473,12 @@ VALGRIND_STACK_DEREGISTER(valgrind_stack_id);
 ```
 
 These macros are no-ops in non-Valgrind builds. They are compiled in
-unconditionally when the header is present — detected at build time via
+unconditionally when the header is present - detected at build time via
 `$(shell pkg-config --exists valgrind && echo 1)` or equivalent header
 check.
 
 All tests must pass Valgrind clean. Run on Linux before every commit.
-Valgrind is not available on OpenBSD — use the ASan build there.
+Valgrind is not available on OpenBSD - use the ASan build there.
 
 ### 7.2 AddressSanitizer + UndefinedBehaviorSanitizer
 
@@ -506,7 +506,7 @@ correctly tracks the active stack across context switches:
 
 `__sanitizer_start_switch_fiber` is called immediately before every context
 switch and `__sanitizer_finish_switch_fiber` is called immediately after.
-This is required — without it, ASan incorrectly reports valid accesses to
+This is required - without it, ASan incorrectly reports valid accesses to
 the new stack as stack-buffer-overflows, producing false positives that
 obscure real bugs.
 
@@ -518,7 +518,7 @@ Additional `STRAND_DEBUG` ASan behaviour:
 
 **Purpose**: Data race detection.
 
-TSan and ASan are mutually exclusive — TSan runs as a separate target.
+TSan and ASan are mutually exclusive - TSan runs as a separate target.
 
 ```sh
 make test-tsan
@@ -554,7 +554,7 @@ APIs. The `make test-tsan` target fails gracefully when built with GCC.
 
 **Purpose**: Static analysis.
 
-**Installation**: `apt install clang-tidy` (Linux) — included with Clang on
+**Installation**: `apt install clang-tidy` (Linux) - included with Clang on
 OpenBSD.
 
 ```sh

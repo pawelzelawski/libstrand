@@ -3,8 +3,8 @@
 ## Status Overview
 
 **Last Updated**: 2026-04-18
-**Current Phase**: Phase 5 — Layer 4: Multi-Worker Runtime
-**Next Task**: Phase 5 — Task 5.6: strand_offload_pool_init and offload pool
+**Current Phase**: Phase 5 - Layer 4: Multi-Worker Runtime
+**Next Task**: Phase 5 - Task 5.6: strand_offload_pool_init and offload pool
 
 ### Phase Summary
 
@@ -14,10 +14,10 @@
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1–4.5 done; Linux + OpenBSD clean |
-| 4 | Layer 3: I/O Integration | NOT STARTED | — | epoll/kqueue, fd parking, re-arm protocol |
+| 4 | Layer 3: I/O Integration | NOT STARTED | - | epoll/kqueue, fd parking, re-arm protocol |
 | 5 | Layer 4: Multi-Worker Runtime | IN PROGRESS | 58/58 | Tasks 5.1–5.5 done; Linux + OpenBSD clean |
-| 6 | Layer 5: Scopes and Coordination | NOT STARTED | — | Structured concurrency, fiber-local storage |
-| 7 | Hardening, Benchmarks, and Release | NOT STARTED | — | Integration tests, benchmarks, documentation |
+| 6 | Layer 5: Scopes and Coordination | NOT STARTED | - | Structured concurrency, fiber-local storage |
+| 7 | Hardening, Benchmarks, and Release | NOT STARTED | - | Integration tests, benchmarks, documentation |
 
 ### Quality Milestones
 
@@ -31,11 +31,11 @@
 | M6 | TSan clean on Linux (Clang only) | DONE (Phase 2: 10/10 tests pass under TSan) |
 | M7 | clang-format clean | DONE |
 | M8 | clang-tidy zero warnings | DONE |
-| M9 | Context switch preserves all registers — verified by test | DONE (test_context_gpr_preserved passes) |
-| M10 | scheduler_advance is nonblocking — verified by test | DONE (test_advance_nonblocking passes) |
-| M11 | scheduler_stop interrupts indefinitely blocked worker — verified by test | DONE (test_scheduler_run_blocks passes) |
-| M12 | Post-re-arm readiness check correct — verified by test | NOT STARTED |
-| M13 | Offload CAS both outcomes exercised — verified by test | NOT STARTED |
+| M9 | Context switch preserves all registers - verified by test | DONE (test_context_gpr_preserved passes) |
+| M10 | scheduler_advance is nonblocking - verified by test | DONE (test_advance_nonblocking passes) |
+| M11 | scheduler_stop interrupts indefinitely blocked worker - verified by test | DONE (test_scheduler_run_blocks passes) |
+| M12 | Post-re-arm readiness check correct - verified by test | NOT STARTED |
+| M13 | Offload CAS both outcomes exercised - verified by test | NOT STARTED |
 | M14 | Scope lifecycle all state transitions verified by test | NOT STARTED |
 | M15 | Integration test suite passes: echo server, fan-out scope, offload cancel | NOT STARTED |
 
@@ -45,12 +45,12 @@
 
 Before starting any phase, read and follow these documents:
 
-- **CODING_STANDARDS.md** — KNF style, assembly conventions, atomic operations,
+- **CODING_STANDARDS.md** - KNF style, assembly conventions, atomic operations,
   safety patterns, pre-commit checklist. Every function written must comply.
-- **ARCHITECTURE.md** — The specification. Every implementation decision must
+- **ARCHITECTURE.md** - The specification. Every implementation decision must
   match what is documented there. If there is a conflict, ARCHITECTURE.md wins
-  — raise it before deviating.
-- **TECH_STACK.md** — Compiler flags, build system, sanitizer integration,
+  - raise it before deviating.
+- **TECH_STACK.md** - Compiler flags, build system, sanitizer integration,
   assembly conventions.
 
 **Bottom-up approach**: Each phase builds on the previous. Do not start a
@@ -62,7 +62,7 @@ A component without passing tests is not done.
 
 **Platform parity**: Test on both Linux and OpenBSD at each phase. Platform
 divergence caught late is much harder to fix than divergence caught at the
-phase boundary. The epoll/kqueue split is most visible in Phase 4 — do not
+phase boundary. The epoll/kqueue split is most visible in Phase 4 - do not
 defer OpenBSD testing to after Phase 4 is "working" on Linux.
 
 **Assembly first in Phase 2**: The context switch is the foundation of
@@ -71,14 +71,14 @@ is verified correct by test on both architectures. A broken context switch
 produces extremely subtle and confusing failures in higher layers.
 
 **Phase ordering rationale**: Layer 1 (Phase 2) has no dependencies. Layer 2
-(Phase 3) depends on Layer 1. Layer 3 (Phase 4) depends on Layer 2 — it needs
+(Phase 3) depends on Layer 1. Layer 3 (Phase 4) depends on Layer 2 - it needs
 a working scheduler to park and wake fibers. Layer 4 (Phase 5) extends Layer 2
 and Layer 3 with multi-worker plumbing. Layer 5 (Phase 6) depends on all lower
 layers. Phases cannot be reordered.
 
 ---
 
-## Phase 1 — Foundation
+## Phase 1 - Foundation
 
 **Goal**: Build system works on both platforms and both architectures. Repository
 structure is in place. Test harness compiles and runs. Skeleton headers and source
@@ -86,18 +86,18 @@ files are in place with correct include structure. `_Static_assert` placeholders
 are in place. Code compiles clean with zero warnings.
 
 **Reference documents**:
-- TECH_STACK.md §5 — Makefile structure, compiler flags, build targets
-- TECH_STACK.md §6 — test harness structure
-- CODING_STANDARDS.md §1.2 — file organisation and include order
-- CODING_STANDARDS.md §1.3 — `_Static_assert` placement
-- REPOSITORY_STRUCTURE.md §1 — top-level directory layout
-- REPOSITORY_STRUCTURE.md §3 — source file list
+- TECH_STACK.md §5 - Makefile structure, compiler flags, build targets
+- TECH_STACK.md §6 - test harness structure
+- CODING_STANDARDS.md §1.2 - file organisation and include order
+- CODING_STANDARDS.md §1.3 - `_Static_assert` placement
+- REPOSITORY_STRUCTURE.md §1 - top-level directory layout
+- REPOSITORY_STRUCTURE.md §3 - source file list
 
 **Prerequisite**: Phase 0 complete.
 
 ### Tasks
 
-**1.1 — Repository skeleton** ✓ DONE
+**1.1 - Repository skeleton** ✓ DONE
 - Create directory structure per REPOSITORY_STRUCTURE.md §1:
   `src/`, `src/arch/x86_64/`, `src/arch/arm64/`, `include/`, `tests/`,
   `bench/`, `tools/`
@@ -117,7 +117,7 @@ are in place. Code compiles clean with zero warnings.
 - Verify `make dev` and `make release` compile all stubs with zero warnings
   on Linux and OpenBSD, x86_64 and ARM64
 
-**1.2 — Test harness** ✓ DONE
+**1.2 - Test harness** ✓ DONE
 - Create `tests/test_harness.h` with the `RUN(name, fn)` macro per
   TECH_STACK.md §6.1
 - Create `tests/run_tests.c` as the test binary entry point
@@ -126,8 +126,8 @@ are in place. Code compiles clean with zero warnings.
 - Confirm `make valgrind` runs the test binary under Valgrind and exits clean
   on Linux
 
-**1.3 — _Static_assert placeholders** ✓ DONE
-- Add placeholder `_Static_assert(1 == 1, "placeholder — replaced in Phase 2")`
+**1.3 - _Static_assert placeholders** ✓ DONE
+- Add placeholder `_Static_assert(1 == 1, "placeholder - replaced in Phase 2")`
   entries in `src/strand_internal.h` for every assertion listed in
   CODING_STANDARDS.md §1.3. They will be replaced with real checks as
   struct definitions land in Phase 2 onward.
@@ -146,7 +146,7 @@ are in place. Code compiles clean with zero warnings.
 
 ---
 
-## Phase 2 — Layer 1: Execution Contexts
+## Phase 2 - Layer 1: Execution Contexts
 
 **Goal**: Context switching between two execution contexts works correctly on
 all four targets (Linux/OpenBSD × x86_64/ARM64). All callee-saved registers
@@ -157,54 +157,54 @@ sanitizer hooks are in place and verified. The `strand_context_init` function
 correctly fabricates an initial context so that the first switch to a new
 stack begins execution at the fiber entry function.
 
-No scheduler, no fibers, no run queue — this phase tests the raw context
+No scheduler, no fibers, no run queue - this phase tests the raw context
 switch in isolation.
 
 **Reference documents**:
-- ARCHITECTURE.md §3 — full Layer 1 specification
-- ARCHITECTURE.md §3.2 — x86_64 register set and ABI rationale
-- ARCHITECTURE.md §3.3 — AArch64 register set
-- ARCHITECTURE.md §3.4 — errno and FP control registers
-- ARCHITECTURE.md §3.5 — guard pages
-- ARCHITECTURE.md §3.6 — CFI annotation requirements
-- ARCHITECTURE.md §3.7 — sanitizer hooks (ASan, TSan, Valgrind)
-- CODING_STANDARDS.md §2 — assembly conventions and CFI rules
-- TECH_STACK.md §7.2 — ASan fiber hook macros
-- TECH_STACK.md §7.3 — TSan fiber hook macros
-- TECH_STACK.md §7.1 — Valgrind stack registration macros
+- ARCHITECTURE.md §3 - full Layer 1 specification
+- ARCHITECTURE.md §3.2 - x86_64 register set and ABI rationale
+- ARCHITECTURE.md §3.3 - AArch64 register set
+- ARCHITECTURE.md §3.4 - errno and FP control registers
+- ARCHITECTURE.md §3.5 - guard pages
+- ARCHITECTURE.md §3.6 - CFI annotation requirements
+- ARCHITECTURE.md §3.7 - sanitizer hooks (ASan, TSan, Valgrind)
+- CODING_STANDARDS.md §2 - assembly conventions and CFI rules
+- TECH_STACK.md §7.2 - ASan fiber hook macros
+- TECH_STACK.md §7.3 - TSan fiber hook macros
+- TECH_STACK.md §7.1 - Valgrind stack registration macros
 
 **Prerequisite**: Phase 1 complete.
 
 ### Tasks
 
-**2.1 — strand_context_t and strand_context.h** ✓ DONE
+**2.1 - strand_context_t and strand_context.h** ✓ DONE
 - Define `strand_context_t` in `src/strand_context.h`: register save area
   sized to hold all callee-saved registers for the current architecture,
   plus the stack pointer
 - Define `STRAND_CONTEXT_SIZE` constant equal to `sizeof(strand_context_t)`
 - Replace placeholder `_Static_assert` with the real check:
   `_Static_assert(sizeof(strand_context_t) == STRAND_CONTEXT_SIZE, ...)`
-- Add `_Static_assert(offsetof(strand_fiber_t, context) == 0, ...)` —
+- Add `_Static_assert(offsetof(strand_fiber_t, context) == 0, ...)` -
   placeholder until `strand_fiber_t` is defined in Phase 3; note the
   dependency in a comment
 
-**2.2 — x86_64 assembly: strand_context.S** ✓ DONE
+**2.2 - x86_64 assembly: strand_context.S** ✓ DONE
 - Implement `strand_context_swap(strand_context_t *old, strand_context_t *new)`
   in `src/arch/x86_64/strand_context.S`:
   - Save callee-saved GPRs to `old`: rbx, rbp, r12, r13, r14, r15
   - Save rsp to `old`
   - Load rsp from `new`
   - Restore callee-saved GPRs from `new`
-  - Return (ret uses the restored rsp stack — jumps to wherever `new` was
+  - Return (ret uses the restored rsp stack - jumps to wherever `new` was
     suspended or to the fabricated entry point)
 - Emit valid unwind info for the switch stub. For stubs that save registers
   into a context struct (not onto the current stack), `.cfi_startproc` and
   `.cfi_endproc` are required and `.cfi_offset`/`.cfi_restore` are used only
   where CFA-relative stack saves actually exist
-- No XMM saves — correct under SysV AMD64 ABI. Add a comment confirming
+- No XMM saves - correct under SysV AMD64 ABI. Add a comment confirming
   this explicitly per ARCHITECTURE.md §3.2
 
-**2.3 — AArch64 assembly: strand_context.S** ✓ DONE
+**2.3 - AArch64 assembly: strand_context.S** ✓ DONE
 - Implement `strand_context_swap` in `src/arch/arm64/strand_context.S`:
   - Save callee-saved GPRs: x19–x28, x29 (fp), x30 (lr), sp
   - Save callee-saved FP/SIMD lower 64-bit halves: d8–d15
@@ -212,11 +212,11 @@ switch in isolation.
   - Return via restored lr
 - Emit valid unwind info for the switch stub as above
 
-**2.4 — C wrapper: strand_context.c** ✓ DONE
+**2.4 - C wrapper: strand_context.c** ✓ DONE
 - Implement `strand_context_switch(strand_fiber_t *from, strand_fiber_t *to)`:
   - Save errno before switch: `int saved_errno = errno`
   - Save MXCSR (x86_64) via `_mm_getcsr()` or `stmxcsr` inline asm; or
-    save FPCR/FPSR (AArch64) via `mrs` inline asm — into `from->fp_ctrl`
+    save FPCR/FPSR (AArch64) via `mrs` inline asm - into `from->fp_ctrl`
   - Call ASan hook before switch:
     `__sanitizer_start_switch_fiber(NULL, to->stack_base, to->stack_size)`
   - Call `strand_context_swap(&from->context, &to->context)`
@@ -226,10 +226,10 @@ switch in isolation.
     `__tsan_switch_to_fiber(to->tsan_fiber, 0)`
   - Restore MXCSR or FPCR/FPSR from `to->fp_ctrl`
   - Restore errno: `errno = saved_errno`
-  - All sanitizer hooks wrapped in `#ifdef` guards — no-ops in non-sanitizer
+  - All sanitizer hooks wrapped in `#ifdef` guards - no-ops in non-sanitizer
     builds per TECH_STACK.md §7.2 and §7.3
 
-**2.5 — strand_context_init** ✓ DONE
+**2.5 - strand_context_init** ✓ DONE
 - Implement `strand_context_init(strand_context_t *ctx, void *stack_top,
   strand_fiber_fn_t entry, void *arg)`:
   - Fabricate the initial saved-register state so that the first
@@ -239,21 +239,21 @@ switch in isolation.
     other callee-saved registers
   - On AArch64: set x30 (lr) to `entry`, x0 to `arg`, sp to `stack_top`
     aligned to 16 bytes
-  - Correct alignment is critical — the first instruction of `entry` must
+  - Correct alignment is critical - the first instruction of `entry` must
     observe a properly aligned stack
 
-**2.6 — Stack allocation with guard pages** ✓ DONE
+**2.6 - Stack allocation with guard pages** ✓ DONE
 - Implement `stack_alloc(size_t stack_size)` in `src/strand_fiber.c`:
   - `mmap(NULL, stack_size + PAGE_SIZE, PROT_READ|PROT_WRITE, MAP_ANONYMOUS|MAP_PRIVATE, -1, 0)`
   - Check for `MAP_FAILED`
-  - `mprotect(base, PAGE_SIZE, PROT_NONE)` — guard page at low end
+  - `mprotect(base, PAGE_SIZE, PROT_NONE)` - guard page at low end
   - On failure: `munmap` and return NULL
   - Register with Valgrind: `VALGRIND_STACK_REGISTER(base + PAGE_SIZE, base + PAGE_SIZE + stack_size)`
 - Implement `stack_free(void *base, size_t stack_size)`:
   - `VALGRIND_STACK_DEREGISTER(valgrind_stack_id)`
   - `munmap(base, stack_size + PAGE_SIZE)`
 
-**2.7 — TSan fiber handle lifecycle** ✓ DONE
+**2.7 - TSan fiber handle lifecycle** ✓ DONE
 - In `strand_context.c` or `strand_fiber.c`, on fiber creation:
   `fiber->tsan_fiber = __tsan_create_fiber(0)` (TSan builds only)
 - On fiber destruction: `__tsan_destroy_fiber(fiber->tsan_fiber)`
@@ -291,7 +291,7 @@ File: `tests/test_layer1.c`
   explicit warning that x87 FP state (including `long double`) is not saved
   across context switches and that programs using `long double` across yield
   points may see corrupted FP behaviour. This is a documentation correctness
-  test — it confirms the warning is present, not merely assumed.
+  test - it confirms the warning is present, not merely assumed.
 
 ### Phase 2 Completion Criteria
 
@@ -300,9 +300,9 @@ File: `tests/test_layer1.c`
 - [x] All Layer 1 tests pass on OpenBSD amd64
 - [x] All Layer 1 tests pass on OpenBSD arm64
 - [x] Valgrind clean on Linux (stack registration/deregistration correct)
-- [x] ASan clean — start/finish_switch_fiber hooks suppress false positives
-- [x] TSan clean — switch_to_fiber hooks in place; 10/10 tests pass under TSan
-- [x] Assembly stubs emit valid CFI/FDE unwind info — verified by
+- [x] ASan clean - start/finish_switch_fiber hooks suppress false positives
+- [x] TSan clean - switch_to_fiber hooks in place; 10/10 tests pass under TSan
+- [x] Assembly stubs emit valid CFI/FDE unwind info - verified by
   `readelf --debug-dump=frames` for `strand_context_swap`
 - [x] Quality milestones M4, M5, M9 confirmed
 
@@ -321,50 +321,50 @@ File: `tests/test_layer1.c`
 
 ---
 
-## Phase 3 — Layer 2: Fiber Scheduler
+## Phase 3 - Layer 2: Fiber Scheduler
 
 **Goal**: A single-threaded scheduler correctly manages multiple fibers in
 guest mode and worker mode. Fibers run cooperatively, FIFO order is maintained,
 budget limiting works, and timers fire at the correct deadline. The stack cache
 correctly reuses stacks and applies the cap and idle reclamation policy.
 `strand_fiber_cancel` transitions fibers out of all parked states. The fiber
-state machine transitions are correct throughout. This phase uses no real I/O —
+state machine transitions are correct throughout. This phase uses no real I/O -
 the poller is stubbed out for scheduler-only testing.
 
 **Reference documents**:
-- ARCHITECTURE.md §4.2 — scheduler operating modes (advance, run, stop)
-- ARCHITECTURE.md §4.3 — host loop integration pattern
-- ARCHITECTURE.md §4.4 — fairness and budget
-- ARCHITECTURE.md §4.5 — fiber state machine and transitions
-- ARCHITECTURE.md §4.6 — fiber handle ABA protection
-- ARCHITECTURE.md §4.7 — TLS safety
-- ARCHITECTURE.md §13 — stack cache policy (64 stacks, idle reclamation)
-- CODING_STANDARDS.md §4 — atomic operations (generation counter)
-- CODING_STANDARDS.md §6.2 — SAFETY comments
+- ARCHITECTURE.md §4.2 - scheduler operating modes (advance, run, stop)
+- ARCHITECTURE.md §4.3 - host loop integration pattern
+- ARCHITECTURE.md §4.4 - fairness and budget
+- ARCHITECTURE.md §4.5 - fiber state machine and transitions
+- ARCHITECTURE.md §4.6 - fiber handle ABA protection
+- ARCHITECTURE.md §4.7 - TLS safety
+- ARCHITECTURE.md §13 - stack cache policy (64 stacks, idle reclamation)
+- CODING_STANDARDS.md §4 - atomic operations (generation counter)
+- CODING_STANDARDS.md §6.2 - SAFETY comments
 
 **Prerequisite**: Phase 2 complete.
 
 ### Tasks
 
-**3.1 — strand_fiber_t descriptor** ✓ DONE
+**3.1 - strand_fiber_t descriptor** ✓ DONE
 - Define `strand_fiber_t` in `src/strand_internal.h`:
-  - `strand_context_t context` — must be first field (offset 0)
-  - `fiber_state_t state` — `_Atomic fiber_state_t`
+  - `strand_context_t context` - must be first field (offset 0)
+  - `fiber_state_t state` - `_Atomic fiber_state_t`
   - `uint64_t generation`
   - `void *stack_base`, `size_t stack_size`
-  - `void *local_ptr` — fiber-local storage slot
+  - `void *local_ptr` - fiber-local storage slot
   - `strand_destructor_t local_dtor`
-  - `strand_scope_t *scope` — owning scope, NULL if detached
-  - `struct strand_fiber *next` — intrusive list for run queue and scope lists
+  - `strand_scope_t *scope` - owning scope, NULL if detached
+  - `struct strand_fiber *next` - intrusive list for run queue and scope lists
   - TSan handle: `void *tsan_fiber` (in TSan builds)
   - Valgrind stack id: `unsigned long valgrind_stack_id`
 - Activate `_Static_assert(offsetof(strand_fiber_t, context) == 0, ...)`
 - Add `_Static_assert` for `strand_fiber_handle_t` size (16 bytes: ptr + generation)
-- Implement `fiber_alloc()` / `fiber_free()` — dead pool recycling with
+- Implement `fiber_alloc()` / `fiber_free()` - dead pool recycling with
   generation counter increment on reuse
 - Implement `fiber_handle_validate()` inline: null check + generation match
 
-**3.2 — strand_scheduler_t and run queue** ✓ DONE
+**3.2 - strand_scheduler_t and run queue** ✓ DONE
 - Define `strand_scheduler_t` in `src/strand_internal.h`:
   - Run queue: pointer to head and tail of intrusive linked list
   - `run_queue_len`: current length
@@ -377,38 +377,38 @@ the poller is stubbed out for scheduler-only testing.
   - Stack cache: array of `void *` pointers, `cache_len`, `cache_cap` (default 64),
     idle reclamation state: last_idle_ns timestamp, floor (default 8)
   - Dead pool: linked list of reusable `strand_fiber_t` descriptors
-  - `strand_fiber_t *current_fiber` — currently running fiber, NULL if in scheduler
-- Implement `run_queue_push(sched, f)` — append to tail
-- Implement `run_queue_pop(sched)` — remove from head, return NULL if empty
+  - `strand_fiber_t *current_fiber` - currently running fiber, NULL if in scheduler
+- Implement `run_queue_push(sched, f)` - append to tail
+- Implement `run_queue_pop(sched)` - remove from head, return NULL if empty
 
-**3.3 — strand_scheduler_advance** ✓ DONE
+**3.3 - strand_scheduler_advance** ✓ DONE
 - Implement the five-step advance per ARCHITECTURE.md §4.2:
-  - Step 1: inject queue drain (no-op stub in Phase 3 — real in Phase 5)
-  - Step 2: timer heap — expire all fibers whose `deadline_ns <= now_ns`,
+  - Step 1: inject queue drain (no-op stub in Phase 3 - real in Phase 5)
+  - Step 2: timer heap - expire all fibers whose `deadline_ns <= now_ns`,
     move to run queue tail
-  - Step 3: wakeup fd drain — `read()` all available bytes, discard;
+  - Step 3: wakeup fd drain - `read()` all available bytes, discard;
     add `SAFETY:` comment: these bytes are control signals, not fd events
-  - Step 4: poll I/O with zero timeout (no-op stub — real in Phase 4)
+  - Step 4: poll I/O with zero timeout (no-op stub - real in Phase 4)
   - Step 5: run up to `sched->budget` fibers: for each, call
     `strand_context_switch(sched->scheduler_ctx, fiber)`, set
     `sched->current_fiber = f` before switch, clear after return
 - Return `SCHED_PROGRESS` if any fibers ran or any timer fired; else `SCHED_IDLE`
   with next timer deadline from heap peek, or `UINT64_MAX` if no timers
 
-**3.4 — strand_scheduler_run and strand_scheduler_stop** ✓ DONE
+**3.4 - strand_scheduler_run and strand_scheduler_stop** ✓ DONE
 - Implement `strand_scheduler_run`: loop calling `strand_scheduler_advance`;
   when `SCHED_IDLE`, call `epoll_wait`/`kevent` on the wakeup fd only
   (poller stub) with the next deadline timeout; check stop flag after each
   iteration and return when set
 - Implement `strand_scheduler_stop`: `atomic_store(&sched->stop_flag, 1)`;
-  write 1 byte to wakeup fd — both steps required per ARCHITECTURE.md §4.2.
+  write 1 byte to wakeup fd - both steps required per ARCHITECTURE.md §4.2.
   Add `SAFETY:` comment on both steps.
 - Implement `strand_scheduler_next_deadline` and `strand_scheduler_get_fd`
 
-**3.5 — strand_fiber_spawn** ✓ DONE
+**3.5 - strand_fiber_spawn** ✓ DONE
 - Implement the within-worker path of `strand_fiber_spawn`:
-  - Check stop flag — return `STRAND_ERR_SHUTDOWN` if set
-  - Check `sched->current_fiber != NULL` — return error if called from host
+  - Check stop flag - return `STRAND_ERR_SHUTDOWN` if set
+  - Check `sched->current_fiber != NULL` - return error if called from host
     thread (Phase 3 only supports same-worker spawn; host-thread path in Phase 5)
   - `fiber_alloc()` from dead pool or malloc
   - `stack_alloc()` from cache or mmap
@@ -417,21 +417,21 @@ the poller is stubbed out for scheduler-only testing.
   - `run_queue_push(sched, f)`
   - Return handle: `{f, f->generation}`
 
-**3.6 — strand_fiber_yield** ✓ DONE
+**3.6 - strand_fiber_yield** ✓ DONE
 - Implement `strand_fiber_yield()`:
   - Assert called from a running fiber (`sched->current_fiber != NULL`)
   - Transition `f->state = FIBER_RUNNABLE`
   - Append fiber to run queue tail
-  - `strand_context_switch(f, sched->scheduler_ctx)` — switch back to scheduler
+  - `strand_context_switch(f, sched->scheduler_ctx)` - switch back to scheduler
 
-**3.7 — strand_fiber_sleep_until** ✓ DONE
+**3.7 - strand_fiber_sleep_until** ✓ DONE
 - Implement `strand_fiber_sleep_until(uint64_t deadline_ns)`:
   - Transition `f->state = FIBER_PARKED_TIMER`
   - Insert `(deadline_ns, f)` into timer heap
   - `strand_context_switch(f, sched->scheduler_ctx)`
   - On return: check for cancellation flag and return appropriate result
 
-**3.8 — strand_fiber_cancel (partial)** ✓ DONE
+**3.8 - strand_fiber_cancel (partial)** ✓ DONE
 - Implement `strand_fiber_cancel(strand_fiber_handle_t handle)` for the states
   available in Phase 3:
   - Validate handle: null check + generation check
@@ -440,24 +440,24 @@ the poller is stubbed out for scheduler-only testing.
   - `FIBER_RUNNABLE` or `FIBER_RUNNING`: set `FIBER_CANCELLATION_PENDING` flag
   - `FIBER_FINISHED`: no-op
   - Stale handle: return `STRAND_HANDLE_STALE`
-  - I/O and offload parked states: placeholder — implemented in Phases 4 and 5
+  - I/O and offload parked states: placeholder - implemented in Phases 4 and 5
 
-**3.9 — Stack cache** ✓ DONE
+**3.9 - Stack cache** ✓ DONE
 - Implemented `sched_stack_alloc` / `sched_stack_free` in `src/strand_fiber.c`
 - Updated `strand_fiber_spawn` to use `sched_stack_alloc`
 - Added idle reclamation block to `strand_scheduler_advance` (Step 5)
 - Added `pending_free_base/size/vg_id` to `strand_scheduler_t`; scheduler
   processes deferred stack free after each context switch returns (safe:
-  executing on scheduler stack, not fiber stack — ARCHITECTURE.md §13, §4.2)
+  executing on scheduler stack, not fiber stack - ARCHITECTURE.md §13, §4.2)
 - Updated `t35_switch_back` to store stack in `pending_free_*` instead of
   calling `sched_stack_free` directly (prevents munmap of live stack)
 - Updated `t35_push_fiber` and Task 3.8 helpers to use `sched_stack_alloc`
 - Tests: `test_stack_cache_reuse`, `test_stack_cache_cap`,
-  `test_idle_reclamation` — 28/28 passed Linux (ASan/UBSan, TSan, Valgrind)
-- Stack size per cache slot must match — only cache stacks of matching size.
+  `test_idle_reclamation` - 28/28 passed Linux (ASan/UBSan, TSan, Valgrind)
+- Stack size per cache slot must match - only cache stacks of matching size.
   Different sizes are not interchangeable.
 
-**3.10 — Fiber-local storage** ✓ DONE
+**3.10 - Fiber-local storage** ✓ DONE
 - Implemented `strand_fiber_local_set(sched, ptr, dtor)` in `src/strand_fiber.c`:
   sets `current_fiber->local_ptr` and `current_fiber->local_dtor`; WRONGCTX
   guard (STRAND_DEBUG_ASSERT + silent no-op in release)
@@ -467,10 +467,10 @@ the poller is stubbed out for scheduler-only testing.
 - Added `pending_free_local_ptr` / `pending_free_local_dtor` fields to
   `strand_scheduler_t`; `t35_switch_back` copies them from the fiber before
   the context switch; `strand_scheduler_advance` calls the destructor (if
-  non-NULL) and clears both fields after each fiber completes — before
+  non-NULL) and clears both fields after each fiber completes - before
   `sched_stack_free` so the destructor runs while the fiber stack is still
   mapped (ARCHITECTURE.md §4.7)
-- Tests: `test_fiber_local_set_get`, `test_fiber_local_destructor` — 30/30
+- Tests: `test_fiber_local_set_get`, `test_fiber_local_destructor` - 30/30
   passed Linux (ASan/UBSan, TSan, Valgrind clean)
 
 ### Tests for Phase 3
@@ -521,25 +521,25 @@ File: `tests/test_layer2.c`
 ### Phase 3 Completion Criteria
 
 - [x] All Layer 2 tests pass on Linux and OpenBSD, both architectures
-      — 30/30 Linux (ASan/UBSan, TSan, Valgrind); 30/30 OpenBSD
-- [x] `strand_scheduler_advance` verified nonblocking — quality milestone M10
-      — `test_advance_nonblocking` passes
-- [x] `strand_scheduler_stop` interrupts blocked worker — quality milestone M11
-      — `test_scheduler_run_blocks` passes
+      - 30/30 Linux (ASan/UBSan, TSan, Valgrind); 30/30 OpenBSD
+- [x] `strand_scheduler_advance` verified nonblocking - quality milestone M10
+      - `test_advance_nonblocking` passes
+- [x] `strand_scheduler_stop` interrupts blocked worker - quality milestone M11
+      - `test_scheduler_run_blocks` passes
 - [x] Stack cache reuse verified (mmap not called on cache hit)
-      — `test_stack_cache_reuse` passes
+      - `test_stack_cache_reuse` passes
 - [x] Generation counter increments on descriptor reuse
-      — `test_generation_increments_on_reuse` passes
+      - `test_generation_increments_on_reuse` passes
 - [x] Fiber-local destructor called on completion
-      — `test_fiber_local_destructor` passes
+      - `test_fiber_local_destructor` passes
 - [x] Valgrind clean; ASan/UBSan clean on both platforms
-      — 0 errors, 0 leaks on Linux; clean on OpenBSD
-- [x] TSan clean — context switch hooks in place
-      — 30/30 TSan (Linux)
+      - 0 errors, 0 leaks on Linux; clean on OpenBSD
+- [x] TSan clean - context switch hooks in place
+      - 30/30 TSan (Linux)
 
 ---
 
-## Phase 4 — Layer 3: I/O Integration
+## Phase 4 - Layer 3: I/O Integration
 
 **Goal**: Fibers can park on fd readiness and wake correctly when the fd
 becomes ready or is cancelled. The full epoll (Linux) and kqueue (OpenBSD)
@@ -550,22 +550,22 @@ wakeup fd is correctly integrated into the scheduler's poller. All
 platform-specific code is guarded by `STRAND_LINUX` / `STRAND_OPENBSD`.
 
 **Reference documents**:
-- ARCHITECTURE.md §5 — full Layer 3 specification
-- ARCHITECTURE.md §5.2 — fd lifecycle contract
-- ARCHITECTURE.md §5.3 — waiter model and cancellation race rule
-- ARCHITECTURE.md §5.4 — Linux EPOLLET | EPOLLONESHOT
-- ARCHITECTURE.md §5.5 — post-re-arm readiness check (Linux)
-- ARCHITECTURE.md §5.6 — EPOLLERR/EPOLLHUP handling (Linux)
-- ARCHITECTURE.md §5.7 — OpenBSD EV_DISPATCH
-- ARCHITECTURE.md §5.8 — cancellation of I/O waiter
-- CODING_STANDARDS.md §6.1 — fd lifecycle safety rules and O_NONBLOCK assertion
-- CODING_STANDARDS.md §6.2 — SAFETY comments
+- ARCHITECTURE.md §5 - full Layer 3 specification
+- ARCHITECTURE.md §5.2 - fd lifecycle contract
+- ARCHITECTURE.md §5.3 - waiter model and cancellation race rule
+- ARCHITECTURE.md §5.4 - Linux EPOLLET | EPOLLONESHOT
+- ARCHITECTURE.md §5.5 - post-re-arm readiness check (Linux)
+- ARCHITECTURE.md §5.6 - EPOLLERR/EPOLLHUP handling (Linux)
+- ARCHITECTURE.md §5.7 - OpenBSD EV_DISPATCH
+- ARCHITECTURE.md §5.8 - cancellation of I/O waiter
+- CODING_STANDARDS.md §6.1 - fd lifecycle safety rules and O_NONBLOCK assertion
+- CODING_STANDARDS.md §6.2 - SAFETY comments
 
 **Prerequisite**: Phase 3 complete.
 
 ### Tasks
 
-**4.1 — strand_poller_t and fd waiter table** ✓ DONE
+**4.1 - strand_poller_t and fd waiter table** ✓ DONE
 - Define `strand_poller_t` containing:
   - epoll fd (Linux) or kqueue fd (OpenBSD)
   - fd waiter hash table: open-addressed, sized at scheduler init
@@ -574,11 +574,11 @@ platform-specific code is guarded by `STRAND_LINUX` / `STRAND_OPENBSD`.
     (`REGISTERED_ACTIVE` / `REGISTERED_DISABLED` / `NOT_REGISTERED`),
     per-registration token, debug generation counter
 - Implement `poller_create()` / `poller_destroy()`
-- Implement `fd_table_lookup(poller, fd)` — returns entry pointer or NULL
-- Implement `fd_table_insert(poller, fd)` — add new entry
-- Implement `fd_table_remove(poller, fd)` — remove entry (both waiters gone)
+- Implement `fd_table_lookup(poller, fd)` - returns entry pointer or NULL
+- Implement `fd_table_insert(poller, fd)` - add new entry
+- Implement `fd_table_remove(poller, fd)` - remove entry (both waiters gone)
 
-**4.2 — strand_fiber_wait_readable and strand_fiber_wait_writable** ✓ DONE
+**4.2 - strand_fiber_wait_readable and strand_fiber_wait_writable** ✓ DONE
 - Validate O_NONBLOCK in debug builds: `fcntl(F_GETFL)` and assert;
   add `SAFETY:` comment
 - Validate no existing waiter in same direction on this fd: error if violated
@@ -592,25 +592,25 @@ platform-specific code is guarded by `STRAND_LINUX` / `STRAND_OPENBSD`.
 - `strand_context_switch(f, sched->scheduler_ctx)`
 - On return: return ready/cancelled result to caller
 
-**4.3 — poller_poll and event delivery** ✓ DONE
+**4.3 - poller_poll and event delivery** ✓ DONE
 - Implement `poller_poll(poller, timeout_ms)`: call `epoll_wait`/`kevent`
   with the given timeout; process all returned events via `poller_deliver_event`
 - Implement `poller_deliver_event(sched, event)`:
-  - Linux: check `EPOLLERR` / `EPOLLHUP` first — wake any waiter with error
+  - Linux: check `EPOLLERR` / `EPOLLHUP` first - wake any waiter with error
     regardless of interest mask. Add `SAFETY:` comment.
-  - Check returned flags for `EPOLLIN` / `EPOLLOUT` — wake corresponding waiter
+  - Check returned flags for `EPOLLIN` / `EPOLLOUT` - wake corresponding waiter
   - After waking one direction, if other direction still has a waiter:
     re-arm with MOD to remaining direction; **immediately call**
     `epoll_wait(poller->epfd, events, MAX_EVENTS, 0)` (zero timeout);
     process ALL returned events via `poller_deliver_event`. Add `SAFETY:`
     comment: must process all returned events, not only the rearmed fd.
-  - OpenBSD: check `EV_EOF` — wake waiter with EOF result. No post-re-arm
+  - OpenBSD: check `EV_EOF` - wake waiter with EOF result. No post-re-arm
     check needed on OpenBSD.
 - Wire `poller_poll(poller, timeout_ms)` into scheduler advance Step 4
   (replacing the stub from Phase 3). Wire the blocking poll into
   `strand_scheduler_run` idle wait (poller fd replaces wakeup-fd-only wait).
 
-**4.4 — strand_fiber_cancel for I/O waiters** ✓ DONE
+**4.4 - strand_fiber_cancel for I/O waiters** ✓ DONE
 - Extend `strand_fiber_cancel` with:
   - `FIBER_PARKED_IO_READ`: call `poller_cancel(poller, fd, DIRECTION_READ)`:
     - If other direction has no waiter: `epoll_ctl DEL`
@@ -620,7 +620,7 @@ platform-specific code is guarded by `STRAND_LINUX` / `STRAND_OPENBSD`.
   - Cross-worker path: enqueue to inject queue (inject queue real in Phase 5;
     cross-worker cancel tested fully in Phase 5)
 
-**4.5 — Wakeup fd integration into poller** ✓ DONE
+**4.5 - Wakeup fd integration into poller** ✓ DONE
 - Register the scheduler wakeup fd with the epoll/kqueue instance so that
   `strand_scheduler_stop`'s write wakes a blocked `epoll_wait`/`kevent`
 - Drain wakeup fd bytes in scheduler advance Step 3 (already implemented
@@ -639,7 +639,7 @@ File: `tests/test_layer3.c`
   wake occurs
 - `test_post_rearm_readiness_check_linux`: set up two waiters on same fd
   (read and write); both directions become ready simultaneously; fire event;
-  verify both waiters wake — specifically that the second waiter wakes
+  verify both waiters wake - specifically that the second waiter wakes
   immediately via the post-re-arm zero-timeout check, not on a subsequent advance
 - `test_all_events_processed_in_rearm_check`: two different fds both ready;
   one fires and triggers re-arm check; verify the other fd's waiter also wakes
@@ -670,7 +670,7 @@ File: `tests/test_layer3.c`
 
 - [x] All Layer 3 tests pass on Linux (epoll path)
 - [x] All Layer 3 tests pass on OpenBSD (kqueue path)
-- [x] Post-re-arm readiness check test passes — quality milestone M12
+- [x] Post-re-arm readiness check test passes - quality milestone M12
 - [x] "All events processed in re-arm check" test passes
 - [x] EPOLLERR/EPOLLHUP tests pass on Linux
 - [x] EV_EOF test passes on OpenBSD
@@ -678,7 +678,7 @@ File: `tests/test_layer3.c`
 
 ---
 
-## Phase 5 — Layer 4: Multi-Worker Runtime
+## Phase 5 - Layer 4: Multi-Worker Runtime
 
 **Goal**: Multiple worker threads each run their own scheduler. Fibers pinned
 to a worker never migrate. Host-thread `strand_fiber_spawn` distributes across
@@ -689,72 +689,72 @@ CANCELLED CAS outcomes are exercised and correct. Inject queue overflow uses
 exponential backoff and never drops items.
 
 **Reference documents**:
-- ARCHITECTURE.md §6 — full Layer 4 specification
-- ARCHITECTURE.md §6.1 — per-worker pinned model
-- ARCHITECTURE.md §6.2 — worker registration and shutdown
-- ARCHITECTURE.md §6.3 — inject queue (capacity, overflow, memory ordering)
-- ARCHITECTURE.md §6.4 — fiber_spawn worker selection
-- ARCHITECTURE.md §6.5 — blocking syscall offload
-- ARCHITECTURE.md §6.6 — offload work item lifecycle and CAS semantics
-- ARCHITECTURE.md §6.7 — offload memory ordering chain
-- CODING_STANDARDS.md §4 — atomic operations, CAS discipline, CONCURRENT comments
-- CODING_STANDARDS.md §5.4 — cooperative scheduling contract
+- ARCHITECTURE.md §6 - full Layer 4 specification
+- ARCHITECTURE.md §6.1 - per-worker pinned model
+- ARCHITECTURE.md §6.2 - worker registration and shutdown
+- ARCHITECTURE.md §6.3 - inject queue (capacity, overflow, memory ordering)
+- ARCHITECTURE.md §6.4 - fiber_spawn worker selection
+- ARCHITECTURE.md §6.5 - blocking syscall offload
+- ARCHITECTURE.md §6.6 - offload work item lifecycle and CAS semantics
+- ARCHITECTURE.md §6.7 - offload memory ordering chain
+- CODING_STANDARDS.md §4 - atomic operations, CAS discipline, CONCURRENT comments
+- CODING_STANDARDS.md §5.4 - cooperative scheduling contract
 
 **Prerequisite**: Phase 4 complete.
 
 ### Tasks
 
-**5.1 — strand_inject_queue_t** ✓ DONE
+**5.1 - strand_inject_queue_t** ✓ DONE
 - Implement bounded MPSC ring buffer in `src/strand_inject.c`:
   - Capacity configured at scheduler init (default: 4 × max fiber count)
   - `inject_queue_push_release`: enqueue with release memory ordering;
-    exponential backoff spin on full — never drops. Add `ATOMIC:` comment.
+    exponential backoff spin on full - never drops. Add `ATOMIC:` comment.
   - `inject_queue_pop_acquire`: dequeue with acquire memory ordering.
     Add `ATOMIC:` comment.
-  - `inject_queue_drain`: move all queued items to run queue — called in
+  - `inject_queue_drain`: move all queued items to run queue - called in
     scheduler advance Step 1 (replace Phase 3 stub)
 
-**5.2 — strand_runtime_t and worker registry** ✓ DONE
+**5.2 - strand_runtime_t and worker registry** ✓ DONE
 - Implement `strand_runtime_init()` / `strand_runtime_destroy()`
 - Worker list: fixed-size array of `strand_worker_t *`, protected by spinlock
-- Round-robin counter: `_Atomic uint32_t` — accessed without the spinlock
-- `_Atomic int shutdown_flag` — checked on all spawn paths
+- Round-robin counter: `_Atomic uint32_t` - accessed without the spinlock
+- `_Atomic int shutdown_flag` - checked on all spawn paths
 
-**5.3 — strand_worker_start** ✓ DONE
+**5.3 - strand_worker_start** ✓ DONE
 - Allocate and initialise `strand_worker_t` (wrapper around scheduler)
 - Create OS thread via `pthread_create`; thread calls `strand_scheduler_run`
 - Register worker in runtime worker list
 - Linux: apply `pthread_setaffinity_np` if `worker_config.cpu_affinity` set;
-  document that OpenBSD does not support affinity — skip silently there
+  document that OpenBSD does not support affinity - skip silently there
 
-**5.4 — Host-thread strand_fiber_spawn** ✓ DONE
+**5.4 - Host-thread strand_fiber_spawn** ✓ DONE
 - Implement the host-thread path:
-  - Check shutdown flag — return `STRAND_ERR_SHUTDOWN` if set
-  - Check worker list non-empty — return error if none registered
+  - Check shutdown flag - return `STRAND_ERR_SHUTDOWN` if set
+  - Check worker list non-empty - return error if none registered
   - Select worker via round-robin (atomically increment counter, mod worker count,
     skip stopped workers)
-  - Allocate fiber descriptor and stack (from target worker's cache —
+  - Allocate fiber descriptor and stack (from target worker's cache -
     requires cross-thread-safe stack alloc path or inject-carried alloc)
   - Inject fiber to target worker's inject queue
   - Return handle
 
-**5.5 — Cross-worker strand_fiber_cancel** ✓ DONE
+**5.5 - Cross-worker strand_fiber_cancel** ✓ DONE
 - Complete the cross-worker path in `strand_fiber_cancel`:
   - For all parked states on a different worker: enqueue cancel operation
     to target worker's inject queue
   - Document: fd freedom and state visibility guaranteed only for same-worker
     calls. Add `SAFETY:` comment.
-  - Inject queue processes cancel in Step 1 before I/O poll in Step 4 —
+  - Inject queue processes cancel in Step 1 before I/O poll in Step 4 -
     cross-worker cancel wins over readiness per ARCHITECTURE.md §5.3
 
-**5.6 — strand_offload_pool_init and offload pool**
+**5.6 - strand_offload_pool_init and offload pool**
 - Implement `strand_offload_pool_init(size_t thread_count)`:
   - Create N `pthread_t` offload threads, each blocking on a mutex-protected
     work queue
   - Work queue: linked list of `strand_offload_item_t *`
 - Implement `strand_offload_pool_destroy()`: signal threads to exit, join all
 
-**5.7 — strand_fiber_offload**
+**5.7 - strand_fiber_offload**
 - Implement per ARCHITECTURE.md §6.6:
   - Validate called from a running fiber
   - Allocate work item: `refcount=2`, `state=OFFLOAD_PENDING`
@@ -765,7 +765,7 @@ exponential backoff and never drops items.
   - If pool full: return `STRAND_EAGAIN` immediately (do not park)
   - Add mandatory yield retry pattern comment per ARCHITECTURE.md §6.5
 
-**5.8 — Offload thread completion and CAS**
+**5.8 - Offload thread completion and CAS**
 - Offload thread on `fn(arg)` completion:
   - `CAS(state, PENDING -> RESULT_CLAIMED)` with **release** semantics.
     Add `ATOMIC:` comment with full ordering chain reference.
@@ -820,16 +820,16 @@ File: `tests/test_layer4.c`
 ### Phase 5 Completion Criteria
 
 - [ ] All Layer 4 tests pass on Linux and OpenBSD
-- [ ] RESULT_CLAIMED and CANCELLED CAS outcomes both exercised — M13 confirmed
+- [ ] RESULT_CLAIMED and CANCELLED CAS outcomes both exercised - M13 confirmed
 - [ ] Refcount freed exactly once in both CAS outcomes (Valgrind confirms)
 - [ ] Round-robin and explicit override worker selection correct
-- [ ] Inject queue never drops items — overflow backoff confirmed
+- [ ] Inject queue never drops items - overflow backoff confirmed
 - [ ] Valgrind clean; ASan/UBSan clean on both platforms
-- [ ] TSan clean — inject queue acquire/release ordering verified
+- [ ] TSan clean - inject queue acquire/release ordering verified
 
 ---
 
-## Phase 6 — Layer 5: Scopes and Coordination Primitives
+## Phase 6 - Layer 5: Scopes and Coordination Primitives
 
 **Goal**: Structured concurrency scopes work correctly through all lifecycle
 states and all exit variants. Error propagation, sibling cancellation, and the
@@ -839,22 +839,22 @@ correctly across all exit paths. This phase completes the first implementation
 target: Layers 1–4 plus scopes.
 
 **Reference documents**:
-- ARCHITECTURE.md §7 — full Layer 5 scope specification
-- ARCHITECTURE.md §7.1 — scope overview and operations
-- ARCHITECTURE.md §7.2 — scope control block fields
-- ARCHITECTURE.md §7.3 — lifecycle state machine and walk reference rule
-- ARCHITECTURE.md §7.4 — scope exit variants and allocation requirement
-- ARCHITECTURE.md §7.5 — error propagation
-- ARCHITECTURE.md §7.6 — sibling cancellation and structured concurrency guarantee
-- ARCHITECTURE.md §7.7 — detached fibers
-- CODING_STANDARDS.md §4 — atomic operations on scope fields
-- CODING_STANDARDS.md §6.2 — SAFETY comment on abandon stack check
+- ARCHITECTURE.md §7 - full Layer 5 scope specification
+- ARCHITECTURE.md §7.1 - scope overview and operations
+- ARCHITECTURE.md §7.2 - scope control block fields
+- ARCHITECTURE.md §7.3 - lifecycle state machine and walk reference rule
+- ARCHITECTURE.md §7.4 - scope exit variants and allocation requirement
+- ARCHITECTURE.md §7.5 - error propagation
+- ARCHITECTURE.md §7.6 - sibling cancellation and structured concurrency guarantee
+- ARCHITECTURE.md §7.7 - detached fibers
+- CODING_STANDARDS.md §4 - atomic operations on scope fields
+- CODING_STANDARDS.md §6.2 - SAFETY comment on abandon stack check
 
 **Prerequisite**: Phase 5 complete.
 
 ### Tasks
 
-**6.1 — strand_scope_t control block**
+**6.1 - strand_scope_t control block**
 - Define `strand_scope_t` in `src/strand_internal.h`:
   - `_Atomic scope_lifecycle_t lifecycle`
   - `_Atomic int owner_flag` (OWNER_CALLER / OWNER_RUNTIME)
@@ -866,7 +866,7 @@ target: Layers 1–4 plus scopes.
   - `int cancellation_flag`
 - Add `CONCURRENT:` comment on every `_Atomic` field per CODING_STANDARDS.md §4.5
 
-**6.2 — strand_scope_open and strand_scope_spawn**
+**6.2 - strand_scope_open and strand_scope_spawn**
 - `strand_scope_open(strand_scope_t *scope)`: memset to zero, set
   `lifecycle = SCOPE_ACTIVE`, `owner_flag = OWNER_CALLER`,
   `live_child_count = 0`, `parent_fiber = current_fiber_handle()`
@@ -876,46 +876,46 @@ target: Layers 1–4 plus scopes.
   - `atomic_fetch_add(&scope->live_child_count, 1)`
   - Return handle
 
-**6.3 — scope_child_finish**
+**6.3 - scope_child_finish**
 - Called by scheduler when a tracked fiber reaches `FIBER_FINISHED`:
   - If fiber returned an error: CAS `first_error` from 0 to error code;
     if CAS succeeds (first error): initiate cancellation walk
-  - `atomic_fetch_sub(&scope->live_child_count, 1)` — if reaches zero:
+  - `atomic_fetch_sub(&scope->live_child_count, 1)` - if reaches zero:
     transition lifecycle to `SCOPE_COMPLETED` (if not already); if
     `OWNER_RUNTIME` and `walk_ref_count == 0`: free control block
 
-**6.4 — Cancellation walk**
+**6.4 - Cancellation walk**
 - `scope_walk_cancel(scope)`:
-  - `atomic_fetch_add(&scope->walk_ref_count, 1)` — hold reference for walk
+  - `atomic_fetch_add(&scope->walk_ref_count, 1)` - hold reference for walk
   - Walk spawn-order list in reverse; call `strand_fiber_cancel` on each handle
-    (stale handles return `STRAND_HANDLE_STALE` — idempotent, continue)
+    (stale handles return `STRAND_HANDLE_STALE` - idempotent, continue)
   - Transition `SCOPE_CANCELLING -> SCOPE_DRAINING` when walk completes
-  - `atomic_fetch_sub(&scope->walk_ref_count, 1)` — release reference
+  - `atomic_fetch_sub(&scope->walk_ref_count, 1)` - release reference
   - If `live_child_count == 0` and `OWNER_RUNTIME`: free control block
 
-**6.5 — strand_scope_wait**
+**6.5 - strand_scope_wait**
 - Park calling fiber until `scope->lifecycle == SCOPE_COMPLETED`
 - Terminal: return `scope->first_error` (0 if no error)
 - After return: scope is `SCOPE_COMPLETED` and `OWNER_CALLER`
 
-**6.6 — strand_scope_wait_timeout**
+**6.6 - strand_scope_wait_timeout**
 - Park with timer deadline; wake on `SCOPE_COMPLETED` or timeout
-- If completed: terminal — same as `strand_scope_wait`
-- If timeout: non-terminal — scope unchanged; return timeout indicator
+- If completed: terminal - same as `strand_scope_wait`
+- If timeout: non-terminal - scope unchanged; return timeout indicator
   Caller must follow with `strand_scope_wait` or `strand_scope_abandon`
 
-**6.7 — strand_scope_cancel**
+**6.7 - strand_scope_cancel**
 - If `lifecycle == SCOPE_ACTIVE`: CAS to `SCOPE_CANCELLING`, initiate walk
-- Non-terminal — return immediately; caller must follow with wait or abandon
+- Non-terminal - return immediately; caller must follow with wait or abandon
 
-**6.8 — strand_scope_abandon**
+**6.8 - strand_scope_abandon**
 - Debug check: assert scope pointer not within current fiber's stack range.
   Add `SAFETY:` comment per CODING_STANDARDS.md §6.2.
 - `atomic_store(&scope->owner_flag, OWNER_RUNTIME)`
 - Set `parent_fiber` handle to null (null ptr, any generation)
 - Scope pointer invalid for caller after this call
 
-**6.9 — strand_fiber_spawn_detached**
+**6.9 - strand_fiber_spawn_detached**
 - Spawn fiber with `scope = NULL`; not tracked; no error propagation
 - Document strongly discouraged per ARCHITECTURE.md §7.7
 
@@ -947,7 +947,7 @@ File: `tests/test_layer5.c`
   verify control block freed correctly
 - `test_scope_owner_orthogonal_to_lifecycle`: verify all valid combinations:
   CANCELLING+OWNER_RUNTIME, DRAINING+OWNER_RUNTIME, COMPLETED+OWNER_RUNTIME,
-  COMPLETED+OWNER_CALLER — each reachable by corresponding operation sequence
+  COMPLETED+OWNER_CALLER - each reachable by corresponding operation sequence
 - `test_scope_open_from_host_thread_error`: call `scope_open` from host
   thread; verify error returned
 - `test_scope_abandon_stack_alloc_debug_assert`: in debug build, pass
@@ -963,18 +963,18 @@ File: `tests/test_layer5.c`
 
 ### Phase 6 Completion Criteria
 
-- [ ] All Layer 5 tests pass on Linux and OpenBSD — quality milestone M14
+- [ ] All Layer 5 tests pass on Linux and OpenBSD - quality milestone M14
 - [ ] Walk reference rule verified: control block not freed during active walk
 - [ ] OWNER_RUNTIME free verified (Valgrind confirms no leak and no double-free)
 - [ ] All four lifecycle state transitions exercised
 - [ ] All valid OWNER × lifecycle combinations reached by tests
 - [ ] Reverse spawn-order cancellation verified
 - [ ] Valgrind clean; ASan/UBSan clean on both platforms
-- [ ] TSan clean — all scope atomic operations verified
+- [ ] TSan clean - all scope atomic operations verified
 
 ---
 
-## Phase 7 — Hardening, Benchmarks, and Release
+## Phase 7 - Hardening, Benchmarks, and Release
 
 **Goal**: Full integration test suite passes. All benchmarks produce baseline
 numbers. All quality milestones confirmed on all platforms. Documentation
@@ -984,7 +984,7 @@ complete. Library is ready for a v0.1.0 release tag.
 
 ### Tasks
 
-**7.1 — Integration test suite**
+**7.1 - Integration test suite**
 - Implement all integration tests in `tests/test_integration.c` per
   REPOSITORY_STRUCTURE.md §4 and TESTING.md:
   - Echo server: accept, per-connection fiber, read/write loop, scope
@@ -1002,9 +1002,9 @@ complete. Library is ready for a v0.1.0 release tag.
     verify both directions wake correctly via the zero-timeout check path
   - Guest mode: scheduler driven from host event loop
   - `strand_scheduler_stop` interrupts blocked worker within bounded time
-- All integration tests pass on Linux and OpenBSD — quality milestone M15
+- All integration tests pass on Linux and OpenBSD - quality milestone M15
 
-**7.2 — Benchmark suite**
+**7.2 - Benchmark suite**
 - Implement all benchmarks in `bench/` per REPOSITORY_STRUCTURE.md §5
 - Run on Linux x86_64 and ARM64, OpenBSD amd64:
   - Context switch round-trip latency
@@ -1017,20 +1017,20 @@ complete. Library is ready for a v0.1.0 release tag.
 - Record baseline numbers with full hardware context
 - Numbers are baselines, not pass/fail gates at this stage
 
-**7.3 — Debug watchdog**
+**7.3 - Debug watchdog**
 - Implement scheduler watchdog in debug builds (`STRAND_DEBUG=1`):
   - Track wall time since a fiber started running
   - If a fiber runs for more than a configurable threshold (default 100ms)
     without yielding, emit a warning to stderr
-  - Watchdog does not preempt — warning only
+  - Watchdog does not preempt - warning only
 - Add test: spin loop fiber exceeding threshold; verify warning emitted
 
-**7.4 — strand_inspect tool**
+**7.4 - strand_inspect tool**
 - Implement `tools/strand_inspect.c` per REPOSITORY_STRUCTURE.md §6:
-  scheduler state dump — run queue depth, timer heap size, inject queue depth,
+  scheduler state dump - run queue depth, timer heap size, inject queue depth,
   fiber count by state, stack cache depth
 
-**7.5 — Final quality pass**
+**7.5 - Final quality pass**
 - `make lint` → zero clang-tidy and cppcheck warnings on all platforms
 - `make test` → all tests pass
 - `make valgrind` → clean on Linux
@@ -1038,7 +1038,7 @@ complete. Library is ready for a v0.1.0 release tag.
 - Full TSan run on Linux
 - All quality milestone status cells updated
 
-**7.6 — README.md**
+**7.6 - README.md**
 - Written for an embedder coming to the project cold
 - Contents: one-paragraph description, requirements (libc, pthreads),
   how to build (`make && make install`), minimal integration example
@@ -1048,13 +1048,13 @@ complete. Library is ready for a v0.1.0 release tag.
 
 ### Phase 7 Completion Criteria
 
-- [ ] Integration test suite passes on Linux and OpenBSD — M15 confirmed
+- [ ] Integration test suite passes on Linux and OpenBSD - M15 confirmed
 - [ ] Benchmark baselines recorded on Linux x86_64 and ARM64, OpenBSD amd64
-- [ ] `make lint` zero warnings on all platforms — M7, M8 confirmed
-- [ ] All unit and integration tests pass on all platforms — M2, M3 confirmed
-- [ ] Valgrind clean — M4 confirmed
-- [ ] ASan/UBSan clean on all platforms — M5 confirmed
-- [ ] TSan clean on Linux — M6 confirmed
+- [ ] `make lint` zero warnings on all platforms - M7, M8 confirmed
+- [ ] All unit and integration tests pass on all platforms - M2, M3 confirmed
+- [ ] Valgrind clean - M4 confirmed
+- [ ] ASan/UBSan clean on all platforms - M5 confirmed
+- [ ] TSan clean on Linux - M6 confirmed
 - [ ] All quality milestone status cells updated to DONE
 - [ ] README.md complete and integration example compiles and runs
 - [ ] v0.1.0 release tag applied
@@ -1074,25 +1074,25 @@ complete. Library is ready for a v0.1.0 release tag.
 | TSan fiber hooks | ARCHITECTURE.md §3.7 | TECH_STACK.md §7.3 |
 | Valgrind stack registration | ARCHITECTURE.md §3.7 | TECH_STACK.md §7.1 |
 | Scheduler five-step advance | ARCHITECTURE.md §4.2 | REPOSITORY_STRUCTURE.md §3 (strand_sched.c) |
-| Host loop integration pattern | ARCHITECTURE.md §4.3 | — |
+| Host loop integration pattern | ARCHITECTURE.md §4.3 | - |
 | Fiber state machine | ARCHITECTURE.md §4.5 | REPOSITORY_STRUCTURE.md §3 (strand_fiber.c) |
 | Fiber handle ABA protection | ARCHITECTURE.md §4.6 | CODING_STANDARDS.md §6.2 |
 | Stack cache policy | ARCHITECTURE.md §13 | REPOSITORY_STRUCTURE.md §3 (strand_fiber.c) |
 | TLS footguns | ARCHITECTURE.md §4.7 | CODING_STANDARDS.md §6.3 |
 | fd lifecycle contract | ARCHITECTURE.md §5.2 | CODING_STANDARDS.md §6.1 |
-| Cancellation race rule | ARCHITECTURE.md §5.3 | — |
+| Cancellation race rule | ARCHITECTURE.md §5.3 | - |
 | Post-re-arm readiness check | ARCHITECTURE.md §5.5 | CODING_STANDARDS.md §6.2 |
-| EPOLLERR/EPOLLHUP handling | ARCHITECTURE.md §5.6 | — |
-| OpenBSD EV_DISPATCH | ARCHITECTURE.md §5.7 | — |
+| EPOLLERR/EPOLLHUP handling | ARCHITECTURE.md §5.6 | - |
+| OpenBSD EV_DISPATCH | ARCHITECTURE.md §5.7 | - |
 | Per-worker pinned model | ARCHITECTURE.md §6.1 | REPOSITORY_STRUCTURE.md §3 (strand_runtime.c) |
 | Inject queue memory ordering | ARCHITECTURE.md §6.3 | CODING_STANDARDS.md §4.2 |
 | Offload work item lifecycle | ARCHITECTURE.md §6.6 | CODING_STANDARDS.md §4.3 |
 | Offload memory ordering chain | ARCHITECTURE.md §6.7 | CODING_STANDARDS.md §4.2 |
 | Scope lifecycle state machine | ARCHITECTURE.md §7.3 | REPOSITORY_STRUCTURE.md §3 (strand_scope.c) |
 | scope_abandon allocation rule | ARCHITECTURE.md §7.4 | CODING_STANDARDS.md §6.2 |
-| Walk reference rule | ARCHITECTURE.md §7.3 | — |
-| Structured concurrency guarantee | ARCHITECTURE.md §7.6 | — |
-| Thread safety matrix | ARCHITECTURE.md §12 | — |
+| Walk reference rule | ARCHITECTURE.md §7.3 | - |
+| Structured concurrency guarantee | ARCHITECTURE.md §7.6 | - |
+| Thread safety matrix | ARCHITECTURE.md §12 | - |
 
 ---
 

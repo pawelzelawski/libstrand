@@ -2,7 +2,7 @@
 #define STRAND_SCOPE_H
 
 /*
- * strand_scope.h — structured concurrency scope internal interface.
+ * strand_scope.h - structured concurrency scope internal interface.
  * See ARCHITECTURE.md §7.
  */
 

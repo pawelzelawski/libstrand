@@ -2,7 +2,7 @@
 #define STRAND_CONTEXT_H
 
 /*
- * strand_context.h — Layer 1 internal interface.
+ * strand_context.h - Layer 1 internal interface.
  * strand_context_t definition, strand_context_swap(), strand_context_init().
  * See ARCHITECTURE.md §3.
  */
@@ -10,7 +10,7 @@
 #include "../include/strand.h"
 
 /*
- * strand_context_t — register save area for one execution context.
+ * strand_context_t - register save area for one execution context.
  *
  * Contains all callee-saved registers for the current architecture plus
  * the stack pointer. Sized to hold exactly one save-and-restore sequence.
@@ -27,7 +27,7 @@
 
 /*
  * System V AMD64 ABI callee-saved GPRs: rbx, rbp, r12-r15, rsp.
- * XMM registers are caller-saved under SysV AMD64 — not saved here.
+ * XMM registers are caller-saved under SysV AMD64 - not saved here.
  * MXCSR is saved by strand_context_switch. See ARCHITECTURE.md §3.2.
  */
 typedef struct strand_context {
@@ -80,10 +80,10 @@ typedef struct strand_context {
 #endif
 
 /*
- * strand_context_swap(old, new) — the core context switch primitive.
+ * strand_context_swap(old, new) - the core context switch primitive.
  *
  * Saves callee-saved registers and rsp into *old, then restores them
- * from *new and returns — resuming execution on the new stack.
+ * from *new and returns - resuming execution on the new stack.
  *
  * Must only be called from the C wrapper strand_context_switch, which
  * handles errno, MXCSR/FPCR, and sanitizer hooks.  Do not call directly.
@@ -98,7 +98,7 @@ typedef struct strand_context {
  */
 void strand_context_swap(strand_context_t *old, strand_context_t *new);
 /*
- * strand_context_init(ctx, stack_top, entry, arg) — fabricate an initial
+ * strand_context_init(ctx, stack_top, entry, arg) - fabricate an initial
  * saved-register state so that the first strand_context_swap to *ctx
  * begins execution at entry(arg).
  *
@@ -124,7 +124,7 @@ void strand_context_init(strand_context_t *ctx, void *stack_top,
                          strand_fiber_fn_t entry, void *arg);
 
 /*
- * strand_context_switch(from, to) — the public Layer 1 interface.
+ * strand_context_switch(from, to) - the public Layer 1 interface.
  *
  * Wraps strand_context_swap with:
  *   - errno save and restore

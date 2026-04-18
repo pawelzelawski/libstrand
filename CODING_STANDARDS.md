@@ -26,7 +26,7 @@ scheduler_run_one(strand_scheduler_t *sched)
 	return fiber_resume(sched, f);
 }
 
-/* Wrong — spaces used for indentation */
+/* Wrong - spaces used for indentation */
 static int
 scheduler_run_one(strand_scheduler_t *sched)
 {
@@ -170,7 +170,7 @@ static int fiber_park_timer(strand_scheduler_t *sched, strand_fiber_t *f,
 
 The public header exposes only what embedders need. Internal types, internal
 function declarations, and implementation details are never declared here. The
-header is self-contained — an embedder includes only `strand.h` and nothing
+header is self-contained - an embedder includes only `strand.h` and nothing
 else.
 
 ```c
@@ -178,7 +178,7 @@ else.
 #define STRAND_H
 
 /*
- * strand.h — libstrand public API
+ * strand.h - libstrand public API
  *
  * Initialise a runtime with strand_runtime_init().
  * Spawn fibers with strand_fiber_spawn().
@@ -204,7 +204,7 @@ else.
 #define STRAND_FIBER_H
 
 /*
- * strand_fiber.h — fiber descriptor, state machine, and run queue (internal)
+ * strand_fiber.h - fiber descriptor, state machine, and run queue (internal)
  * See ARCHITECTURE.md §4.5 for the fiber state machine.
  * See ARCHITECTURE.md §4.6 for fiber handle ABA protection.
  */
@@ -220,7 +220,7 @@ else.
 **Source files** (`.c`):
 ```c
 /*
- * strand_sched.c — fiber scheduler: Layers 2 operating modes
+ * strand_sched.c - fiber scheduler: Layers 2 operating modes
  *
  * Implements strand_scheduler_advance (guest mode) and
  * strand_scheduler_run (worker mode). See ARCHITECTURE.md §4.2.
@@ -276,14 +276,14 @@ in the internal header where the type is defined.
 ```c
 /* In strand_internal.h */
 _Static_assert(sizeof(strand_fiber_handle_t) == 16,
-    "strand_fiber_handle_t size changed — ptr (8) + generation (8)");
+    "strand_fiber_handle_t size changed - ptr (8) + generation (8)");
 _Static_assert(sizeof(strand_context_t) == STRAND_CONTEXT_SIZE,
-    "strand_context_t size changed — update assembly stubs");
+    "strand_context_t size changed - update assembly stubs");
 _Static_assert(offsetof(strand_fiber_t, context) == 0,
-    "context must be first field — assembly stubs assume offset 0");
+    "context must be first field - assembly stubs assume offset 0");
 ```
 
-The assertion on `strand_context_t` is especially critical — the assembly
+The assertion on `strand_context_t` is especially critical - the assembly
 stubs in `src/arch/` use hardcoded offsets into the context struct. Any
 change to the struct layout that is not reflected in the assembly will
 produce silent register corruption.
@@ -306,14 +306,14 @@ Each file opens with a standard header:
 
 ```asm
 /*
- * strand_context.S — fiber context save and restore (x86_64 SysV ABI)
+ * strand_context.S - fiber context save and restore (x86_64 SysV ABI)
  *
  * See ARCHITECTURE.md §3.2 for register set and ABI rationale.
  * See ARCHITECTURE.md §3.6 for CFI annotation requirements.
  *
  * Calling convention: SysV AMD64 (Linux and OpenBSD).
  * Callee-saved GPRs: rbx, rbp, r12-r15.
- * XMM registers: all caller-saved under SysV — none saved here.
+ * XMM registers: all caller-saved under SysV - none saved here.
  * MXCSR: saved and restored in the C wrapper, not here.
  */
 
@@ -364,7 +364,7 @@ strand_context_switch:
 
 When a `.S` file contains platform-specific code, use the preprocessor
 macros defined at build time (`STRAND_LINUX`, `STRAND_OPENBSD`). Never use
-`__linux__` or `__OpenBSD__` directly in assembly files — use the Makefile-
+`__linux__` or `__OpenBSD__` directly in assembly files - use the Makefile-
 defined macros for consistency with the C sources.
 
 ### 2.4 No Logic in Assembly
@@ -381,11 +381,11 @@ stubs. This keeps the assembly auditable and the CFI annotations tractable.
 ### 3.1 Stack Memory
 
 Fiber stacks are allocated with `mmap` and freed with `munmap`. Direct
-`malloc` for stack memory is forbidden — stacks must be `mmap`-allocated so
+`malloc` for stack memory is forbidden - stacks must be `mmap`-allocated so
 that guard pages can be installed with `mprotect(PROT_NONE)`.
 
 ```c
-/* Correct — mmap-allocated stack with guard page */
+/* Correct - mmap-allocated stack with guard page */
 static strand_stack_t *
 stack_alloc(size_t stack_size)
 {
@@ -411,7 +411,7 @@ stack_alloc(size_t stack_size)
 	return s;
 }
 
-/* Wrong — malloc cannot have a guard page installed */
+/* Wrong - malloc cannot have a guard page installed */
 uint8_t *stack = malloc(stack_size);
 ```
 
@@ -441,7 +441,7 @@ free(item);
 item = NULL;
 ```
 
-**Exception:** Fiber descriptors are never freed while the runtime runs —
+**Exception:** Fiber descriptors are never freed while the runtime runs -
 they are recycled through the dead pool. Do not free fiber descriptors
 directly; return them to the dead pool. See ARCHITECTURE.md §4.6.
 
@@ -504,14 +504,14 @@ the weaker order has been explicitly verified against the architecture
 document.
 
 ```c
-/* Correct — seq_cst default via non-explicit form */
+/* Correct - seq_cst default via non-explicit form */
 atomic_store(&f->state, FIBER_RUNNABLE);
 state = atomic_load(&f->state);
 
-/* Also correct — explicit seq_cst */
+/* Also correct - explicit seq_cst */
 atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_seq_cst);
 
-/* Requires justification — document why this is safe */
+/* Requires justification - document why this is safe */
 atomic_store_explicit(&item->result_written, 1, memory_order_release);
 ```
 
@@ -526,7 +526,7 @@ ordering requirement.
 
 ```c
 /*
- * ATOMIC: release on CAS — publishes the result_slot write to the
+ * ATOMIC: release on CAS - publishes the result_slot write to the
  * fiber's home worker. The acquire on inject dequeue establishes the
  * happens-before chain that makes result_slot visible to the fiber.
  * See ARCHITECTURE.md §6.7 for the full ordering chain.
@@ -542,7 +542,7 @@ if (success)
 	inject_queue_push_release(&sched->inject_queue, item);
 
 /*
- * ATOMIC: acquire on inject dequeue — pairs with the release on
+ * ATOMIC: acquire on inject dequeue - pairs with the release on
  * inject_queue_push above, establishing happens-before with the
  * result_slot write. See ARCHITECTURE.md §6.7.
  */
@@ -552,7 +552,7 @@ result = item->result_slot;   /* visible due to acquire above */
 
 **Inject queue enqueue/dequeue:** The inject queue implementation uses
 release on enqueue and acquire on dequeue. This is an internal
-implementation detail of the inject queue module — callers use the queue
+implementation detail of the inject queue module - callers use the queue
 via its API and do not need to apply additional ordering.
 
 ### 4.3 CAS Discipline
@@ -563,7 +563,7 @@ explicitly. Never assume a CAS succeeds.
 ```c
 /*
  * Attempt to transition scope from ACTIVE to CANCELLING.
- * If another thread won the CAS first, that is correct — scope is
+ * If another thread won the CAS first, that is correct - scope is
  * already in the right direction.
  */
 expected = SCOPE_ACTIVE;
@@ -572,7 +572,7 @@ atomic_compare_exchange_strong(&scope->lifecycle,
 /* expected now holds the actual state regardless of outcome */
 ```
 
-**Three-state offload CAS** — the PENDING → RESULT_CLAIMED and
+**Three-state offload CAS** - the PENDING → RESULT_CLAIMED and
 PENDING → CANCELLED transitions are exclusive. Only one party wins. The
 losing party must observe the winner's state and act accordingly:
 
@@ -580,10 +580,10 @@ losing party must observe the winner's state and act accordingly:
 expected = OFFLOAD_PENDING;
 if (atomic_compare_exchange_strong(&item->state,
     &expected, OFFLOAD_CANCELLED)) {
-	/* we won — transition fiber to runnable with cancel result */
+	/* we won - transition fiber to runnable with cancel result */
 } else {
 	/*
-	 * Lost the CAS — expected now holds the actual state.
+	 * Lost the CAS - expected now holds the actual state.
 	 * If RESULT_CLAIMED: offload thread won; do not touch refcount;
 	 * fiber will resume with the offload result normally.
 	 * See ARCHITECTURE.md §6.6.
@@ -598,14 +598,14 @@ Fields not declared `_Atomic` must never be read or written from multiple
 threads without synchronisation. Per-worker scheduler fields (run queue,
 timer heap, poller state, fiber descriptor internals) are owned by exactly
 one worker thread and require no atomic access. Do not add spurious atomic
-qualifiers to single-owner fields — it obscures the thread ownership model
+qualifiers to single-owner fields - it obscures the thread ownership model
 and adds unnecessary memory barriers.
 
 ```c
-/* Correct — single-owner field, no atomic needed */
+/* Correct - single-owner field, no atomic needed */
 sched->run_queue_len++;    /* called only from owner worker */
 
-/* Wrong — unnecessary atomic on single-owner field */
+/* Wrong - unnecessary atomic on single-owner field */
 atomic_fetch_add(&sched->run_queue_len, 1);   /* misleads the reader */
 ```
 
@@ -669,7 +669,7 @@ ignored, cast to `(void)`:
 
 ### 5.2 No Assertions on Caller API Misuse in Release Builds
 
-`assert()` is for internal invariants — conditions that must hold given
+`assert()` is for internal invariants - conditions that must hold given
 correct internal logic. API precondition violations from library callers
 (e.g. calling `strand_fiber_wait_readable` from a host thread, passing NULL
 where a non-NULL pointer is required) return error codes in release builds.
@@ -677,17 +677,17 @@ In debug builds (`STRAND_DEBUG`), they may additionally assert with a
 diagnostic message.
 
 ```c
-/* Correct — internal invariant: programmer error if violated */
+/* Correct - internal invariant: programmer error if violated */
 assert(sched->run_queue_len >= 0 &&
     "run_queue_len underflowed: impossible internal state");
 
-/* Correct — API precondition: error return in release, assert in debug */
+/* Correct - API precondition: error return in release, assert in debug */
 if (sched->current_fiber == NULL) {
 	STRAND_DEBUG_ASSERT(0, "fiber API called from non-fiber context");
 	return STRAND_ERR_NOT_IN_FIBER;
 }
 
-/* Wrong — assert on a caller-controllable condition in production path */
+/* Wrong - assert on a caller-controllable condition in production path */
 assert(fd >= 0);   /* caller could pass -1; return STRAND_ERR_INVALID instead */
 ```
 
@@ -703,19 +703,19 @@ functions may return directly after the NULL check.
 ### 5.4 Cooperative Scheduling Contract Violations
 
 The cooperative scheduling contract requires that fibers yield regularly.
-The following patterns are liveness violations — they are not API errors
+The following patterns are liveness violations - they are not API errors
 that the library can detect and return, but they are explicitly documented
 and must be called out in comments when a pattern is at risk:
 
 ```c
 /*
  * WARNING: calling strand_fiber_offload in a tight loop without yielding
- * is a liveness violation — it starves other fibers on this worker.
+ * is a liveness violation - it starves other fibers on this worker.
  * Always yield before retrying on STRAND_EAGAIN.
  * See ARCHITECTURE.md §6.5.
  */
 while ((rc = strand_fiber_offload(fn, &arg, &result)) == STRAND_EAGAIN)
-	strand_fiber_yield();   /* required — never remove this yield */
+	strand_fiber_yield();   /* required - never remove this yield */
 ```
 
 ---
@@ -730,7 +730,7 @@ ARCHITECTURE.md §5.2. The critical rules:
 - Never call `strand_fiber_wait_readable` or `strand_fiber_wait_writable`
   on a blocking fd. The worker thread will block entirely.
 - Debug builds assert O_NONBLOCK at fd registration. Release builds do not
-  check — it is the caller's responsibility.
+  check - it is the caller's responsibility.
 - An fd is not fully free for re-use until both read and write waiters are
   cleared. Do not close or dup an fd while a waiter is registered.
 - Cross-worker cancel does not immediately free the fd. The fd is safe to
@@ -760,7 +760,7 @@ its own line before the guarded code.
 
 ```c
 /*
- * SAFETY: drain wakeup fd as a control event — do not interpret as a
+ * SAFETY: drain wakeup fd as a control event - do not interpret as a
  * fiber waiter event. Bytes are written by strand_scheduler_stop and
  * cross-worker signals; they carry no fd readiness information.
  * See ARCHITECTURE.md §4.2, Step 3.
@@ -781,7 +781,7 @@ for (int i = 0; i < n; i++)
 
 /*
  * SAFETY: validate fiber handle before use. Stale handles must be
- * no-ops. Do not skip this check — ABA protection depends on it.
+ * no-ops. Do not skip this check - ABA protection depends on it.
  * See ARCHITECTURE.md §4.6.
  */
 if (handle.ptr == NULL)
@@ -860,21 +860,21 @@ function name is entirely self-explanatory.
 
 ```c
 /*
- * strand_fiber_offload — run a blocking function on an offload thread.
+ * strand_fiber_offload - run a blocking function on an offload thread.
  *
  * Parks the calling fiber and submits fn(arg) to the offload pool.
  * Resumes the fiber when fn completes; the return value of fn is written
  * to *result_slot before the fiber is woken.
  *
  * fn:          blocking function to run on an offload thread
- * arg:         passed to fn — must remain valid until fn completes,
+ * arg:         passed to fn - must remain valid until fn completes,
  *              even if the calling fiber is cancelled (heap-allocate
  *              if the calling fiber's lifetime may not cover fn's)
  * result_slot: receives the return value of fn; must remain valid until
  *              the fiber resumes
  *
  * Returns STRAND_OK on success.
- * Returns STRAND_EAGAIN if the offload pool is full — caller must yield
+ * Returns STRAND_EAGAIN if the offload pool is full - caller must yield
  *         before retrying (see ARCHITECTURE.md §6.5).
  * Returns STRAND_ERR_CANCELLED if the fiber was cancelled before fn
  *         completed AND the offload thread had not yet claimed the result.
@@ -899,18 +899,18 @@ the relevant section of ARCHITECTURE.md.
  */
 
 /*
- * Fiber handle validation — generation counter ABA protection.
+ * Fiber handle validation - generation counter ABA protection.
  * See ARCHITECTURE.md §4.6.
  */
 
 /*
- * Post-re-arm readiness check — required for EPOLLET on Linux only.
+ * Post-re-arm readiness check - required for EPOLLET on Linux only.
  * Process all events returned by the zero-timeout poll, not only the
  * rearmed fd. See ARCHITECTURE.md §5.5.
  */
 
 /*
- * Scope cancellation walk — reverse spawn order, cooperative.
+ * Scope cancellation walk - reverse spawn order, cooperative.
  * Hold walk_ref_count for duration of walk; release on completion.
  * See ARCHITECTURE.md §7.3.
  */
@@ -921,10 +921,10 @@ the relevant section of ARCHITECTURE.md.
 ```c
 /* TODO: hash index for fd table when fd count exceeds linear threshold */
 /* FIXME: idle reclamation timer not yet wired into scheduler advance */
-/* NOTE: inject queue len is uint32_t — cannot exceed UINT32_MAX entries;
+/* NOTE: inject queue len is uint32_t - cannot exceed UINT32_MAX entries;
  *       the configurable cap must be validated at init to stay within this */
 /* NOTE: STRAND_OK == 0; STRAND_IDLE and error codes are negative.
- *       Do not compare rc > 0 to mean success — use rc == STRAND_OK */
+ *       Do not compare rc > 0 to mean success - use rc == STRAND_OK */
 ```
 
 ---
@@ -939,8 +939,8 @@ Before every commit:
 - [ ] Valgrind clean on Linux (`make valgrind`)
 - [ ] ASan/UBSan clean on both platforms (`make dev && make test`)
 - [ ] clang-format clean (`make format`)
-- [ ] No direct `malloc`/`free` for stack memory in `src/` — stacks must
-      use `mmap`/`munmap` — verify with:
+- [ ] No direct `malloc`/`free` for stack memory in `src/` - stacks must
+      use `mmap`/`munmap` - verify with:
       `grep -n "malloc" src/*.c | grep -i stack`
 - [ ] Every `malloc` call checks for NULL return
 - [ ] Every `mmap` call checks for `MAP_FAILED` return
@@ -954,10 +954,10 @@ Before every commit:
       every function that accepts a `strand_fiber_handle_t`
 - [ ] `strand_scope_abandon` debug check for stack-allocated scope in place
 - [ ] `goto cleanup` pattern used for all multi-resource acquisition
-- [ ] No calls to TLS-unsafe stdlib functions across yield points — use
+- [ ] No calls to TLS-unsafe stdlib functions across yield points - use
       `_r` variants (strtok_r, asctime_r, ctime_r, rand_r)
 - [ ] No blocking fd passed to `strand_fiber_wait_readable` or
-      `strand_fiber_wait_writable` — debug assert for O_NONBLOCK in place
+      `strand_fiber_wait_writable` - debug assert for O_NONBLOCK in place
 - [ ] Assembly stubs emit valid CFI/FDE unwind info (`.cfi_startproc`,
 	  `.cfi_endproc`, and stack-relative `.cfi_offset` directives where
 	  applicable)

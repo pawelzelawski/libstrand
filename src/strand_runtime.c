@@ -1,14 +1,14 @@
 /*
- * strand_runtime.c — multi-worker runtime: worker registry and lifecycle.
+ * strand_runtime.c - multi-worker runtime: worker registry and lifecycle.
  *
  * Implements Tasks 5.2, 5.3, 5.4:
- *   5.2 — strand_runtime_t struct, init/destroy, spinlock, shutdown_flag
- *   5.3 — strand_worker_start: scheduler + pthread; CPU affinity on Linux
- *   5.4 — strand_runtime_spawn: host-thread fiber spawn via inject queue
+ *   5.2 - strand_runtime_t struct, init/destroy, spinlock, shutdown_flag
+ *   5.3 - strand_worker_start: scheduler + pthread; CPU affinity on Linux
+ *   5.4 - strand_runtime_spawn: host-thread fiber spawn via inject queue
  *
  * Design decisions:
  *   - Worker list is a heap-allocated pointer array; size fixed at init.
- *   - Spinlock is a CAS-based _Atomic int — held only at spawn time
+ *   - Spinlock is a CAS-based _Atomic int - held only at spawn time
  *     (low-frequency host-thread path); no mutex overhead needed.
  *   - Round-robin counter (_Atomic uint32_t) is accessed without the
  *     spinlock; a torn increment at worst selects a suboptimal worker, not
@@ -17,7 +17,7 @@
  *     stack_alloc() (mmap) so the target worker's dead_pool and stack_cache
  *     are never touched from the host thread.  The fiber is injected via
  *     INJECT_SPAWN; inject_queue_drain pushes it to the run queue.
- *   - CPU affinity: Linux only — pthread_setaffinity_np.  OpenBSD does not
+ *   - CPU affinity: Linux only - pthread_setaffinity_np.  OpenBSD does not
  *     provide CPU affinity APIs; cfg->cpu_affinity is silently ignored there.
  *
  * See ARCHITECTURE.md §6.1, §6.2, §6.4.
@@ -49,7 +49,7 @@
  */
 
 /*
- * runtime_lock — acquire the spinlock protecting workers[] and worker_count.
+ * runtime_lock - acquire the spinlock protecting workers[] and worker_count.
  *
  * Spin with sched_yield until the CAS succeeds.  The spinlock is only
  * taken from the host thread at worker_start and runtime_spawn time.
@@ -81,14 +81,14 @@ runtime_unlock(strand_runtime_t *rt)
  */
 
 /*
- * runtime_select_worker — round-robin worker selection.
+ * runtime_select_worker - round-robin worker selection.
  *
  * Called with the spinlock held.  Increments rr_counter atomically and
  * searches for a non-stopped worker starting at counter % worker_count.
  * Returns NULL if worker_count == 0 or all workers have stop_flag set.
  *
  * SAFETY: rr_counter is _Atomic and incremented without the spinlock being
- * required for correctness — only the final slot selection needs the list
+ * required for correctness - only the final slot selection needs the list
  * to be stable.  We always hold the spinlock here so worker_count cannot
  * change under us during the walk.
  * See ARCHITECTURE.md §6.4.
@@ -127,12 +127,12 @@ worker_thread_fn(void *arg)
 }
 
 /* -------------------------------------------------------------------------
- * Public API — Tasks 5.2, 5.3, 5.4
+ * Public API - Tasks 5.2, 5.3, 5.4
  * -------------------------------------------------------------------------
  */
 
 /*
- * strand_runtime_init — allocate and initialise a multi-worker runtime.
+ * strand_runtime_init - allocate and initialise a multi-worker runtime.
  */
 strand_runtime_t *
 strand_runtime_init(const strand_runtime_config_t *cfg)
@@ -163,7 +163,7 @@ strand_runtime_init(const strand_runtime_config_t *cfg)
 }
 
 /*
- * strand_runtime_destroy — stop all workers, join all threads, free memory.
+ * strand_runtime_destroy - stop all workers, join all threads, free memory.
  *
  * Follows the shutdown sequence from ARCHITECTURE.md §6.2:
  *   1. strand_scheduler_stop on every worker.
@@ -203,7 +203,7 @@ strand_runtime_destroy(strand_runtime_t *rt)
 }
 
 /*
- * strand_worker_start — create and register a new worker thread.
+ * strand_worker_start - create and register a new worker thread.
  *
  * Task 5.3: allocate strand_worker_t, create scheduler, spawn pthread.
  * On Linux: apply CPU affinity if cfg->cpu_affinity >= 0.
@@ -259,7 +259,7 @@ strand_worker_start(strand_runtime_t *rt, const strand_worker_config_t *cfg)
 
 #ifdef STRAND_LINUX
 	/*
-	 * CPU affinity — Linux only.
+	 * CPU affinity - Linux only.
 	 * pthread_setaffinity_np is not available on OpenBSD; skip silently.
 	 * A failure here is non-fatal: we log nothing (no I/O in library code)
 	 * and continue.  The fiber model remains correct on any CPU.
@@ -277,7 +277,7 @@ strand_worker_start(strand_runtime_t *rt, const strand_worker_config_t *cfg)
 }
 
 /*
- * strand_worker_stop — signal a worker to stop.
+ * strand_worker_stop - signal a worker to stop.
  */
 void
 strand_worker_stop(strand_worker_t *w)
@@ -295,7 +295,7 @@ strand_worker_stop(strand_worker_t *w)
 }
 
 /*
- * strand_worker_join — wait for a worker thread to exit.
+ * strand_worker_join - wait for a worker thread to exit.
  */
 void
 strand_worker_join(strand_worker_t *w)
@@ -315,13 +315,13 @@ strand_worker_join(strand_worker_t *w)
 }
 
 /*
- * strand_runtime_spawn — spawn a fiber from the host thread.
+ * strand_runtime_spawn - spawn a fiber from the host thread.
  *
  * Task 5.4: check shutdown/no-workers, select worker (round-robin or
  * explicit), allocate fiber on the host thread, inject INJECT_SPAWN.
  *
  * Fiber allocation uses fiber_alloc(NULL) (malloc) and stack_alloc()
- * (mmap) — both thread-safe.  The target worker's dead_pool and
+ * (mmap) - both thread-safe.  The target worker's dead_pool and
  * stack_cache are never touched from the host thread.
  * See ARCHITECTURE.md §6.4.
  */
@@ -369,7 +369,7 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 
 	/*
 	 * Allocate fiber descriptor and stack on the host thread.
-	 * fiber_alloc(NULL) uses malloc; stack_alloc uses mmap — both safe
+	 * fiber_alloc(NULL) uses malloc; stack_alloc uses mmap - both safe
 	 * to call from any thread.  We pass NULL for dead_pool so we never
 	 * touch the target worker's per-scheduler dead_pool.
 	 */

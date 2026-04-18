@@ -1,5 +1,5 @@
 /*
- * tests/test_layer2.c — Layer 2 (Phase 3) test suite.
+ * tests/test_layer2.c - Layer 2 (Phase 3) test suite.
  *
  * Tests are added task by task as Phase 3 progresses.
  * This file currently covers:
@@ -7,12 +7,12 @@
  *             strand_scheduler_next_deadline, strand_scheduler_get_fd.
  *   Task 3.5: strand_fiber_spawn (within-worker path), advance nonblocking,
  *             FIFO run-queue ordering, budget limiting, shutdown error.
- *   Task 3.6: strand_fiber_yield — verify yield re-queues the fiber.
- *   Task 3.7: strand_fiber_sleep_until — timer fires, timer order.
- *   Task 3.8: strand_fiber_cancel — cancel timer, cancel runnable,
+ *   Task 3.6: strand_fiber_yield - verify yield re-queues the fiber.
+ *   Task 3.7: strand_fiber_sleep_until - timer fires, timer order.
+ *   Task 3.8: strand_fiber_cancel - cancel timer, cancel runnable,
  *             stale handle, generation increment on reuse.
- *   Task 3.9: stack cache — reuse, cap overflow, idle reclamation.
- *   Task 3.10: fiber-local storage — set/get across yield, destructor on
+ *   Task 3.9: stack cache - reuse, cap overflow, idle reclamation.
+ *   Task 3.10: fiber-local storage - set/get across yield, destructor on
  *             completion.
  *
  * See DEVELOPMENT.md §"Tests for Phase 3".
@@ -35,7 +35,7 @@
 #include "../src/strand_sched.h"
 
 /*
- * strand_test_clock_ns — mock clock used by the scheduler when built with
+ * strand_test_clock_ns - mock clock used by the scheduler when built with
  * -DSTRAND_TEST_CLOCK.  Tests advance time by writing to this variable
  * instead of sleeping.  See TESTING.md §2.3.
  */
@@ -133,7 +133,7 @@ test_scheduler_run_blocks(void)
 
 	/*
 	 * Thread must still be running (not returned early).  If the flag is
-	 * already set, strand_scheduler_run returned without being stopped —
+	 * already set, strand_scheduler_run returned without being stopped -
 	 * that is a failure.
 	 */
 	if (atomic_load_explicit(&g_run_blocks_done, memory_order_acquire)) {
@@ -147,7 +147,7 @@ test_scheduler_run_blocks(void)
 	/* Thread must complete within 500ms after stop. */
 	if (!wait_for_flag(&g_run_blocks_done, 500)) {
 		/*
-		 * Timed out — strand_scheduler_stop failed to interrupt the
+		 * Timed out - strand_scheduler_stop failed to interrupt the
 		 * worker.  Detach to avoid blocking the test process.
 		 */
 		pthread_detach(t);
@@ -209,7 +209,7 @@ test_stop_writes_wakeup_fd(void)
  *
  * Write a byte to the wakeup fd manually (simulating a stop signal),
  * then call strand_scheduler_advance.  Verify that:
- *   1. Advance returns STRAND_SCHED_IDLE (no fibers ran — the byte is not a fiber
+ *   1. Advance returns STRAND_SCHED_IDLE (no fibers ran - the byte is not a fiber
  *      event, it is a control signal).
  *   2. After advance, the wakeup fd is empty (Step 3 drained it).
  *
@@ -233,7 +233,7 @@ test_wakeup_fd_drained_as_control(void)
 
 	/*
 	 * Write to the write side of the wakeup channel.
-	 * On Linux wakeup_fd is an eventfd — we can write 8 bytes (uint64_t).
+	 * On Linux wakeup_fd is an eventfd - we can write 8 bytes (uint64_t).
 	 * On OpenBSD wakeup_pipe[1] is the write end of the pipe.
 	 * Access internal fields directly since tests include
 	 * strand_internal.h.
@@ -253,7 +253,7 @@ test_wakeup_fd_drained_as_control(void)
 
 	fd_read = strand_scheduler_get_fd(sched);
 
-	/* Advance must return STRAND_SCHED_IDLE — no fibers, no timer, no I/O. */
+	/* Advance must return STRAND_SCHED_IDLE - no fibers, no timer, no I/O. */
 	rc = strand_scheduler_advance(sched, NULL);
 	if (rc != STRAND_SCHED_IDLE) {
 		strand_scheduler_destroy(sched);
@@ -279,7 +279,7 @@ test_wakeup_fd_drained_as_control(void)
  */
 
 /* =========================================================================
- * Task 3.5 — strand_fiber_spawn, advance nonblocking, FIFO ordering,
+ * Task 3.5 - strand_fiber_spawn, advance nonblocking, FIFO ordering,
  *             budget limiting, shutdown error.
  *
  * Design note on fiber lifecycle in Phase 3 tests:
@@ -710,7 +710,7 @@ test_spawn_returns_error_after_stop(void)
 }
 
 /* =========================================================================
- * Task 3.6 — test_yield_requeues
+ * Task 3.6 - test_yield_requeues
  *
  * A fiber calls strand_fiber_yield() once, which re-queues it rather than
  * finishing it.  After the first advance call the fiber must NOT have
@@ -815,7 +815,7 @@ test_yield_requeues(void)
 }
 
 /* =========================================================================
- * Task 3.7 — test_timer_fires
+ * Task 3.7 - test_timer_fires
  *
  * A fiber calls strand_fiber_sleep_until with a future deadline.  The mock
  * clock is advanced past the deadline and then strand_scheduler_advance is
@@ -870,7 +870,7 @@ test_timer_fires(void)
 	/*
 	 * First advance: fiber runs, calls strand_fiber_sleep_until(2000),
 	 * parks on the timer heap, and returns control to the scheduler.
-	 * Clock is still at 1000 — deadline has not passed.
+	 * Clock is still at 1000 - deadline has not passed.
 	 */
 	strand_scheduler_advance(sched, NULL);
 	woke_before = atomic_load_explicit(&arg.woke, memory_order_acquire);
@@ -901,7 +901,7 @@ test_timer_fires(void)
 }
 
 /* =========================================================================
- * Task 3.7 — test_timer_order
+ * Task 3.7 - test_timer_order
  *
  * Two fibers sleep until different deadlines.  Fiber A sleeps until T=3000,
  * fiber B until T=2000.  The mock clock is advanced past both deadlines in
@@ -957,7 +957,7 @@ test_timer_order(void)
 	/* A: id=0, later deadline */
 	args[0].id = 0;
 	args[0].deadline_ns = 3000;
-	/* B: id=1, earlier deadline — must wake first */
+	/* B: id=1, earlier deadline - must wake first */
 	args[1].id = 1;
 	args[1].deadline_ns = 2000;
 
@@ -998,7 +998,7 @@ test_timer_order(void)
 }
 
 /* =========================================================================
- * Task 3.8 — test_cancel_timer
+ * Task 3.8 - test_cancel_timer
  *
  * A fiber calls strand_fiber_sleep_until with a far-future deadline.
  * Before the deadline would ever fire, strand_fiber_cancel is called from
@@ -1009,7 +1009,7 @@ test_timer_order(void)
  *   - Root fiber spawns the sleeper and records the handle; both run in
  *     the first advance (budget=64).  After that: root is done, sleeper is
  *     parked on the timer heap.
- *   - Host calls strand_fiber_cancel — removes from heap, sets
+ *   - Host calls strand_fiber_cancel - removes from heap, sets
  *     cancel_pending, moves sleeper to run queue.
  *   - Second advance runs the sleeper; sleep_until returns STRAND_CANCELLED.
  * =========================================================================
@@ -1061,7 +1061,7 @@ test_cancel_timer(void)
 	if (sched == NULL)
 		return (1);
 
-	/* Far-future deadline — must not fire on its own during this test. */
+	/* Far-future deadline - must not fire on its own during this test. */
 	strand_test_clock_ns = 1000;
 	child_arg.sched = sched;
 	child_arg.deadline_ns = 999999999ULL;
@@ -1111,7 +1111,7 @@ test_cancel_timer(void)
 }
 
 /* =========================================================================
- * Task 3.8 — test_cancel_runnable
+ * Task 3.8 - test_cancel_runnable
  *
  * Cancel a fiber that is in FIBER_RUNNABLE state (queued but not yet run).
  * Verify that cancel_pending is set on the descriptor.  Then drain the
@@ -1182,7 +1182,7 @@ test_cancel_runnable(void)
 	handle.generation = f->generation;
 
 	/*
-	 * Cancel before any advance — fiber is still FIBER_RUNNABLE.
+	 * Cancel before any advance - fiber is still FIBER_RUNNABLE.
 	 * cancel_pending must be set; state must remain FIBER_RUNNABLE.
 	 */
 	strand_fiber_cancel(handle);
@@ -1197,14 +1197,14 @@ test_cancel_runnable(void)
 
 	/*
 	 * Pass condition: cancel_pending was set after the cancel call.
-	 * (The fiber still ran — RUNNABLE cancel does not remove it from
-	 * the queue — but cancel_pending was 1 before it ran.)
+	 * (The fiber still ran - RUNNABLE cancel does not remove it from
+	 * the queue - but cancel_pending was 1 before it ran.)
 	 */
 	return (cancel_pending_after == 1 ? 0 : 1);
 }
 
 /* =========================================================================
- * Task 3.8 — test_stale_handle_noop
+ * Task 3.8 - test_stale_handle_noop
  *
  * Obtain a handle to a fiber, let the fiber finish (descriptor moves to
  * dead pool, generation incremented).  Call strand_fiber_cancel with the
@@ -1266,14 +1266,14 @@ test_stale_handle_noop(void)
 	handle.ptr = f;
 	handle.generation = f->generation;
 
-	/* Run the fiber — it calls t35_switch_back, which pushes the
+	/* Run the fiber - it calls t35_switch_back, which pushes the
 	 * descriptor to the dead pool (generation unchanged at this point). */
 	strand_scheduler_advance(sched, NULL);
 
 	/*
 	 * Now call cancel with the old handle.  The descriptor is in the dead
 	 * pool.  fiber_alloc would increment the generation on next reuse, but
-	 * that hasn't happened yet — the generation still matches.
+	 * that hasn't happened yet - the generation still matches.
 	 *
 	 * To produce a stale handle we need to reuse the descriptor once.
 	 * Spawn another fiber: fiber_alloc pops from dead pool and increments
@@ -1307,7 +1307,7 @@ test_stale_handle_noop(void)
 		run_queue_push(sched, f2);
 	}
 
-	/* Cancel with the old (now stale) handle — must return STALE. */
+	/* Cancel with the old (now stale) handle - must return STALE. */
 	rc = strand_fiber_cancel(handle);
 
 	/* Drain so destroy is clean. */
@@ -1319,7 +1319,7 @@ test_stale_handle_noop(void)
 }
 
 /* =========================================================================
- * Task 3.8 — test_generation_increments_on_reuse
+ * Task 3.8 - test_generation_increments_on_reuse
  *
  * Spawn fiber A, let it complete (descriptor returns to dead pool).
  * Allocate fiber B from the dead pool.  Verify B's generation is strictly
@@ -1376,12 +1376,12 @@ test_generation_increments_on_reuse(void)
 
 	gen_a = fa->generation;
 
-	/* Run A — t38_gen_fiber_fn calls t35_switch_back, returning the
+	/* Run A - t38_gen_fiber_fn calls t35_switch_back, returning the
 	 * descriptor to the dead pool. */
 	strand_scheduler_advance(sched, NULL);
 
 	/*
-	 * Now allocate fiber B — fiber_alloc must pop fa's descriptor from the
+	 * Now allocate fiber B - fiber_alloc must pop fa's descriptor from the
 	 * dead pool and increment its generation.
 	 */
 	fb = fiber_alloc(&sched->dead_pool);
@@ -1391,7 +1391,7 @@ test_generation_increments_on_reuse(void)
 	}
 	gen_b = fb->generation;
 
-	/* Return fb to the dead pool immediately — it was never fully set up. */
+	/* Return fb to the dead pool immediately - it was never fully set up. */
 	fiber_free(&sched->dead_pool, fb);
 
 	strand_scheduler_destroy(sched);
@@ -1401,7 +1401,7 @@ test_generation_increments_on_reuse(void)
 }
 
 /* =========================================================================
- * Task 3.9 — Stack cache
+ * Task 3.9 - Stack cache
  * =========================================================================
  */
 
@@ -1428,7 +1428,7 @@ test_stack_cache_reuse(void)
 	if (sched == NULL)
 		return (1);
 
-	/* Spawn and run first fiber — stack ends up in cache. */
+	/* Spawn and run first fiber - stack ends up in cache. */
 	if (t35_push_fiber(sched, t39_noop_fiber_fn, sched) != 0) {
 		strand_scheduler_destroy(sched);
 		return (1);
@@ -1442,7 +1442,7 @@ test_stack_cache_reuse(void)
 		return (1);
 	}
 
-	/* Spawn and run second fiber — should consume the cached stack. */
+	/* Spawn and run second fiber - should consume the cached stack. */
 	if (t35_push_fiber(sched, t39_noop_fiber_fn, sched) != 0) {
 		strand_scheduler_destroy(sched);
 		return (1);
@@ -1498,7 +1498,7 @@ test_stack_cache_cap(void)
 	/* Run all fibers in one advance (default budget covers them). */
 	strand_scheduler_advance(sched, NULL);
 
-	/* cache_len must equal cap exactly — the overflow stack was munmap'd. */
+	/* cache_len must equal cap exactly - the overflow stack was munmap'd. */
 	if (sched->cache_len != cap) {
 		strand_scheduler_destroy(sched);
 		return (1);
@@ -1537,7 +1537,7 @@ test_idle_reclamation(void)
 	floor = sched->cache_floor; /* 1 */
 	fill  = floor + 2;          /* push enough to exceed floor */
 
-	/* Push fill fibers while cache is empty — all stacks are mmapped. */
+	/* Push fill fibers while cache is empty - all stacks are mmapped. */
 	for (i = 0; i < fill; i++) {
 		if (t35_push_fiber(sched, t39_noop_fiber_fn, sched) != 0) {
 			strand_scheduler_destroy(sched);
@@ -1557,7 +1557,7 @@ test_idle_reclamation(void)
 	/* Advance mock clock past cache_idle_ns so idle reclamation fires. */
 	strand_test_clock_ns += sched->cache_idle_ns + 1;
 
-	/* Advance with empty run queue — reclamation should fire. */
+	/* Advance with empty run queue - reclamation should fire. */
 	strand_scheduler_advance(sched, NULL);
 
 	if (sched->cache_len > floor) {
@@ -1570,12 +1570,12 @@ test_idle_reclamation(void)
 }
 
 /* =========================================================================
- * Task 3.10 — Fiber-local storage
+ * Task 3.10 - Fiber-local storage
  * =========================================================================
  */
 
 /*
- * t310_set_get_arg — shared argument for test_fiber_local_set_get.
+ * t310_set_get_arg - shared argument for test_fiber_local_set_get.
  * The fiber sets a local pointer, yields, then reads it back via
  * strand_fiber_local_get and compares with the expected value.
  */
@@ -1644,7 +1644,7 @@ test_fiber_local_set_get(void)
 }
 
 /*
- * t310_dtor_arg — shared argument for test_fiber_local_destructor.
+ * t310_dtor_arg - shared argument for test_fiber_local_destructor.
  */
 struct t310_dtor_arg {
 	strand_scheduler_t *sched;

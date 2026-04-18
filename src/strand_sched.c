@@ -260,7 +260,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	/*
 	 * Bind TSan's current-thread fiber to scheduler_ctx so that context
 	 * switches originating from the scheduler side are properly tracked.
-	 * bind_current is the correct call here — scheduler_ctx IS the OS
+	 * bind_current is the correct call here - scheduler_ctx IS the OS
 	 * thread, not an independently created fiber.  Do NOT call
 	 * strand_fiber_tsan_init first: init creates a fresh fiber that
 	 * bind_current would immediately overwrite and leak.
@@ -479,7 +479,7 @@ timer_heap_remove(strand_scheduler_t *sched, strand_fiber_t *f)
 	strand_timer_entry_t *h = sched->timer_heap;
 	size_t n = sched->timer_heap_len;
 
-	/* Linear scan — heap is sorted by deadline, not by fiber pointer. */
+	/* Linear scan - heap is sorted by deadline, not by fiber pointer. */
 	for (i = 0; i < n; i++) {
 		if (h[i].fiber == f)
 			break;
@@ -619,7 +619,7 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 		sched->current_fiber = NULL;
 
 		/*
-		 * Pending stack free and fiber-local destructor —
+		 * Pending stack free and fiber-local destructor -
 		 * ARCHITECTURE.md §13, §4.2 Step 5, §4.7.
 		 *
 		 * The fiber stored its stack info and local destructor in
@@ -651,7 +651,7 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	}
 
 	/*
-	 * Idle reclamation — ARCHITECTURE.md §13.4.
+	 * Idle reclamation - ARCHITECTURE.md §13.4.
 	 *
 	 * When the run queue is empty (idle), track the start of the idle
 	 * period using the timestamp already computed at Step 2 (t).  If the
@@ -732,7 +732,7 @@ strand_scheduler_get_fd(const strand_scheduler_t *sched)
  * SAFETY: atomic_store with release ordering ensures all prior writes
  * (run queue state, fiber states) are visible to the worker before it
  * observes stop_flag == 1.  The atomic store alone cannot interrupt a
- * worker blocked in epoll_wait/kevent — the wakeup fd write below is
+ * worker blocked in epoll_wait/kevent - the wakeup fd write below is
  * required for that.  See ARCHITECTURE.md §4.2.
  *
  * SAFETY: writing to the wakeup fd unblocks any thread blocked in poll/
@@ -787,7 +787,7 @@ strand_scheduler_stop(strand_scheduler_t *sched)
  * ---------------------------------------------------------------------------
  */
 /*
- * strand_sched_current_tls — thread-local pointer to the scheduler running
+ * strand_sched_current_tls - thread-local pointer to the scheduler running
  * on this thread.  Set at the start of strand_scheduler_run and read by
  * strand_sched_current().  NULL on non-worker threads.
  *

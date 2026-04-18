@@ -1,5 +1,5 @@
 /*
- * strand_scope.c — structured concurrency scopes.
+ * strand_scope.c - structured concurrency scopes.
  * See ARCHITECTURE.md §7.
  */
 

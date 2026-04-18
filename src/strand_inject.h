@@ -2,7 +2,7 @@
 #define STRAND_INJECT_H
 
 /*
- * strand_inject.h — bounded MPSC inject queue internal interface.
+ * strand_inject.h - bounded MPSC inject queue internal interface.
  *
  * One inject queue per worker.  Items are enqueued by any thread
  * (cross-worker cancel, offload completion, host-thread spawn) and
@@ -38,7 +38,7 @@ void inject_queue_destroy(strand_inject_queue_t *q);
 /*
  * inject_queue_push_release -- enqueue one item with release memory ordering.
  *
- * ATOMIC: release semantics on the slot sequence store — publishes the
+ * ATOMIC: release semantics on the slot sequence store - publishes the
  * item write to the consumer.  Pairs with the acquire in
  * inject_queue_pop_acquire.  See ARCHITECTURE.md §6.3 and §6.7.
  *
@@ -51,7 +51,7 @@ void inject_queue_push_release(strand_inject_queue_t *q,
 /*
  * inject_queue_pop_acquire -- dequeue one item with acquire memory ordering.
  *
- * ATOMIC: acquire semantics on the slot sequence load — pairs with the
+ * ATOMIC: acquire semantics on the slot sequence load - pairs with the
  * release in inject_queue_push_release, establishing happens-before with
  * the item write.  See ARCHITECTURE.md §6.3 and §6.7.
  *

@@ -2,7 +2,7 @@
 #define STRAND_INTERNAL_H
 
 /*
- * strand_internal.h — internal shared types and compile-time assertions.
+ * strand_internal.h - internal shared types and compile-time assertions.
  * NOT included by embedders. Internal use only.
  *
  * Complete struct definitions, _Static_assert size/offset checks, and
@@ -30,7 +30,7 @@
 #endif
 
 /*
- * STRAND_DEBUG_ASSERT — active in debug builds (-DSTRAND_DEBUG).
+ * STRAND_DEBUG_ASSERT - active in debug builds (-DSTRAND_DEBUG).
  * Use for invariant checks that must not run in production.
  */
 #ifdef STRAND_DEBUG
@@ -115,7 +115,7 @@
 #endif
 
 /*
- * fiber_state_t — fiber execution state machine.
+ * fiber_state_t - fiber execution state machine.
  * See ARCHITECTURE.md §4.5 for all legal transitions and ownership rules.
  *
  * FIBER_CANCELLATION_PENDING is not a discrete state: it is a per-fiber
@@ -135,18 +135,18 @@ typedef enum {
 } fiber_state_t;
 
 /*
- * strand_fiber_t — complete fiber descriptor (Phase 2 + Phase 3 Task 3.1).
+ * strand_fiber_t - complete fiber descriptor (Phase 2 + Phase 3 Task 3.1).
  *
  * Layout invariants:
  *   - context MUST be at offset 0: assembly stubs in src/arch/ rely on it.
  *   - The _Static_assert below enforces this at compile time.
  *
  * fp_ctrl encoding:
- *   x86_64  — low 32 bits hold MXCSR; upper 32 bits unused.
- *   AArch64 — low 32 bits hold FPCR, high 32 bits hold FPSR.
+ *   x86_64  - low 32 bits hold MXCSR; upper 32 bits unused.
+ *   AArch64 - low 32 bits hold FPCR, high 32 bits hold FPSR.
  *
  * tsan_fiber is always present as void* regardless of whether TSan is
- * active — avoids ABI differences between TSan and non-TSan builds.
+ * active - avoids ABI differences between TSan and non-TSan builds.
  * It is NULL in non-TSan builds.
  *
  * Dead-pool recycling: when a descriptor is reused from the dead pool,
@@ -156,7 +156,7 @@ typedef enum {
  * pool; it is overwritten during normal use.
  */
 typedef struct strand_fiber {
-	strand_context_t context;    /* MUST be first — offset 0 */
+	strand_context_t context;    /* MUST be first - offset 0 */
 	uint64_t fp_ctrl;            /* MXCSR (x86_64) or FPCR|FPSR */
 	_Atomic fiber_state_t state; /* see fiber_state_t above */
 	strand_fiber_fn_t entry_fn;  /* user entry function */
@@ -176,7 +176,7 @@ typedef struct strand_fiber {
 	unsigned long
 	    valgrind_stack_id; /* VALGRIND_STACK_REGISTER id; 0 if unused */
 	/*
-	 * cancel_pending — set by strand_fiber_cancel when the fiber is
+	 * cancel_pending - set by strand_fiber_cancel when the fiber is
 	 * FIBER_RUNNABLE or FIBER_RUNNING (FIBER_CANCELLATION_PENDING flag).
 	 * Also consulted by strand_fiber_sleep_until on return to detect a
 	 * cancellation that raced with timer expiry.
@@ -184,7 +184,7 @@ typedef struct strand_fiber {
 	 */
 	_Atomic int cancel_pending;
 	/*
-	 * parked_fd — fd this fiber is parked on when state is
+	 * parked_fd - fd this fiber is parked on when state is
 	 * FIBER_PARKED_IO_READ or FIBER_PARKED_IO_WRITE.
 	 * Used by strand_fiber_cancel (Task 4.4) to find the fd table entry
 	 * without scanning the full poller table.
@@ -193,7 +193,7 @@ typedef struct strand_fiber {
 	 */
 	int parked_fd;
 	/*
-	 * io_result — result code set by the waker before pushing this fiber
+	 * io_result - result code set by the waker before pushing this fiber
 	 * to the run queue from an IO wait.  Read by strand_fiber_wait_readable
 	 * / strand_fiber_wait_writable on return from strand_context_switch.
 	 * Values: STRAND_OK (ready), STRAND_CANCELLED, STRAND_ERR_IO.
@@ -201,7 +201,7 @@ typedef struct strand_fiber {
 	 */
 	int io_result;
 	/*
-	 * home_sched — the scheduler that owns this fiber.
+	 * home_sched - the scheduler that owns this fiber.
 	 * Set at spawn time (strand_fiber_spawn) and used by
 	 * strand_fiber_cancel to access the run queue and timer heap without
 	 * requiring the caller to supply a scheduler pointer.
@@ -216,18 +216,18 @@ typedef struct strand_fiber {
  * Compile-time layout assertions. See CODING_STANDARDS.md §1.3.
  */
 _Static_assert(sizeof(strand_context_t) == STRAND_CONTEXT_SIZE,
-               "strand_context_t size changed — update assembly stubs");
+               "strand_context_t size changed - update assembly stubs");
 _Static_assert(offsetof(strand_fiber_t, context) == 0,
-               "context must be first field — assembly stubs assume offset 0");
+               "context must be first field - assembly stubs assume offset 0");
 _Static_assert(sizeof(strand_fiber_handle_t) == 16,
-               "strand_fiber_handle_t size changed — ptr (8) + generation (8)");
+               "strand_fiber_handle_t size changed - ptr (8) + generation (8)");
 
 /*
- * inject_item_type_t — discriminator for items carried by the inject queue.
+ * inject_item_type_t - discriminator for items carried by the inject queue.
  * See ARCHITECTURE.md §6.3.
  *
- * INJECT_CANCEL — cross-worker fiber cancel request; payload is cancel_handle.
- * INJECT_SPAWN  — host-thread fiber spawn; payload is a fully-initialised
+ * INJECT_CANCEL - cross-worker fiber cancel request; payload is cancel_handle.
+ * INJECT_SPAWN  - host-thread fiber spawn; payload is a fully-initialised
  *                 strand_fiber_t * to be pushed onto the worker's run queue.
  *                 Added in Task 5.4.
  */
@@ -237,7 +237,7 @@ typedef enum {
 } inject_item_type_t;
 
 /*
- * inject_item_t — one item in the bounded MPSC inject ring buffer.
+ * inject_item_t - one item in the bounded MPSC inject ring buffer.
  * The type field selects which union member is valid.
  */
 typedef struct inject_item {
@@ -249,9 +249,9 @@ typedef struct inject_item {
 } inject_item_t;
 
 /*
- * inject_slot_t — one slot in the ring buffer array.
+ * inject_slot_t - one slot in the ring buffer array.
  *
- * sequence — atomic sequence number used by the Vyukov MPSC algorithm.
+ * sequence - atomic sequence number used by the Vyukov MPSC algorithm.
  *   Initial value for slot[i] is i.
  *   After producer writes:   sequence = pos + 1  (release)
  *   After consumer reads:    sequence = pos + capacity (release)
@@ -263,19 +263,19 @@ typedef struct inject_slot {
 } inject_slot_t;
 
 /*
- * strand_inject_queue_t — bounded MPSC ring buffer, one per worker.
+ * strand_inject_queue_t - bounded MPSC ring buffer, one per worker.
  * See ARCHITECTURE.md §6.3 and strand_inject.c.
  *
- * slots    — heap-allocated ring of inject_slot_t; capacity must be power of 2.
- * capacity — number of slots; always a power of 2 >= 1.
- * mask     — capacity - 1; used instead of modulo.
- * head     — atomic producer position; multiple producers increment atomically.
- * tail     — consumer position; owned exclusively by the worker thread.
+ * slots    - heap-allocated ring of inject_slot_t; capacity must be power of 2.
+ * capacity - number of slots; always a power of 2 >= 1.
+ * mask     - capacity - 1; used instead of modulo.
+ * head     - atomic producer position; multiple producers increment atomically.
+ * tail     - consumer position; owned exclusively by the worker thread.
  *
  * Thread safety:
  *   head: written by any thread via atomic_fetch_add.
  *   tail: read/written only by the owning worker thread; plain size_t.
- *   slots[i].sequence: the synchronisation point — release on write,
+ *   slots[i].sequence: the synchronisation point - release on write,
  *     acquire on read.  See CODING_STANDARDS.md §4.2.
  */
 typedef struct strand_inject_queue {
@@ -287,11 +287,11 @@ typedef struct strand_inject_queue {
 } strand_inject_queue_t;
 
 /*
- * strand_stack_slot_t — one entry in the per-scheduler stack cache.
+ * strand_stack_slot_t - one entry in the per-scheduler stack cache.
  *
- * base       — mmap base (bottom of the allocation, includes guard page).
- * stack_size — usable stack size (excludes the guard page).
- * vg_id      — Valgrind stack registration ID; passed to
+ * base       - mmap base (bottom of the allocation, includes guard page).
+ * stack_size - usable stack size (excludes the guard page).
+ * vg_id      - Valgrind stack registration ID; passed to
  *              STRAND_VG_STACK_DEREGISTER on free.
  *
  * The guard page is always PAGE_SIZE bytes at base; usable stack is
@@ -304,7 +304,7 @@ typedef struct strand_stack_slot {
 } strand_stack_slot_t;
 
 /*
- * strand_timer_entry_t — one entry in the per-scheduler timer min-heap.
+ * strand_timer_entry_t - one entry in the per-scheduler timer min-heap.
  * Keyed on deadline_ns; ties are broken by insertion order (stable).
  * See ARCHITECTURE.md §4.2 Step 2.
  */
@@ -314,7 +314,7 @@ typedef struct strand_timer_entry {
 } strand_timer_entry_t;
 
 /*
- * strand_scheduler_t — complete single-worker fiber scheduler (Task 3.2).
+ * strand_scheduler_t - complete single-worker fiber scheduler (Task 3.2).
  *
  * Ownership:
  *   - All strand_fiber_t descriptors on the run queue or timer heap are
@@ -331,7 +331,7 @@ typedef struct strand_timer_entry {
  *   - The inject queue will have its own memory-ordering protocol in Phase 5.
  *
  * Wakeup fd:
- *   - Linux: eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK) — single int.
+ *   - Linux: eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK) - single int.
  *   - OpenBSD: pipe2([0]=read, [1]=write, O_CLOEXEC | O_NONBLOCK).
  *   - strand_scheduler_stop writes one byte to the write side to interrupt
  *     a blocked epoll_wait/kevent.  Step 3 of advance drains and discards
@@ -341,31 +341,31 @@ typedef struct strand_scheduler {
 	/*
 	 * Scheduler's own execution context.  When running inside advance,
 	 * context switches save here and resume the scheduler after the fiber
-	 * returns or yields.  stack_base and stack_size are 0/NULL — the
+	 * returns or yields.  stack_base and stack_size are 0/NULL - the
 	 * scheduler runs on the OS thread stack and does not own a fiber stack.
 	 */
 	strand_fiber_t scheduler_ctx;
 
-	/* Run queue — FIFO intrusive singly-linked list via fiber->next.
+	/* Run queue - FIFO intrusive singly-linked list via fiber->next.
 	 * run_head is the next fiber to run; run_tail is where new fibers
 	 * are appended.  Both are NULL when the queue is empty. */
 	strand_fiber_t *run_head;
 	strand_fiber_t *run_tail;
 	size_t run_queue_len;
 
-	/* Budget — max fibers to run per advance call.  Default 64. */
+	/* Budget - max fibers to run per advance call.  Default 64. */
 	size_t budget;
 
 	/* Currently executing fiber.  NULL when control is in the scheduler. */
 	strand_fiber_t *current_fiber;
 
-	/* Timer min-heap — binary heap keyed on deadline_ns (ascending).
+	/* Timer min-heap - binary heap keyed on deadline_ns (ascending).
 	 * Dynamically allocated; grows by doubling when full. */
 	strand_timer_entry_t *timer_heap;
 	size_t timer_heap_len;
 	size_t timer_heap_cap;
 
-	/* Wakeup fd — used by strand_scheduler_stop to interrupt a blocked
+	/* Wakeup fd - used by strand_scheduler_stop to interrupt a blocked
 	 * worker.  Bytes written here are control signals; drained in Step 3
 	 * of strand_scheduler_advance.  See ARCHITECTURE.md §4.2. */
 #ifdef STRAND_LINUX
@@ -382,22 +382,22 @@ typedef struct strand_scheduler {
 	 * inspects the flag. */
 	_Atomic int stop_flag;
 
-	/* Inject queue — bounded MPSC ring buffer (Task 5.1).
+	/* Inject queue - bounded MPSC ring buffer (Task 5.1).
 	 * Capacity set from cfg->inject_cap at create time.
 	 * See ARCHITECTURE.md §6.3 and strand_inject.c. */
 	strand_inject_queue_t inject_queue;
 
-	/* I/O poller — NULL in Phase 3; initialised in Phase 4 (Task 4.1). */
+	/* I/O poller - NULL in Phase 3; initialised in Phase 4 (Task 4.1). */
 	strand_poller_t *poller;
 
-	/* Stack cache — LIFO, per-scheduler.  Only stacks of matching size
+	/* Stack cache - LIFO, per-scheduler.  Only stacks of matching size
 	 * are cached; non-matching stacks are munmap'd immediately.
 	 * See ARCHITECTURE.md §13 for cap, floor, and idle reclamation. */
 	strand_stack_slot_t *stack_cache;
 	size_t cache_len;
 
 	/*
-	 * Pending stack free — written by a completing fiber (via
+	 * Pending stack free - written by a completing fiber (via
 	 * t35_switch_back in tests; via the trampoline in production) to
 	 * communicate its stack back to the scheduler.  The fiber MUST NOT
 	 * call munmap on its own stack while still executing on it; instead
@@ -407,14 +407,14 @@ typedef struct strand_scheduler {
 	 * NULL in pending_free_base means no pending free.
 	 * SAFETY: only ever written from within the running fiber (single
 	 * threaded per scheduler) and read/cleared by the scheduler on the
-	 * same thread immediately after the switch — no synchronisation
+	 * same thread immediately after the switch - no synchronisation
 	 * needed.
 	 */
 	void         *pending_free_base;
 	size_t        pending_free_size;
 	unsigned long pending_free_vg_id;
 	/*
-	 * Pending fiber-local destructor — copied from the completing fiber's
+	 * Pending fiber-local destructor - copied from the completing fiber's
 	 * local_dtor/local_ptr before the context switch so the scheduler can
 	 * invoke the destructor after the switch, while on its own stack.
 	 * pending_free_local_dtor == NULL means no destructor to call.
@@ -426,7 +426,7 @@ typedef struct strand_scheduler {
 	uint64_t cache_idle_ns; /* idle reclamation timeout (ns) */
 	uint64_t last_idle_ns;  /* last observed idle timestamp */
 
-	/* Dead pool — reusable strand_fiber_t descriptors linked via next.
+	/* Dead pool - reusable strand_fiber_t descriptors linked via next.
 	 * fiber_alloc pops from here when available; fiber_free pushes here. */
 	strand_fiber_t *dead_pool;
 
@@ -436,11 +436,11 @@ typedef struct strand_scheduler {
 } strand_scheduler_t;
 
 /*
- * strand_worker_t — one worker thread and its scheduler.
+ * strand_worker_t - one worker thread and its scheduler.
  *
- * sched    — heap-allocated scheduler owned by this worker.
- * thread   — the OS thread running strand_scheduler_run.
- * runtime  — back-pointer to the owning runtime (for shutdown checks).
+ * sched    - heap-allocated scheduler owned by this worker.
+ * thread   - the OS thread running strand_scheduler_run.
+ * runtime  - back-pointer to the owning runtime (for shutdown checks).
  *
  * Thread safety: read-only after strand_worker_start returns.
  * strand_worker_stop / strand_worker_join may be called from any thread.
@@ -450,7 +450,7 @@ typedef struct strand_worker {
         pthread_t           thread;
         struct strand_runtime *runtime;
         /*
-         * joined — set to 1 after pthread_join completes on this worker.
+         * joined - set to 1 after pthread_join completes on this worker.
          * Prevents strand_runtime_destroy from double-joining a worker
          * that was already joined by strand_worker_join.
          * Protected by the runtime spinlock during destroy; set by join.
@@ -459,18 +459,18 @@ typedef struct strand_worker {
 } strand_worker_t;
 
 /*
- * strand_runtime_t — multi-worker runtime registry.
+ * strand_runtime_t - multi-worker runtime registry.
  *
- * workers[]      — fixed-size array of registered worker pointers.
- * worker_count   — number of registered workers; protected by spinlock.
- * workers_cap    — capacity of workers[] (set at init from max_workers).
- * spinlock       — CAS-based spinlock protecting workers[] and worker_count.
+ * workers[]      - fixed-size array of registered worker pointers.
+ * worker_count   - number of registered workers; protected by spinlock.
+ * workers_cap    - capacity of workers[] (set at init from max_workers).
+ * spinlock       - CAS-based spinlock protecting workers[] and worker_count.
  *                  Round-robin counter is accessed WITHOUT the spinlock.
- * rr_counter     — _Atomic round-robin position; incremented on each
+ * rr_counter     - _Atomic round-robin position; incremented on each
  *                  host-thread spawn; mod worker_count gives the slot.
- *                  Accessed without the spinlock — a torn read at best
+ *                  Accessed without the spinlock - a torn read at best
  *                  selects a suboptimal worker, not a wrong one.
- * shutdown_flag  — set atomically when the first worker is stopped.
+ * shutdown_flag  - set atomically when the first worker is stopped.
  *                  All spawn paths check this before proceeding.
  *
  * See ARCHITECTURE.md §6.1, §6.2, §6.4.

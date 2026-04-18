@@ -1,5 +1,5 @@
 /*
- * strand_poller.c — I/O multiplexing: epoll (Linux) and kqueue (OpenBSD).
+ * strand_poller.c - I/O multiplexing: epoll (Linux) and kqueue (OpenBSD).
  * See ARCHITECTURE.md §5.
  *
  * Task 4.1: strand_poller_t and fd waiter hash table implementation.
@@ -52,7 +52,7 @@ poller_token_arm(uint64_t token)
  */
 
 /*
- * next_pow2 — round n up to the next power of 2.
+ * next_pow2 - round n up to the next power of 2.
  * Returns n unchanged if n is already a power of 2.
  * n must be > 0.
  */
@@ -67,7 +67,7 @@ next_pow2(size_t n)
 }
 
 /*
- * fd_hash — primary slot index for fd in a table of cap slots.
+ * fd_hash - primary slot index for fd in a table of cap slots.
  * cap must be a power of 2.
  */
 static size_t
@@ -77,7 +77,7 @@ fd_hash(int fd, size_t cap)
 }
 
 /*
- * fd_table_grow — double the table capacity and rehash all live entries.
+ * fd_table_grow - double the table capacity and rehash all live entries.
  * Tombstones are dropped on rehash (they are no longer needed in the new
  * table because all live entries are inserted into empty slots).
  * Returns STRAND_OK on success, STRAND_ERR_NOMEM on allocation failure.
@@ -120,12 +120,12 @@ fd_table_grow(strand_poller_t *p)
  */
 
 /*
- * poller_create — allocate and initialise an I/O poller.
+ * poller_create - allocate and initialise an I/O poller.
  *
  * Creates the OS polling fd (epoll on Linux, kqueue on OpenBSD) and
  * allocates the open-addressed fd waiter hash table.
  *
- * initial_cap — desired initial table capacity; rounded up to the next
+ * initial_cap - desired initial table capacity; rounded up to the next
  *               power of 2.  Pass 0 to use FD_TABLE_INITIAL_CAP.
  * Returns NULL on any error.
  */
@@ -181,7 +181,7 @@ poller_create(size_t initial_cap)
 }
 
 /*
- * poller_destroy — close the polling fd and free all memory.
+ * poller_destroy - close the polling fd and free all memory.
  *
  * Debug builds assert that no active read or write waiters remain in the
  * table.  It is a programming error to destroy the poller while fibers are
@@ -222,7 +222,7 @@ poller_destroy(strand_poller_t *p)
  */
 
 /*
- * fd_table_lookup — find the entry for fd using linear probing.
+ * fd_table_lookup - find the entry for fd using linear probing.
  *
  * Probe sequence: hash(fd), hash(fd)+1, ..., wrapping at table_cap.
  * An FD_ENTRY_EMPTY slot terminates the probe (fd cannot be past it).
@@ -250,7 +250,7 @@ fd_table_lookup(strand_poller_t *p, int fd)
 }
 
 /*
- * fd_table_insert — add a new entry for fd and return a pointer to it.
+ * fd_table_insert - add a new entry for fd and return a pointer to it.
  *
  * The caller must have verified via fd_table_lookup that fd is not already
  * in the table.
@@ -305,14 +305,14 @@ fd_table_insert(strand_poller_t *p, int fd)
 	}
 
 	/*
-	 * Table entirely full — should never happen after the 75% load-factor
+	 * Table entirely full - should never happen after the 75% load-factor
 	 * check above, but guard against it defensively.
 	 */
 	return NULL;
 }
 
 /*
- * fd_table_remove — remove the entry for fd from the table.
+ * fd_table_remove - remove the entry for fd from the table.
  * ...existing code...
  */
 void
@@ -346,7 +346,7 @@ fd_table_remove(strand_poller_t *p, int fd)
 }
 
 /* ---------------------------------------------------------------------------
- * poller_arm_fd — arm or re-arm an fd in the OS poller.
+ * poller_arm_fd - arm or re-arm an fd in the OS poller.
  *
  * Linux: issues epoll_ctl ADD (NOT_REGISTERED) or MOD (otherwise) with
  *        new_mask (caller is responsible for including EPOLLET | EPOLLONESHOT
@@ -415,7 +415,7 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 }
 
 /* ---------------------------------------------------------------------------
- * fiber_io_wake — transition a parked IO fiber to RUNNABLE.
+ * fiber_io_wake - transition a parked IO fiber to RUNNABLE.
  *
  * Sets io_result on the fiber, transitions state to FIBER_RUNNABLE, and
  * appends the fiber to the scheduler run queue.  Called from
@@ -433,7 +433,7 @@ fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f, int result)
 }
 
 /* ---------------------------------------------------------------------------
- * fiber_wait_io — common implementation for wait_readable / wait_writable.
+ * fiber_wait_io - common implementation for wait_readable / wait_writable.
  *
  * dir: 0 = read (FIBER_PARKED_IO_READ), 1 = write (FIBER_PARKED_IO_WRITE).
  *
@@ -487,7 +487,7 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 
 	/*
 	 * Reject duplicate waiter in the requested direction.
-	 * Multiple waiters in the same direction are forbidden — see
+	 * Multiple waiters in the same direction are forbidden - see
 	 * ARCHITECTURE.md §5.3.
 	 */
 	if (dir == 0 && e->read_waiter != NULL)
@@ -564,7 +564,7 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 }
 
 /* ---------------------------------------------------------------------------
- * poller_deliver_event — process one event returned by epoll_wait / kevent.
+ * poller_deliver_event - process one event returned by epoll_wait / kevent.
  *
  * Linux path:
  *   - NULL data.ptr: wakeup fd sentinel; skip fiber delivery.
@@ -613,7 +613,7 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 	 * SAFETY: EPOLLERR and EPOLLHUP are delivered by the kernel
 	 * unconditionally, regardless of the registered interest mask.
 	 * Any fiber waiting on this fd in any direction must be woken
-	 * with an error result — leaving a fiber parked on an fd in an
+	 * with an error result - leaving a fiber parked on an fd in an
 	 * error or hangup state would result in it parking forever.
 	 * These flags must be checked before EPOLLIN/EPOLLOUT.
 	 * See ARCHITECTURE.md §5.6.
@@ -656,7 +656,7 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 
 	/*
 	 * If one direction woke and the other still has a waiter, re-arm the
-	 * remaining direction.  EPOLLET only fires on state transitions — if
+	 * remaining direction.  EPOLLET only fires on state transitions - if
 	 * the remaining direction was already ready before the MOD call, no
 	 * new edge will be generated and the waiter would park forever.
 	 * A zero-timeout epoll_wait immediately after the MOD call detects
@@ -678,7 +678,7 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 			 * ready before the MOD call and no new edge occurred).
 			 * A zero-timeout epoll_wait is required to detect this.
 			 * ALL events returned by this zero-timeout poll must be
-			 * processed — EPOLLONESHOT has consumed them from the
+			 * processed - EPOLLONESHOT has consumed them from the
 			 * kernel queue and they will not reappear in any
 			 * subsequent poll, regardless of which fd they belong to.
 			 * See ARCHITECTURE.md §5.5.
@@ -759,7 +759,7 @@ poller_deliver_event(strand_scheduler_t *sched, struct kevent *kev)
 #endif /* STRAND_OPENBSD */
 
 /* ---------------------------------------------------------------------------
- * poller_poll — drain the OS polling fd and deliver all ready events.
+ * poller_poll - drain the OS polling fd and deliver all ready events.
  *
  * Calls epoll_wait (Linux) or kevent (OpenBSD) with the given timeout_ms.
  * Each returned event is passed to poller_deliver_event, which wakes any
@@ -802,7 +802,7 @@ poller_poll(strand_scheduler_t *sched, int timeout_ms)
 }
 
 /* ---------------------------------------------------------------------------
- * poller_cancel_io — cancel a fiber parked on an I/O wait (same-worker).
+ * poller_cancel_io - cancel a fiber parked on an I/O wait (same-worker).
  *
  * Infers direction from f->state, clears the waiter from the entry, updates
  * the OS registration, removes the entry if empty, and wakes f with
@@ -823,7 +823,7 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 
 	/*
 	 * SAFETY: the fd table entry must exist while any fiber is parked on
-	 * the fd.  A missing entry indicates a lifecycle bug — the entry was
+	 * the fd.  A missing entry indicates a lifecycle bug - the entry was
 	 * removed while a waiter was still registered.
 	 * See ARCHITECTURE.md §5.2.
 	 */
@@ -845,7 +845,7 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 		/*
 		 * Other direction still has a waiter: MOD the registration to
 		 * cover only the remaining direction.  No post-cancel readiness
-		 * check is needed — the remaining waiter will wake on the next
+		 * check is needed - the remaining waiter will wake on the next
 		 * genuine edge.  See ARCHITECTURE.md §5.8.
 		 */
 		uint32_t new_mask = EPOLLET | EPOLLONESHOT;
@@ -856,7 +856,7 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 	} else {
 		/*
 		 * No remaining waiters: remove the fd from epoll entirely.
-		 * Errors are ignored — the fd may have been closed concurrently
+		 * Errors are ignored - the fd may have been closed concurrently
 		 * by the application (same-worker path only here; cross-worker
 		 * close races are a Phase 5 concern).
 		 */
@@ -876,7 +876,7 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 		 * Delete the filter for the cancelled direction.
 		 * EVFILT_READ and EVFILT_WRITE are independent; the other
 		 * direction's filter, if registered, remains active.
-		 * Errors are ignored — the filter may already be gone if the
+		 * Errors are ignored - the filter may already be gone if the
 		 * fd was closed by the application.
 		 * See ARCHITECTURE.md §5.7 and §5.8.
 		 */
@@ -895,7 +895,7 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 }
 
 /* ---------------------------------------------------------------------------
- * poller_register_wakeup_fd — register the scheduler wakeup fd with the
+ * poller_register_wakeup_fd - register the scheduler wakeup fd with the
  * poller OS instance so that a write to the wakeup channel interrupts a
  * blocked epoll_wait / kevent call.
  *
@@ -942,7 +942,7 @@ poller_register_wakeup_fd(strand_poller_t *p, int fd)
  */
 
 /*
- * strand_fiber_wait_readable — park the current fiber until fd is readable.
+ * strand_fiber_wait_readable - park the current fiber until fd is readable.
  * See ARCHITECTURE.md §5 and include/strand.h for the full contract.
  */
 int
@@ -952,7 +952,7 @@ strand_fiber_wait_readable(strand_scheduler_t *sched, int fd)
 }
 
 /*
- * strand_fiber_wait_writable — park the current fiber until fd is writable.
+ * strand_fiber_wait_writable - park the current fiber until fd is writable.
  * See ARCHITECTURE.md §5 and include/strand.h for the full contract.
  */
 int

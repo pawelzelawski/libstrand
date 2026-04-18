@@ -1,5 +1,5 @@
 /*
- * tests/test_harness.h — minimal test harness
+ * tests/test_harness.h - minimal test harness
  *
  * Each test function has the signature:
  *   static int test_foo(void);
@@ -23,7 +23,7 @@ extern int tests_run;
 extern int tests_passed;
 
 /*
- * RUN(name, fn) — run one test function and record the result.
+ * RUN(name, fn) - run one test function and record the result.
  */
 #define RUN(name, fn)                                                          \
 	do {                                                                   \

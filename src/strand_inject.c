@@ -1,5 +1,5 @@
 /*
- * strand_inject.c — bounded MPSC inject ring buffer (Task 5.1).
+ * strand_inject.c - bounded MPSC inject ring buffer (Task 5.1).
  *
  * Algorithm: Dmitry Vyukov's MPMC queue adapted for single-consumer use.
  * Each slot carries an atomic sequence number that acts as the exclusive
@@ -18,7 +18,7 @@
  *   3. Spin until slot->sequence == pos (slot freed by consumer).
  *      Uses exponential backoff.  This is the "queue full" wait path.
  *   4. Write item into slot->item.
- *   5. ATOMIC: store slot->sequence = pos + 1, release — publishes item
+ *   5. ATOMIC: store slot->sequence = pos + 1, release - publishes item
  *      to the consumer.  Pairs with the acquire in pop.
  *
  * Consumer protocol (inject_queue_pop_acquire):
@@ -26,7 +26,7 @@
  *   2. ATOMIC: load slot->sequence, acquire.
  *   3. If sequence == q->tail + 1: item is ready.
  *      Read item.  ATOMIC: store slot->sequence = q->tail + capacity,
- *      release — frees the slot for a future producer.
+ *      release - frees the slot for a future producer.
  *      Advance q->tail.  Return 1.
  *   4. If sequence != q->tail + 1: queue is empty.  Return 0.
  *
@@ -171,7 +171,7 @@ inject_queue_push_release(strand_inject_queue_t *q,
 	 * pos == i sees the slot immediately.  On subsequent laps the
 	 * consumer sets sequence = pos (== old_tail + capacity).
 	 *
-	 * ATOMIC: acquire on load — ensures we do not observe a stale
+	 * ATOMIC: acquire on load - ensures we do not observe a stale
 	 * sequence from a previous producer–consumer cycle.
 	 */
 	backoff = 0;
@@ -187,7 +187,7 @@ inject_queue_push_release(strand_inject_queue_t *q,
 	slot->item = *item;
 
 	/*
-	 * ATOMIC: release on sequence store — publishes the item write to
+	 * ATOMIC: release on sequence store - publishes the item write to
 	 * the consumer.  Pairs with the acquire in inject_queue_pop_acquire.
 	 * See CODING_STANDARDS.md §4.2 and ARCHITECTURE.md §6.3.
 	 */
@@ -206,7 +206,7 @@ inject_queue_pop_acquire(strand_inject_queue_t *q, inject_item_t *item)
 	slot = &q->slots[pos & q->mask];
 
 	/*
-	 * ATOMIC: acquire on sequence load — pairs with the release in
+	 * ATOMIC: acquire on sequence load - pairs with the release in
 	 * inject_queue_push_release.  Establishes happens-before with the
 	 * item write, making slot->item visible to us.
 	 * See CODING_STANDARDS.md §4.2 and ARCHITECTURE.md §6.3, §6.7.
@@ -220,7 +220,7 @@ inject_queue_pop_acquire(strand_inject_queue_t *q, inject_item_t *item)
 	*item = slot->item;
 
 	/*
-	 * ATOMIC: release on sequence store — frees this slot for a future
+	 * ATOMIC: release on sequence store - frees this slot for a future
 	 * producer that has claimed pos + capacity.
 	 */
 	atomic_store_explicit(&slot->sequence, pos + q->capacity,
@@ -255,7 +255,7 @@ inject_queue_drain(strand_scheduler_t *sched)
 			run_queue_push(sched, item.u.fiber);
 			break;
 		default:
-			/* Unknown type — silently ignore (forward compat). */
+			/* Unknown type - silently ignore (forward compat). */
 			break;
 		}
 	}

@@ -1,5 +1,5 @@
 /*
- * strand_fiber.c — fiber descriptor lifecycle, stack cache, fiber-local
+ * strand_fiber.c - fiber descriptor lifecycle, stack cache, fiber-local
  * storage. See ARCHITECTURE.md §4.5, §13.
  */
 
@@ -20,7 +20,7 @@
 #include "strand_poller.h"
 
 /*
- * page_size() — system page size, cached after the first call.
+ * page_size() - system page size, cached after the first call.
  * sysconf(_SC_PAGESIZE) is idempotent; the one-time race in a multi-threaded
  * context is safe because both threads would write the same value.
  */
@@ -42,11 +42,11 @@ page_size(void)
 }
 
 /*
- * stack_alloc — allocate a fiber stack with a guard page.
+ * stack_alloc - allocate a fiber stack with a guard page.
  *
  * Layout of the mmap region (low address to high address):
  *
- *   [guard page — PROT_NONE][usable stack — PROT_READ|PROT_WRITE]
+ *   [guard page - PROT_NONE][usable stack - PROT_READ|PROT_WRITE]
  *   <-- PAGE_SIZE ----------><-- stack_size ---------------------->
  *
  * The stack grows downward; the fiber uses the top of the usable region.
@@ -91,8 +91,8 @@ stack_alloc(size_t stack_size, unsigned long *vg_id_out)
 	}
 
 	/*
-	 * Register the usable portion — from just above the guard page to
-	 * the top of the mapped region — with Valgrind.  This is a no-op when
+	 * Register the usable portion - from just above the guard page to
+	 * the top of the mapped region - with Valgrind.  This is a no-op when
 	 * not running under Valgrind.  See TECH_STACK.md §7.1.
 	 */
 	*vg_id_out = STRAND_VG_STACK_REGISTER((char *)base + pgsz,
@@ -102,7 +102,7 @@ stack_alloc(size_t stack_size, unsigned long *vg_id_out)
 }
 
 /*
- * stack_free — deregister the fiber stack from Valgrind and unmap it.
+ * stack_free - deregister the fiber stack from Valgrind and unmap it.
  *
  * base must be the mmap base returned by stack_alloc (not the usable base).
  * vg_id must be the Valgrind ID returned via stack_alloc's vg_id_out.
@@ -121,7 +121,7 @@ stack_free(void *base, size_t stack_size, unsigned long vg_id)
 	munmap(base, stack_size + pgsz);
 }
 /*
- * strand_fiber_tsan_init — initialise the TSan fiber handle on a newly
+ * strand_fiber_tsan_init - initialise the TSan fiber handle on a newly
  * allocated strand_fiber_t.  Must be called once per descriptor before any
  * context switch involving this fiber.  In non-TSan builds the macro is a
  * no-op.
@@ -138,7 +138,7 @@ strand_fiber_tsan_init(strand_fiber_t *f)
 }
 
 /*
- * strand_fiber_tsan_destroy — destroy the TSan handle when a strand_fiber_t is
+ * strand_fiber_tsan_destroy - destroy the TSan handle when a strand_fiber_t is
  * being freed or returned to the dead pool.  Must be called after the fiber
  * has finished and will never be switched to again.  In non-TSan builds the
  * macro is a no-op.
@@ -156,7 +156,7 @@ strand_fiber_tsan_destroy(strand_fiber_t *f)
 }
 
 /*
- * strand_fiber_tsan_bind_current — bind descriptor to current thread/fiber
+ * strand_fiber_tsan_bind_current - bind descriptor to current thread/fiber
  * TSan context. This is for scheduler/root contexts that represent the
  * currently running thread rather than a separately created fiber context.
  */
@@ -215,11 +215,11 @@ strand_fiber_entry_start(void *varg)
 }
 
 /*
- * sched_stack_alloc — cache-aware stack allocator.
+ * sched_stack_alloc - cache-aware stack allocator.
  *
  * Checks the top cache slot first.  If it has a matching size, pops and
  * returns it (LIFO cache hit).  Otherwise calls the raw stack_alloc.
- * Only the top slot is checked — different-sized stacks cannot be used
+ * Only the top slot is checked - different-sized stacks cannot be used
  * interchangeably (ARCHITECTURE.md §13, DEVELOPMENT.md §3.9).
  * See ARCHITECTURE.md §13.
  */
@@ -243,11 +243,11 @@ sched_stack_alloc(strand_scheduler_t *sched, size_t stack_size,
 }
 
 /*
- * sched_stack_free — cache-aware stack release.
+ * sched_stack_free - cache-aware stack release.
  *
  * Pushes the stack to the cache top (LIFO) if space is available.
  * If the cache is at capacity, calls stack_free immediately (overflow
- * policy: discard the incoming stack — ARCHITECTURE.md §13.3).
+ * policy: discard the incoming stack - ARCHITECTURE.md §13.3).
  * base must be the mmap base (includes the guard page at the low end).
  * See ARCHITECTURE.md §13.
  */
@@ -312,7 +312,7 @@ fiber_alloc(strand_fiber_t **dead_pool)
 }
 
 /*
- * fiber_free — return a finished fiber descriptor to the dead pool.
+ * fiber_free - return a finished fiber descriptor to the dead pool.
  *
  * The fiber stack must be freed via stack_free() before this call.
  * The next pointer is repurposed as the dead-pool intrusive link.
@@ -337,7 +337,7 @@ fiber_free(strand_fiber_t **dead_pool, strand_fiber_t *f)
 }
 
 /* ---------------------------------------------------------------------------
- * strand_fiber_spawn — spawn a new fiber on a scheduler.
+ * strand_fiber_spawn - spawn a new fiber on a scheduler.
  *
  * Phase 3 within-worker path only.  Host-thread spawning (via the inject
  * queue) is added in Phase 5 (Task 5.4).
@@ -345,7 +345,7 @@ fiber_free(strand_fiber_t **dead_pool, strand_fiber_t *f)
  * Returns STRAND_OK on success; *out receives the handle.
  * Returns STRAND_ERR_SHUTDOWN if the scheduler has been stopped.
  * Returns STRAND_ERR_WRONGCTX if called from the host thread
- *   (sched->current_fiber is NULL — i.e. control is not inside a fiber).
+ *   (sched->current_fiber is NULL - i.e. control is not inside a fiber).
  * Returns STRAND_ERR_NOMEM on allocation failure.
  * See ARCHITECTURE.md §4.5 and §4.6.
  * ---------------------------------------------------------------------------
@@ -411,7 +411,7 @@ strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 }
 
 /* ---------------------------------------------------------------------------
- * strand_fiber_yield — voluntarily yield the current fiber.
+ * strand_fiber_yield - voluntarily yield the current fiber.
  *
  * Transitions the calling fiber FIBER_RUNNING -> FIBER_RUNNABLE, appends it
  * to the run queue tail, then switches back to the scheduler.  Control
@@ -449,7 +449,7 @@ strand_fiber_yield(strand_scheduler_t *sched)
 }
 
 /* ---------------------------------------------------------------------------
- * strand_fiber_sleep_until — park the current fiber until a deadline.
+ * strand_fiber_sleep_until - park the current fiber until a deadline.
  *
  * Transitions FIBER_RUNNING -> FIBER_PARKED_TIMER, inserts (deadline_ns, f)
  * into the timer heap, then switches back to the scheduler.  Execution
@@ -457,7 +457,7 @@ strand_fiber_yield(strand_scheduler_t *sched)
  * heap and puts the fiber back into the run queue.
  *
  * On return, the cancel_pending flag is checked and cleared.  If it was set
- * (by a concurrent strand_fiber_cancel — Task 3.8), STRAND_CANCELLED is
+ * (by a concurrent strand_fiber_cancel - Task 3.8), STRAND_CANCELLED is
  * returned.  Otherwise STRAND_OK.
  *
  * Must be called from inside a running fiber.  Debug builds assert this.
@@ -485,7 +485,7 @@ strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns)
 
 	/*
 	 * Insert into the timer min-heap.  On allocation failure the fiber
-	 * cannot park — return an error without switching context.
+	 * cannot park - return an error without switching context.
 	 * (Extremely rare; heap only grows on capacity increase.)
 	 */
 	if (timer_heap_push(sched, deadline_ns, f) != 0) {
@@ -510,7 +510,7 @@ strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns)
 }
 
 /* ---------------------------------------------------------------------------
- * strand_fiber_cancel — cancel a fiber by ABA-safe handle.
+ * strand_fiber_cancel - cancel a fiber by ABA-safe handle.
  *
  * Phase 3: timer and run-queue states.
  * Phase 4 (Task 4.4): I/O parked states (FIBER_PARKED_IO_READ/WRITE).
@@ -596,7 +596,7 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 
 	case FIBER_FINISHED:
 	case FIBER_NEW:
-		/* No-op — fiber is not in a cancellable state. */
+		/* No-op - fiber is not in a cancellable state. */
 		break;
 
 	case FIBER_PARKED_IO_READ:
@@ -613,7 +613,7 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 	case FIBER_PARKED_OFFLOAD:
 	case FIBER_PARKED_CHANNEL:
 		/*
-		 * Placeholder — these states are handled when the respective
+		 * Placeholder - these states are handled when the respective
 		 * layers are implemented:
 		 *   FIBER_PARKED_OFFLOAD: Phase 5 (Task 5.5)
 		 *   FIBER_PARKED_CHANNEL: Phase 6
@@ -625,11 +625,11 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 }
 
 /* ---------------------------------------------------------------------------
- * strand_fiber_local_set — store a fiber-local pointer with destructor.
+ * strand_fiber_local_set - store a fiber-local pointer with destructor.
  *
  * Sets local_ptr and local_dtor on the currently running fiber.  The
  * scheduler calls the destructor (if non-NULL) with the stored pointer
- * immediately after the fiber completes and the context switch returns —
+ * immediately after the fiber completes and the context switch returns -
  * see the pending_free processing block in strand_scheduler_advance.
  *
  * Must be called from inside a fiber.  Debug builds assert; release builds
@@ -657,7 +657,7 @@ strand_fiber_local_set(strand_scheduler_t *sched, void *ptr,
 }
 
 /* ---------------------------------------------------------------------------
- * strand_fiber_local_get — retrieve the fiber-local pointer.
+ * strand_fiber_local_get - retrieve the fiber-local pointer.
  *
  * Returns current_fiber->local_ptr.  Returns NULL if called from the host
  * thread (debug builds assert).

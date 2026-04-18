@@ -1,5 +1,5 @@
 /*
- * strand_context.c — C wrapper around the assembly context swap.
+ * strand_context.c - C wrapper around the assembly context swap.
  * errno save/restore, MXCSR/FPCR save/restore, sanitizer hooks.
  * See ARCHITECTURE.md §3.4, §3.7.
  */
@@ -12,7 +12,7 @@
 #include "strand_internal.h"
 
 /*
- * fp_ctrl_get / fp_ctrl_set — save and restore floating-point control
+ * fp_ctrl_get / fp_ctrl_set - save and restore floating-point control
  * registers around every context swap. Called only from
  * strand_context_switch; not a public interface.
  *
@@ -70,7 +70,7 @@ fp_ctrl_set(uint64_t ctrl)
 #endif
 
 /*
- * strand_context_switch — switch execution between two fibers.
+ * strand_context_switch - switch execution between two fibers.
  *
  * Operation (in order):
  *   1. Save errno.
@@ -80,7 +80,7 @@ fp_ctrl_set(uint64_t ctrl)
  *   5. strand_context_swap: raw register save, stack switch, register restore.
  *   6. ASan finish-switch hook: tells ASan the new active stack.
  *   7. Restore FP control registers from from->fp_ctrl (our own saved state
- *      — restoring from->fp_ctrl ensures each fiber resumes with the FP
+ *      - restoring from->fp_ctrl ensures each fiber resumes with the FP
  *      control state it had when it was last suspended).
  *   8. Restore errno.
  *
@@ -90,7 +90,7 @@ fp_ctrl_set(uint64_t ctrl)
  * control state that fiber B had when B last yielded, which is wrong.
  *
  * TSan: must be called on the outgoing fiber (from) immediately before
- * strand_context_swap — cannot be called after.
+ * strand_context_swap - cannot be called after.
  */
 void
 strand_context_switch(strand_fiber_t *from, strand_fiber_t *to)
@@ -117,13 +117,13 @@ strand_context_switch(strand_fiber_t *from, strand_fiber_t *to)
 	if (asan_track)
 		STRAND_ASAN_SWITCH_FINISH(asan_save);
 
-	/* Restore our own FP control state — see note above. */
+	/* Restore our own FP control state - see note above. */
 	fp_ctrl_set(from->fp_ctrl);
 	errno = saved_errno;
 }
 
 /*
- * strand_fiber_trampoline — defined in the arch-specific strand_context.S.
+ * strand_fiber_trampoline - defined in the arch-specific strand_context.S.
  * First landing point for a newly fabricated context. Sets up the ABI
  * argument register from a callee-saved register, then calls the context
  * entry target (the internal spawn wrapper in production paths).
@@ -132,7 +132,7 @@ strand_context_switch(strand_fiber_t *from, strand_fiber_t *to)
 void strand_fiber_trampoline(void);
 
 /*
- * strand_context_init — fabricate an initial saved-register state.
+ * strand_context_init - fabricate an initial saved-register state.
  *
  * After this call, the first strand_context_swap to *ctx will begin
  * execution at entry(arg).  See strand_context.h for the full contract.
@@ -160,9 +160,9 @@ strand_context_init(strand_context_t *ctx, void *stack_top,
 	sp[-1] = (uint64_t)(uintptr_t)strand_fiber_trampoline;
 
 	/*
-	 * rbx: entry — callee-saved; restored by strand_context_swap;
+	 * rbx: entry - callee-saved; restored by strand_context_swap;
 	 *      read by the trampoline and called via `call *%rbx`.
-	 * r12: arg  — callee-saved; restored by strand_context_swap;
+	 * r12: arg  - callee-saved; restored by strand_context_swap;
 	 *      moved into rdi (SysV AMD64 first argument) by the trampoline.
 	 * rsp: points at the fabricated return address (stack_top - 8).
 	 */
@@ -184,7 +184,7 @@ strand_context_init(strand_context_t *ctx, void *stack_top,
 	uint64_t sp;
 
 	/*
-	 * Align sp to 16 bytes — AAPCS64 requires 16-byte alignment at all
+	 * Align sp to 16 bytes - AAPCS64 requires 16-byte alignment at all
 	 * times.  The caller should provide an aligned stack_top; we enforce
 	 * the alignment defensively.
 	 *
@@ -197,11 +197,11 @@ strand_context_init(strand_context_t *ctx, void *stack_top,
 	ctx->sp = sp;
 
 	/*
-	 * x30 (lr): trampoline address — strand_context_swap's ret branches
+	 * x30 (lr): trampoline address - strand_context_swap's ret branches
 	 *           here on first context entry.
-	 * x19: entry — callee-saved; read by the trampoline and called via
+	 * x19: entry - callee-saved; read by the trampoline and called via
 	 *      blr x19.
-	 * x20: arg  — callee-saved; moved into x0 (AAPCS64 first argument)
+	 * x20: arg  - callee-saved; moved into x0 (AAPCS64 first argument)
 	 *      by the trampoline before calling entry.
 	 */
 	ctx->x30 = (uint64_t)(uintptr_t)strand_fiber_trampoline;

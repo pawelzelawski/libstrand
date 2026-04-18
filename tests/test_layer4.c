@@ -1,5 +1,5 @@
 /*
- * tests/test_layer4.c — Layer 4 (Phase 5) test suite.
+ * tests/test_layer4.c - Layer 4 (Phase 5) test suite.
  *
  * Task 5.1: bounded MPSC inject ring buffer tests.
  * Tasks 5.2/5.3/5.4: strand_runtime_t, strand_worker_start, host-thread spawn.
@@ -131,7 +131,7 @@ test_inject_push_pop_basic(void)
 		return (1);
 	}
 
-	/* Queue now empty — next pop must return 0. */
+	/* Queue now empty - next pop must return 0. */
 	rc = inject_queue_pop_acquire(&q, &pop_item);
 	inject_queue_destroy(&q);
 	return (rc == 0) ? 0 : 1;
@@ -232,7 +232,7 @@ test_inject_capacity_is_power_of_two(void)
 	strand_inject_queue_t q;
 	int                   failed = 0;
 
-	/* Request 5 — should round up to 8. */
+	/* Request 5 - should round up to 8. */
 	if (inject_queue_init(&q, 5) != 0)
 		return (1);
 	if (q.capacity != 8 || q.mask != 7)
@@ -241,7 +241,7 @@ test_inject_capacity_is_power_of_two(void)
 	if (failed)
 		return (1);
 
-	/* Request 1 — stays 1. */
+	/* Request 1 - stays 1. */
 	if (inject_queue_init(&q, 1) != 0)
 		return (1);
 	if (q.capacity != 1)
@@ -250,7 +250,7 @@ test_inject_capacity_is_power_of_two(void)
 	if (failed)
 		return (1);
 
-	/* Request 0 — uses default. */
+	/* Request 0 - uses default. */
 	if (inject_queue_init(&q, 0) != 0)
 		return (1);
 	if (q.capacity != STRAND_DEFAULT_INJECT_CAP)
@@ -347,7 +347,7 @@ test_inject_drain_delivers_cancel(void)
  * Verification: after join, exactly OVERFLOW_CAP + 1 items were consumed.
  * Confirms no item is dropped and the exponential backoff path executes.
  *
- * See DEVELOPMENT.md §"Tests for Phase 5" — test_inject_queue_overflow_backoff.
+ * See DEVELOPMENT.md §"Tests for Phase 5" - test_inject_queue_overflow_backoff.
  * -------------------------------------------------------------------------
  */
 
@@ -459,7 +459,7 @@ make_test_worker(strand_runtime_t *rt)
 
 /* -------------------------------------------------------------------------
  * test_runtime_init_destroy
- * Allocate a runtime and destroy it immediately — no workers started.
+ * Allocate a runtime and destroy it immediately - no workers started.
  * -------------------------------------------------------------------------
  */
 static int
@@ -765,7 +765,7 @@ excl_fiber(void *arg)
 
 	/*
 	 * All fibers in this test must land on live_sched (wa is stopped).
-	 * Verify via TLS — no cross-thread pointer chasing.
+	 * Verify via TLS - no cross-thread pointer chasing.
 	 */
 	if (strand_sched_current_tls == a->live_sched)
 		atomic_fetch_add(&a->on_live, 1);

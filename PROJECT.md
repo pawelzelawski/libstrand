@@ -5,7 +5,7 @@
 libstrand is a C11 library that brings fiber-based cooperative concurrency to
 programs targeting Linux and OpenBSD on x86_64 and ARM64. It provides
 stackful fibers, a cooperative scheduler, epoll/kqueue I/O integration,
-multi-worker parallelism, and structured concurrency scopes — all as a guest
+multi-worker parallelism, and structured concurrency scopes - all as a guest
 in the programmer's program. The library does not own the process, does not
 take over the main loop, and does not impose a framework. The programmer
 calls libstrand; libstrand does not call the programmer back.
@@ -19,8 +19,8 @@ understood, and trusted.
 
 ### The Problem This Library Solves
 
-The classical C concurrency architecture — a fixed thread pool with epoll or
-kqueue for I/O multiplexing — handles connections with simple per-connection
+The classical C concurrency architecture - a fixed thread pool with epoll or
+kqueue for I/O multiplexing - handles connections with simple per-connection
 logic elegantly. The pain appears when per-connection or per-session logic
 grows in complexity. Consider a single logical operation that must authenticate
 against a remote service, acquire a distributed lock, fan out requests to
@@ -32,7 +32,7 @@ In the thread pool + epoll model, each wait point is a state transition. The
 programmer must explicitly encode where the operation is in its lifecycle, save
 all intermediate state, register the next event, and return. Logic that would
 be ten lines of sequential code becomes a state machine with many states,
-explicit intermediate storage, and transitions that are easy to get wrong —
+explicit intermediate storage, and transitions that are easy to get wrong -
 especially around error paths and cancellation. The code no longer reads like
 the problem it is solving.
 
@@ -47,7 +47,7 @@ through every state transition.
 
 ### Primary and Secondary Goals
 
-The primary goal is **expressiveness** — eliminating the state machine
+The primary goal is **expressiveness** - eliminating the state machine
 explosion problem for C programmers who want to write concurrent logic
 without losing readability or correctness. Once the expressiveness problem is
 solved with fibers, a secondary benefit follows: fibers are cheaper than OS
@@ -62,7 +62,7 @@ better.
 
 libstrand is a library. The direction of control flow always remains with the
 programmer's code. Layers 1 and 2 (execution contexts and the fiber scheduler)
-are fully guest-capable — the programmer creates a scheduler object, calls
+are fully guest-capable - the programmer creates a scheduler object, calls
 `strand_scheduler_advance()` from their own event loop, and the scheduler does
 its work without taking ownership of any thread. Layers 4 and 5 (the
 multi-worker runtime and coordination primitives) are more accurately described
@@ -91,7 +91,7 @@ workers explicitly and owns the shutdown sequence. The library never calls
    assigned to it. Cross-worker interaction happens only through inject queues
    and wakeup signals. This eliminates migration races, simplifies the memory
    model, and matches the natural load-balancing point for connection-oriented
-   workloads — connection acceptance time.
+   workloads - connection acceptance time.
 
 5. **Honest cooperative scheduling**: libstrand does not preempt fibers.
    Uncooperative fibers stall their worker. The documentation states this
@@ -108,48 +108,48 @@ workers explicitly and owns the shutdown sequence. The library never calls
 libstrand is organised as five separable layers. Lower layers can be used
 independently. Each layer is tested before the next is built.
 
-### Layer 1 — Execution Contexts
+### Layer 1 - Execution Contexts
 
 Raw save/restore of execution state. Implemented in x86_64 and ARM64 assembly.
 Saves and restores callee-saved general-purpose registers, the stack pointer,
 errno, and floating-point control registers (MXCSR on x86_64; FPCR and FPSR
 on AArch64). Guard pages on fiber stacks. Correct CFI unwind annotations
-throughout. No global state. This layer has no knowledge of scheduling — it
+throughout. No global state. This layer has no knowledge of scheduling - it
 only knows how to switch from one execution context to another.
 
-### Layer 2 — Fiber Scheduler
+### Layer 2 - Fiber Scheduler
 
 A cooperative scheduler built on Layer 1. One OS thread, many fibers. The
 scheduler object is explicit and caller-owned. Two operating modes:
 
 - **Guest mode** (`strand_scheduler_advance`): nonblocking, called from the
   programmer's own event loop. Returns immediately after processing available
-  work — timers, injected fibers, I/O events, and up to a configurable budget
+  work - timers, injected fibers, I/O events, and up to a configurable budget
   of runnable fibers.
 - **Worker mode** (`strand_scheduler_run`): blocking, owns the calling thread
   until `strand_scheduler_stop` is called. Used when the programmer hands a
   thread to libstrand to manage.
 
-### Layer 3 — I/O Integration
+### Layer 3 - I/O Integration
 
 Connects the scheduler to epoll (Linux) or kqueue (OpenBSD). Wraps I/O
-parking — the fiber calls `strand_fiber_wait_readable` or
+parking - the fiber calls `strand_fiber_wait_readable` or
 `strand_fiber_wait_writable`, parks, and resumes when the fd is ready or the
 wait is cancelled. The library never modifies fd flags; O_NONBLOCK is always
 the caller's responsibility. Edge-triggered one-shot semantics on Linux
 (EPOLLET | EPOLLONESHOT). EV_DISPATCH on OpenBSD.
 
-### Layer 4 — Multi-Worker Runtime
+### Layer 4 - Multi-Worker Runtime
 
 Multiple OS threads each running their own Layer 2 scheduler. Per-worker
-pinned — fibers do not migrate. Fiber spawning from the host thread uses
+pinned - fibers do not migrate. Fiber spawning from the host thread uses
 round-robin worker selection with optional explicit override. Cross-worker
 operations (cancellation, scope signalling, offload completion) use bounded
 inject queues and wakeup signals. The optional offload pool handles blocking
 syscalls (getaddrinfo, regular file I/O, fsync) by running them on plain OS
 threads and injecting the result back to the originating fiber.
 
-### Layer 5 — Coordination Primitives
+### Layer 5 - Coordination Primitives
 
 Fiber-aware synchronisation and structured concurrency built on Layers 1–4:
 
@@ -160,7 +160,7 @@ Fiber-aware synchronisation and structured concurrency built on Layers 1–4:
 - **Fiber-local storage** (`strand_fiber_local_set`,
   `strand_fiber_local_get`): single void* slot per fiber with destructor.
 - **Cancellation** (`strand_fiber_cancel`): cancels any parked state.
-  Cooperative — fibers observe cancellation at park points.
+  Cooperative - fibers observe cancellation at park points.
 - **Timers** (`strand_fiber_sleep_until`): deadline-based sleep, integrated
   with the per-worker timer heap.
 
@@ -173,7 +173,7 @@ Fiber-aware synchronisation and structured concurrency built on Layers 1–4:
 libstrand is aimed at C programmers building:
 
 - **Connection-oriented network daemons**: protocol servers, relay servers,
-  proxies, load balancers — any program where the dominant bottleneck is
+  proxies, load balancers - any program where the dominant bottleneck is
   per-connection logic complexity rather than raw throughput.
 - **Distributed system components**: storage nodes, coordination daemons,
   anything with fan-out/fan-in patterns, distributed lock acquisition, or
@@ -217,8 +217,8 @@ that will drive implementation.
 
 | Phase | Name | Status |
 |---|---|---|
-| — | Architecture | COMPLETE |
-| — | Documentation | IN PROGRESS |
+| - | Architecture | COMPLETE |
+| - | Documentation | IN PROGRESS |
 | 1 | Layer 1: Execution Contexts | NOT STARTED |
 | 2 | Layer 2: Fiber Scheduler | NOT STARTED |
 | 3 | Layer 3: I/O Integration | NOT STARTED |
@@ -240,7 +240,7 @@ codebase.
 
 ### libco / minicoro / aco
 
-These are bare context-switching primitives only — equivalent to Layer 1 of
+These are bare context-switching primitives only - equivalent to Layer 1 of
 libstrand. They provide no scheduler, no I/O integration, no multi-worker
 support, and no structured concurrency. libstrand is a complete concurrency
 library built on top of the same class of mechanism.
@@ -270,7 +270,7 @@ ISC License. Simple, permissive, compatible with OpenBSD philosophy.
 | Document | Audience | Purpose |
 |---|---|---|
 | PROJECT.md | Both | Overview, goals, scope, design philosophy (this file) |
-| ARCHITECTURE.md | Implementer | Full technical architecture — layers, state machines, data structures, platform specifics, decision rationale |
+| ARCHITECTURE.md | Implementer | Full technical architecture - layers, state machines, data structures, platform specifics, decision rationale |
 | TECH_STACK.md | Implementer | Build system, compiler flags, assembly conventions, sanitizer integration, tooling |
 | CODING_STANDARDS.md | Implementer | C11 style, assembly conventions, naming, error handling, atomic operations, documentation requirements |
 | REPOSITORY_STRUCTURE.md | Implementer | Directory layout, file-by-file descriptions, layer-to-file mapping |
@@ -281,4 +281,4 @@ ISC License. Simple, permissive, compatible with OpenBSD philosophy.
 
 **Document Version**: 1.0
 **Last Updated**: 2026-03-28
-**Status**: Documentation phase — no code written yet
+**Status**: Documentation phase - no code written yet

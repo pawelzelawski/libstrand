@@ -1,5 +1,5 @@
 /*
- * tests/run_tests.c — test binary entry point
+ * tests/run_tests.c - test binary entry point
  *
  * Runs all test suites in order. Add suite runner calls here as
  * new test files are introduced in each phase.

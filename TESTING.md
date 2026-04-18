@@ -31,7 +31,7 @@ binary contract. The structure is:
 ```
 tests/
 ├── test_harness.h       ← RUN macro, tests_run and tests_passed counters
-├── run_tests.c          ← binary entry point — calls RUN() for every suite
+├── run_tests.c          ← binary entry point - calls RUN() for every suite
 ├── test_layer1.c        ← Layer 1: context switch
 ├── test_layer2.c        ← Layer 2: scheduler
 ├── test_layer3.c        ← Layer 3: I/O integration
@@ -41,13 +41,13 @@ tests/
 ```
 
 `make test` builds all test files against `libstrand.a` and runs the binary.
-This verifies that exported symbols are correct — tests do not link directly
+This verifies that exported symbols are correct - tests do not link directly
 against source files.
 
 ### 2.2 Per-Layer Test Scope
 
 Every layer has a dedicated test file. The scope of each file is strictly
-bounded — a Layer 2 test does not test I/O, and a Layer 3 test does not test
+bounded - a Layer 2 test does not test I/O, and a Layer 3 test does not test
 scope lifecycle. This makes failures easy to localise.
 
 | Test file | What it tests | What it does NOT test |
@@ -57,7 +57,7 @@ scope lifecycle. This makes failures easy to localise.
 | `test_layer3.c` | fd parking, epoll/kqueue, re-arm, cancellation, error events | Multi-worker, scopes |
 | `test_layer4.c` | Inject queue, worker selection, offload pool, CAS outcomes | Scope lifecycle |
 | `test_layer5.c` | Scope state machine, walk reference rule, error propagation | Network I/O |
-| `test_integration.c` | End-to-end realistic scenarios across all layers | None — cross-layer |
+| `test_integration.c` | End-to-end realistic scenarios across all layers | None - cross-layer |
 
 ### 2.3 Scheduler and Fiber Test Patterns
 
@@ -128,7 +128,7 @@ make_test_pipe(int *rd, int *wr)
 /*
  * Park a fiber on the read end of a pipe.
  * Write one byte from outside the scheduler to trigger readiness.
- * Run advance — fiber must wake.
+ * Run advance - fiber must wake.
  */
 static int
 test_wait_readable_wakes(void)
@@ -190,7 +190,7 @@ Every module listed in REPOSITORY_STRUCTURE.md §3 has unit tests:
 | `strand_scope.c` | `test_layer5.c` |
 
 What does **not** need dedicated unit tests:
-- `strand_internal.h` — tested implicitly by every test that links the library
+- `strand_internal.h` - tested implicitly by every test that links the library
 - Build system files and config files
 
 See DEVELOPMENT.md for the specific named test cases required per phase.
@@ -220,7 +220,7 @@ Valgrind reports false positives on every fiber stack access. See
 TECH_STACK.md §7.1 for the registration pattern.
 
 All tests must pass Valgrind clean before the phase is considered complete.
-No suppression file is needed — libstrand has no external library dependencies
+No suppression file is needed - libstrand has no external library dependencies
 that would require suppressions.
 
 ### 3.2 AddressSanitizer and UndefinedBehaviorSanitizer
@@ -257,7 +257,7 @@ positives across every context switch. See TECH_STACK.md §7.3 for the
 integration. Verify in Phase 2 that the hooks are in place.
 
 TSan is not a per-commit gate. It is a phase-boundary gate. TSan and ASan
-are mutually exclusive — they run as separate targets.
+are mutually exclusive - they run as separate targets.
 
 TSan is particularly important for:
 - Phase 4 (Layer 4): inject queue acquire/release ordering
@@ -295,7 +295,7 @@ Build with `make dev`. Run the Layer 1 context switch tests. Verify:
 1. No ASan `stack-buffer-overflow` or `heap-use-after-poison` reports during
    context switches between test fibers
 2. Confirm by temporarily removing the `__sanitizer_start_switch_fiber` call
-   and verifying that ASan then produces false positives — this confirms the
+   and verifying that ASan then produces false positives - this confirms the
    hook is actually suppressing them, not that the issue simply does not exist
 
 ### 4.2 TSan Hook Verification
@@ -310,7 +310,7 @@ Build with `make test-tsan`. Run Layer 1 context switch tests. Verify:
 Build with `make valgrind`. Run Layer 1 tests. Verify:
 1. No `Invalid read/write` reports on fiber stack memory
 2. No `Address ... is on thread N's stack` reports from Valgrind for fiber
-   stacks — these indicate unregistered stacks
+   stacks - these indicate unregistered stacks
 
 ---
 
@@ -332,20 +332,20 @@ Every phase must pass on all four targets before it is complete:
 Some tests are platform-specific. These must be conditionally compiled:
 
 **Linux-only tests:**
-- `test_edge_triggered_oneshot_linux` — EPOLLET behaviour
-- `test_post_rearm_readiness_check_linux` — zero-timeout epoll_wait after MOD
-- `test_all_events_processed_in_rearm_check` — must process all returned events
-- `test_epollerr_wakes_waiter` — EPOLLERR delivery
-- `test_epollhup_wakes_waiter` — EPOLLHUP delivery
-- `test_eventfd_wakeup` — eventfd as cross-worker wakeup mechanism
+- `test_edge_triggered_oneshot_linux` - EPOLLET behaviour
+- `test_post_rearm_readiness_check_linux` - zero-timeout epoll_wait after MOD
+- `test_all_events_processed_in_rearm_check` - must process all returned events
+- `test_epollerr_wakes_waiter` - EPOLLERR delivery
+- `test_epollhup_wakes_waiter` - EPOLLHUP delivery
+- `test_eventfd_wakeup` - eventfd as cross-worker wakeup mechanism
 
 **OpenBSD-only tests:**
-- `test_ev_dispatch_fires_on_reenable` — EV_DISPATCH level-triggered re-fire
-- `test_ev_eof_wakes_reader` — EV_EOF on kqueue EVFILT_READ
-- `test_pipe_wakeup` — pipe2 as cross-worker wakeup mechanism (no eventfd)
-- `test_no_post_rearm_check_openbsd` — verify re-arm works without zero-timeout poll
+- `test_ev_dispatch_fires_on_reenable` - EV_DISPATCH level-triggered re-fire
+- `test_ev_eof_wakes_reader` - EV_EOF on kqueue EVFILT_READ
+- `test_pipe_wakeup` - pipe2 as cross-worker wakeup mechanism (no eventfd)
+- `test_no_post_rearm_check_openbsd` - verify re-arm works without zero-timeout poll
 
-**Both platforms — epoll/kqueue equivalence tests:**
+**Both platforms - epoll/kqueue equivalence tests:**
 These are structurally identical but use different fd types and trigger modes:
 - `test_wait_readable_wakes`
 - `test_simultaneous_read_write_waiters`
@@ -365,7 +365,7 @@ there.
 `#ifdef STRAND_LINUX`.
 
 **No eventfd.** Cross-worker wakeup tests on OpenBSD use the pipe2 path.
-Verify the pipe-based wakeup works correctly — it is the more complex path
+Verify the pipe-based wakeup works correctly - it is the more complex path
 (two fds, drain both read end bytes).
 
 **pipe2 wakeup drain:** The wakeup pipe on OpenBSD must be drained correctly
@@ -378,7 +378,7 @@ cross-worker signals) drains all bytes, not just one.
 ## 6. Correctness Properties Requiring Explicit Tests
 
 These are the most subtle correctness requirements in the architecture. Each
-must have at least one dedicated test that specifically targets the property —
+must have at least one dedicated test that specifically targets the property -
 not just tests where the property happens to hold.
 
 ### 6.1 Post-Re-Arm Readiness Check (Linux)
@@ -390,7 +390,7 @@ after MOD is required.
 
 **Dedicated test:** `test_post_rearm_readiness_check_linux`
 
-Setup: park two fibers on the same fd — one on read, one on write. Make both
+Setup: park two fibers on the same fd - one on read, one on write. Make both
 directions ready simultaneously. Fire the event. Verify both fibers wake,
 specifically that the second fiber wakes in the same `strand_scheduler_advance`
 call (not in a subsequent one). The test is wrong if it passes only because the
@@ -405,8 +405,8 @@ rearmed fd.
 
 ### 6.2 Cancellation Race Rule
 
-**Property:** Same-worker cancellation — readiness wins. Cross-worker
-cancellation — cancel wins.
+**Property:** Same-worker cancellation - readiness wins. Cross-worker
+cancellation - cancel wins.
 
 **Dedicated tests:**
 
@@ -454,14 +454,14 @@ is not freed until the walk completes and decrements `walk_ref_count`. Use
 Valgrind or ASan to confirm no use-after-free during the walk.
 
 This test requires injecting a delay or using synchronisation inside the walk
-to create the window — it cannot be reliably tested without explicit control
+to create the window - it cannot be reliably tested without explicit control
 of timing.
 
 ### 6.5 CANCELLING to COMPLETED Shortcut
 
 **Property:** If the last child finishes before the cancellation walk completes,
 the scope transitions directly to COMPLETED from CANCELLING. The walk must
-continue safely — remaining stale handles return STRAND_HANDLE_STALE, not
+continue safely - remaining stale handles return STRAND_HANDLE_STALE, not
 crashing.
 
 **Dedicated test:** `test_scope_cancelling_to_completed_shortcut`
@@ -548,7 +548,7 @@ all cases.
 ### 7.6 Offload EAGAIN and Retry Pattern
 
 Fill the offload pool to capacity. Call `strand_fiber_offload`. Verify
-`STRAND_EAGAIN` is returned immediately — the fiber is not parked. Call
+`STRAND_EAGAIN` is returned immediately - the fiber is not parked. Call
 `strand_fiber_yield()` and retry. Verify the fiber eventually succeeds when
 a pool slot becomes available. This test confirms the mandatory yield-before-
 retry pattern works correctly and that the pool does not deadlock under
@@ -569,10 +569,10 @@ workers. Verify no fiber is assigned to a stopped worker.
 
 ### 7.9 Simultaneous Read/Write on Same fd
 
-Park two fibers on the same fd — one waiting for read readiness, one waiting
+Park two fibers on the same fd - one waiting for read readiness, one waiting
 for write readiness. Make both directions ready simultaneously. Call
 `strand_scheduler_advance`. Verify both fibers wake in that single advance
-call — specifically that the second waiter wakes via the post-re-arm zero-
+call - specifically that the second waiter wakes via the post-re-arm zero-
 timeout readiness check, not in a subsequent advance call. This is the primary
 integration-level verification of the Linux post-re-arm protocol from
 ARCHITECTURE.md §5.5.
@@ -592,7 +592,7 @@ Start a worker with no fibers scheduled. Verify `strand_scheduler_run` blocks
 (worker thread is parked in `epoll_wait`/`kevent`). Call `strand_scheduler_stop`
 from the host thread. Verify `strand_scheduler_run` returns within 100ms. This
 test confirms both that the atomic flag is set AND that the wakeup fd write
-interrupts the blocked wait — both steps of `strand_scheduler_stop` are
+interrupts the blocked wait - both steps of `strand_scheduler_stop` are
 verified by this test.
 
 ---
@@ -600,7 +600,7 @@ verified by this test.
 ## 8. Performance Benchmarks
 
 Benchmarks live in `bench/` and are built and run by `make bench` under release
-flags. They are not part of `make test` — they do not have pass/fail criteria
+flags. They are not part of `make test` - they do not have pass/fail criteria
 at this stage. Their purpose is to establish baselines and detect regressions
 between versions.
 
@@ -621,7 +621,7 @@ between versions.
 Each benchmark run prints full hardware context before results:
 
 ```
-libstrand benchmark — context_switch
+libstrand benchmark - context_switch
 Platform : Linux x86_64
 CPU      : Intel Core i9-13900K @ 5.8 GHz
 Cores    : 24 (8P + 16E)
@@ -659,27 +659,27 @@ when the test passes cleanly with no Valgrind or ASan errors on both platforms.
 
 | Module | Test file | Written | Valgrind clean | ASan clean | TSan clean | OpenBSD |
 |---|---|---|---|---|---|---|
-| Context switch (x86_64) | test_layer1.c | — | — | — | — | — |
-| Context switch (AArch64) | test_layer1.c | — | — | — | — | — |
-| Stack alloc/guard pages | test_layer1.c | — | — | — | — | — |
-| Fiber scheduler (advance) | test_layer2.c | — | — | — | — | — |
-| Fiber scheduler (run/stop) | test_layer2.c | — | — | — | — | — |
-| Timer heap | test_layer2.c | — | — | — | — | — |
-| Stack cache | test_layer2.c | — | — | — | — | — |
-| Fiber handle ABA | test_layer2.c | — | — | — | — | — |
-| Fiber-local storage | test_layer2.c | — | — | — | — | — |
-| I/O parking (epoll/kqueue) | test_layer3.c | — | — | — | — | — |
-| Re-arm readiness check | test_layer3.c | — | — | — | — | — |
-| I/O cancellation | test_layer3.c | — | — | — | — | — |
-| Error/hangup/EOF delivery | test_layer3.c | — | — | — | — | — |
-| Inject queue | test_layer4.c | — | — | — | — | — |
-| Worker registry/round-robin | test_layer4.c | — | — | — | — | — |
-| Offload pool | test_layer4.c | — | — | — | — | — |
-| Offload CAS outcomes | test_layer4.c | — | — | — | — | — |
-| Scope lifecycle | test_layer5.c | — | — | — | — | — |
-| Walk reference rule | test_layer5.c | — | — | — | — | — |
-| Error propagation | test_layer5.c | — | — | — | — | — |
-| Integration tests | test_integration.c | — | — | — | — | — |
+| Context switch (x86_64) | test_layer1.c | - | - | - | - | - |
+| Context switch (AArch64) | test_layer1.c | - | - | - | - | - |
+| Stack alloc/guard pages | test_layer1.c | - | - | - | - | - |
+| Fiber scheduler (advance) | test_layer2.c | - | - | - | - | - |
+| Fiber scheduler (run/stop) | test_layer2.c | - | - | - | - | - |
+| Timer heap | test_layer2.c | - | - | - | - | - |
+| Stack cache | test_layer2.c | - | - | - | - | - |
+| Fiber handle ABA | test_layer2.c | - | - | - | - | - |
+| Fiber-local storage | test_layer2.c | - | - | - | - | - |
+| I/O parking (epoll/kqueue) | test_layer3.c | - | - | - | - | - |
+| Re-arm readiness check | test_layer3.c | - | - | - | - | - |
+| I/O cancellation | test_layer3.c | - | - | - | - | - |
+| Error/hangup/EOF delivery | test_layer3.c | - | - | - | - | - |
+| Inject queue | test_layer4.c | - | - | - | - | - |
+| Worker registry/round-robin | test_layer4.c | - | - | - | - | - |
+| Offload pool | test_layer4.c | - | - | - | - | - |
+| Offload CAS outcomes | test_layer4.c | - | - | - | - | - |
+| Scope lifecycle | test_layer5.c | - | - | - | - | - |
+| Walk reference rule | test_layer5.c | - | - | - | - | - |
+| Error propagation | test_layer5.c | - | - | - | - | - |
+| Integration tests | test_integration.c | - | - | - | - | - |
 
 ### Key Correctness Test Cases
 
@@ -707,7 +707,7 @@ when the test passes cleanly with no Valgrind or ASan errors on both platforms.
 | Idle reclamation shrinks cache to floor | test_layer2.c | ARCHITECTURE.md §13.4 |
 | fiber_spawn returns STRAND_ERR_SHUTDOWN after stop | test_layer2.c | ARCHITECTURE.md §6.2 |
 | fd parking wakes on readiness | test_layer3.c | ARCHITECTURE.md §5 |
-| Post-re-arm readiness check — second waiter wakes immediately | test_layer3.c | ARCHITECTURE.md §5.5 |
+| Post-re-arm readiness check - second waiter wakes immediately | test_layer3.c | ARCHITECTURE.md §5.5 |
 | All events from zero-timeout poll processed | test_layer3.c | ARCHITECTURE.md §5.5 |
 | EV_DISPATCH fires on re-enable (OpenBSD) | test_layer3.c | ARCHITECTURE.md §5.7 |
 | Same-worker: readiness wins over cancel | test_layer3.c | ARCHITECTURE.md §5.3 |
@@ -746,13 +746,13 @@ when the test passes cleanly with no Valgrind or ASan errors on both platforms.
 
 | Milestone | Confirmed by |
 |---|---|
-| M9 — context switch preserves all registers | test_layer1.c GPR + FP tests |
-| M10 — advance is nonblocking | test_layer2.c advance test |
-| M11 — stop interrupts blocked worker | test_layer2.c + integration §7.11 |
-| M12 — post-re-arm readiness check correct | test_layer3.c dedicated tests |
-| M13 — offload CAS both outcomes | test_layer4.c both CAS tests |
-| M14 — scope lifecycle all transitions | test_layer5.c lifecycle tests |
-| M15 — integration test suite passes | test_integration.c all tests |
+| M9 - context switch preserves all registers | test_layer1.c GPR + FP tests |
+| M10 - advance is nonblocking | test_layer2.c advance test |
+| M11 - stop interrupts blocked worker | test_layer2.c + integration §7.11 |
+| M12 - post-re-arm readiness check correct | test_layer3.c dedicated tests |
+| M13 - offload CAS both outcomes | test_layer4.c both CAS tests |
+| M14 - scope lifecycle all transitions | test_layer5.c lifecycle tests |
+| M15 - integration test suite passes | test_integration.c all tests |
 
 ---
 

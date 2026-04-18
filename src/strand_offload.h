@@ -2,7 +2,7 @@
 #define STRAND_OFFLOAD_H
 
 /*
- * strand_offload.h — blocking syscall offload pool internal interface.
+ * strand_offload.h - blocking syscall offload pool internal interface.
  * See ARCHITECTURE.md §6.5, §6.6.
  */
 

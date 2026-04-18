@@ -1,5 +1,5 @@
 /*
- * strand_offload.c — blocking syscall offload pool.
+ * strand_offload.c - blocking syscall offload pool.
  * See ARCHITECTURE.md §6.5, §6.6.
  */
 

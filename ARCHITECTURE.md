@@ -37,7 +37,7 @@ libstrand borrows from four concurrency traditions:
 - **Structured concurrency (Trio, Swift Concurrency):** Scoped task lifetimes,
   guaranteed cleanup, first-error propagation.
 - **Actors:** Mailbox-based communication concepts and supervision ideas.
-  Actor-inspired, not equivalent to Erlang actors — libstrand does not
+  Actor-inspired, not equivalent to Erlang actors - libstrand does not
   implement a full actor model.
 - **Thread-per-core (Seastar):** Per-worker ownership, explicit cross-worker
   coordination, no work stealing.
@@ -83,23 +83,23 @@ implies.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Layer 5 — Coordination Primitives                       │
+│  Layer 5 - Coordination Primitives                       │
 │  Scopes, cancellation, fiber-local storage, timers,      │
 │  channels (deferred), mutexes (deferred)                 │
 ├──────────────────────────────────────────────────────────┤
-│  Layer 4 — Multi-Worker Runtime                          │
+│  Layer 4 - Multi-Worker Runtime                          │
 │  Multiple workers, inject queues, fiber_spawn routing,   │
 │  offload pool                                            │
 ├──────────────────────────────────────────────────────────┤
-│  Layer 3 — I/O Integration                               │
+│  Layer 3 - I/O Integration                               │
 │  epoll (Linux) / kqueue (OpenBSD), fd parking,           │
 │  edge-triggered one-shot, re-arm protocol                │
 ├──────────────────────────────────────────────────────────┤
-│  Layer 2 — Fiber Scheduler                               │
+│  Layer 2 - Fiber Scheduler                               │
 │  Cooperative scheduling, run queue, timer heap,          │
 │  guest and worker operating modes                        │
 ├──────────────────────────────────────────────────────────┤
-│  Layer 1 — Execution Contexts                            │
+│  Layer 1 - Execution Contexts                            │
 │  x86_64 and AArch64 context save/restore, guard pages,   │
 │  CFI annotations, sanitizer hooks                        │
 └──────────────────────────────────────────────────────────┘
@@ -111,7 +111,7 @@ next layer begins implementation.
 
 ---
 
-## 3. Layer 1 — Execution Contexts
+## 3. Layer 1 - Execution Contexts
 
 ### 3.1 Overview
 
@@ -124,7 +124,7 @@ and no thread-local state of its own. It can be used in any context without
 hidden side effects or initialization order dependencies.
 
 Context switching is implemented in hand-written assembly. There is no
-portable pure-C alternative — saving and restoring the stack pointer requires
+portable pure-C alternative - saving and restoring the stack pointer requires
 direct register access.
 
 ### 3.2 x86_64 Context Save/Restore (SysV AMD64 ABI)
@@ -154,7 +154,7 @@ x19–x28, x29 (frame pointer), x30 (link register), sp
 
 **Callee-saved FP/SIMD registers saved and restored:**
 ```
-v8–v15  (lower 64 bits only — d8–d15 per AAPCS64)
+v8–v15  (lower 64 bits only - d8–d15 per AAPCS64)
 ```
 
 **Stack alignment:** 16 bytes.
@@ -243,39 +243,39 @@ VALGRIND_STACK_DEREGISTER(valgrind_stack_id);
 
 ---
 
-## 4. Layer 2 — Fiber Scheduler
+## 4. Layer 2 - Fiber Scheduler
 
 ### 4.1 Overview
 
 Layer 2 is a cooperative scheduler built on Layer 1. One scheduler object
 manages one OS thread and any number of fibers. The scheduler object is
-explicit and caller-owned — there is no global scheduler state.
+explicit and caller-owned - there is no global scheduler state.
 
 ### 4.2 Scheduler Operating Modes
 
-**`strand_scheduler_advance(sched)` — guest mode:**
+**`strand_scheduler_advance(sched)` - guest mode:**
 
 Nonblocking. Performs exactly one pass through the scheduler work pipeline and
 returns. Never blocks the caller. Used when the programmer drives the scheduler
 from their own event loop.
 
 **Steps performed in order:**
-1. Drain inject queue — move injected fibers/events to local run queue (FIFO)
-2. Process expired timers — move fibers whose deadline has passed to run queue
-3. Drain wakeup fd/pipe — read and discard all bytes written by
+1. Drain inject queue - move injected fibers/events to local run queue (FIFO)
+2. Process expired timers - move fibers whose deadline has passed to run queue
+3. Drain wakeup fd/pipe - read and discard all bytes written by
    `strand_scheduler_stop` or cross-worker signals. These bytes are control
    signals, not fiber waiter events, and must not be interpreted as fd
    readiness.
-4. Poll I/O with zero timeout — `epoll_wait`/`kevent` with `timeout=0`, move
+4. Poll I/O with zero timeout - `epoll_wait`/`kevent` with `timeout=0`, move
    ready fibers to run queue
-5. Run up to budget fibers — FIFO order, new arrivals go to tail, default
+5. Run up to budget fibers - FIFO order, new arrivals go to tail, default
    budget 64 (configurable)
 
 **Returns:** `SCHED_PROGRESS` if any work was done, or `SCHED_IDLE` with the
 next timer deadline as a `uint64_t` nanosecond timestamp (`UINT64_MAX` if no
 pending timers).
 
-**`strand_scheduler_run(sched)` — worker mode:**
+**`strand_scheduler_run(sched)` - worker mode:**
 
 Blocking. Runs `strand_scheduler_advance` in a loop. When the run queue is
 empty after all steps, blocks in `epoll_wait`/`kevent` with the next timer
@@ -285,7 +285,7 @@ until `strand_scheduler_stop` is called and the stop flag is observed.
 **`strand_scheduler_stop(sched)`:**
 
 Sets an atomic stop flag AND writes to the worker's wakeup eventfd (Linux) or
-pipe (OpenBSD). Both steps are required — the atomic flag alone does not
+pipe (OpenBSD). Both steps are required - the atomic flag alone does not
 interrupt a worker blocked indefinitely in `epoll_wait`/`kevent`. Safe to call
 from any thread. The written bytes are drained in Step 3 of the next
 `strand_scheduler_advance` call as control events.
@@ -325,7 +325,7 @@ while (running) {
      * Always call strand_scheduler_advance after every epoll_wait return,
      * regardless of which fds fired. Timer expiry requires processing even
      * when no I/O event arrived. The double call when the scheduler fd also
-     * fired is intentional and harmless — it processes timers and injected
+     * fired is intentional and harmless - it processes timers and injected
      * work more eagerly.
      */
     strand_scheduler_advance(sched);
@@ -394,8 +394,8 @@ FIBER_PARKED_TIMER
   -> FIBER_RUNNABLE          deadline expires, or strand_fiber_cancel called
 
 FIBER_PARKED_OFFLOAD
-  -> FIBER_RUNNABLE          offload thread wins RESULT_CLAIMED CAS — result injected
-  -> FIBER_RUNNABLE          strand_fiber_cancel wins CANCELLED CAS — cancel result
+  -> FIBER_RUNNABLE          offload thread wins RESULT_CLAIMED CAS - result injected
+  -> FIBER_RUNNABLE          strand_fiber_cancel wins CANCELLED CAS - cancel result
   Note: if RESULT_CLAIMED wins before cancel arrives, fiber resumes normally
         with the offload result regardless of the subsequent cancel attempt.
 
@@ -433,7 +433,7 @@ Incremented when a descriptor is taken from the dead pool for reuse. Initial
 value 1 on first allocation.
 
 **Why 64-bit:** At 10 million fiber creations per second a 32-bit counter
-wraps in approximately 7 minutes — achievable under benchmark conditions and
+wraps in approximately 7 minutes - achievable under benchmark conditions and
 in busy production systems. A 64-bit counter at the same rate takes
 approximately 58,000 years to wrap. The correctness benefit eliminates
 generation counter overflow as a practical concern.
@@ -449,7 +449,7 @@ applies everywhere: `strand_fiber_cancel`, sibling cancellation walks,
 scope child list traversal.
 
 **Descriptor lifetime:** Fiber descriptors are never freed while the runtime
-runs — they are recycled through a dead pool. Stale handle pointers are always
+runs - they are recycled through a dead pool. Stale handle pointers are always
 safe to dereference for generation validation. Dead pool size is bounded by
 peak concurrent fiber count.
 
@@ -496,18 +496,18 @@ slot per fiber with an optional destructor called on fiber completion.
 
 ---
 
-## 5. Layer 3 — I/O Integration
+## 5. Layer 3 - I/O Integration
 
 ### 5.1 Overview
 
 Layer 3 connects the scheduler to the OS I/O polling interface. It wraps
-I/O parking — the fiber parks until an fd becomes ready — not I/O syscalls.
+I/O parking - the fiber parks until an fd becomes ready - not I/O syscalls.
 The library never calls `read`, `write`, `send`, `recv`, or any I/O syscall
 on behalf of the fiber.
 
 **The library never modifies fd flags.** O_NONBLOCK is always the caller's
 responsibility. Calling `strand_fiber_wait_readable` or
-`strand_fiber_wait_writable` on a blocking fd is undefined behaviour — the
+`strand_fiber_wait_writable` on a blocking fd is undefined behaviour - the
 worker thread will block entirely. Debug builds assert O_NONBLOCK at
 registration.
 
@@ -531,15 +531,15 @@ registration.
 
 EPOLLONESHOT disables but does not delete. Three states are tracked per fd:
 ```
-REGISTERED_ACTIVE    — currently registered and armed
-REGISTERED_DISABLED  — fired and disabled by EPOLLONESHOT; re-arm uses MOD
-NOT_REGISTERED       — never registered or DEL'd; re-arm uses ADD
+REGISTERED_ACTIVE    - currently registered and armed
+REGISTERED_DISABLED  - fired and disabled by EPOLLONESHOT; re-arm uses MOD
+NOT_REGISTERED       - never registered or DEL'd; re-arm uses ADD
 ```
 
 **fd handoff between event loops:** Requires explicit deregistration from the
 source loop before registration with the destination.
 
-**Regular file I/O:** `epoll_ctl` returns `EPERM` for regular files — kernel
+**Regular file I/O:** `epoll_ctl` returns `EPERM` for regular files - kernel
 limitation. Use the offload pool for regular file I/O.
 
 ### 5.3 Waiter Model
@@ -556,7 +556,7 @@ token is invalidated when the wait completes or is cancelled. This token is
 how the event delivery code maps a returned event back to the correct waiter
 without ambiguity even when fds are reused.
 
-**Cancellation race — two-part rule:**
+**Cancellation race - two-part rule:**
 
 - **Same-worker cancellation:** Readiness wins. The poller drains in Step 4
   before the run queue executes in Step 5, so a ready event is detected before
@@ -603,7 +603,7 @@ Wake write waiter if `EPOLLOUT` set.
 
 When one direction fires and the other direction still has an active waiter,
 re-arming with `EPOLLET` requires an immediate readiness check. EPOLLET only
-fires on state transitions — if the remaining direction was already ready
+fires on state transitions - if the remaining direction was already ready
 before the MOD call, no new edge will occur and the waiter would park forever.
 
 **Required sequence after re-arming the remaining direction:**
@@ -611,7 +611,7 @@ before the MOD call, no new edge will occur and the waiter would park forever.
    direction with `EPOLLONESHOT`
 2. Immediately call `epoll_wait` with `timeout=0` on the internal poller
 3. Process **all events returned by this zero-timeout poll** through the
-   normal event delivery path — not only the rearmed fd. Other fds on the
+   normal event delivery path - not only the rearmed fd. Other fds on the
    internal poller may also have events ready; discarding them would lose
    those events permanently since EPOLLONESHOT has already consumed them.
 4. If the rearmed fd fired: wake the remaining waiter immediately
@@ -620,7 +620,7 @@ before the MOD call, no new edge will occur and the waiter would park forever.
 
 **EPOLLONESHOT prevents double-processing:** An event consumed by the zero-
 timeout poll in step 2 cannot appear in a subsequent step-4 poll in the same
-`strand_scheduler_advance` call — EPOLLONESHOT has disabled the registration.
+`strand_scheduler_advance` call - EPOLLONESHOT has disabled the registration.
 
 **This check is Linux-specific.** OpenBSD's EV_DISPATCH is level-triggered:
 re-enabling with EV_ENABLE fires automatically if the condition is still true.
@@ -640,10 +640,10 @@ must be woken with an error result. The fiber must not be left parked on an fd
 that has entered an error or hangup state.
 
 **Why these flags are not in the interest mask:** `EPOLLERR` and `EPOLLHUP`
-are delivered unconditionally by the kernel — adding them to the registration
+are delivered unconditionally by the kernel - adding them to the registration
 mask is unnecessary but harmless. The critical requirement is in the event
 delivery code: it must inspect these flags in returned events and wake affected
-waiters. Omitting the inspection — not the registration — is the bug to avoid.
+waiters. Omitting the inspection - not the registration - is the bug to avoid.
 
 ### 5.7 OpenBSD: EV_DISPATCH
 
@@ -653,7 +653,7 @@ without `EV_CLEAR`.
 - Level-triggered with one-shot disable: filter fires once and is automatically
   disabled until explicitly re-enabled with `EV_ENABLE`
 - On re-enable, if the condition is still true, the filter fires again
-  automatically — no post-re-arm readiness check is needed
+  automatically - no post-re-arm readiness check is needed
 - `EVFILT_READ` and `EVFILT_WRITE` are independent filters; read and write
   waiters on the same fd use separate kevent registrations
 
@@ -678,7 +678,7 @@ apply cross-worker.
 
 ---
 
-## 6. Layer 4 — Multi-Worker Runtime
+## 6. Layer 4 - Multi-Worker Runtime
 
 ### 6.1 Per-Worker Pinned Model
 
@@ -689,7 +689,7 @@ interaction happens only through:
 - **Wakeup fds:** one per worker (eventfd on Linux, pipe on OpenBSD)
 
 This model eliminates migration races, requires no per-fiber locking, and
-matches the natural load-balancing point for connection-oriented workloads —
+matches the natural load-balancing point for connection-oriented workloads -
 connection acceptance time. Work stealing is not implemented and not planned.
 
 **CPU affinity:** On Linux, workers can be pinned to cores via
@@ -707,7 +707,7 @@ thread before any workers are registered returns an error.
 2. Wait for each `strand_scheduler_run` call to return on each worker thread
 3. Tear down the runtime only after all workers have returned
 
-Once shutdown begins — after the first `strand_scheduler_stop` call — both
+Once shutdown begins - after the first `strand_scheduler_stop` call - both
 host-thread and running-fiber `strand_fiber_spawn` return an error. The same
 atomic shutdown flag is checked on all spawn paths. Stopped workers are
 excluded from round-robin selection.
@@ -726,7 +726,7 @@ appropriately for expected peak cross-worker operation rate.
 
 **Overflow behaviour:** When an enqueue attempt finds the queue full, the
 calling thread blocks briefly using exponential backoff until space is
-available. Silent drops are never permitted — every injected item must
+available. Silent drops are never permitted - every injected item must
 eventually be processed. Full blocking is acceptable because inject queue
 overflow indicates extreme system load; a brief wait is preferable to
 correctness failure.
@@ -768,7 +768,7 @@ returns `STRAND_NO_OFFLOAD_POOL`.
 
 **Pool full behaviour:** Returns `EAGAIN` immediately. The caller must yield
 before retrying. Calling `strand_fiber_offload` in a tight retry loop without
-yielding is a liveness violation — it spins the worker and starves other
+yielding is a liveness violation - it spins the worker and starves other
 fibers. The correct pattern:
 
 ```c
@@ -789,7 +789,7 @@ Each `strand_fiber_offload` call allocates a runtime-owned work item:
 ```
 Contents:
   - function pointer
-  - arg pointer (not copied — points to caller's data)
+  - arg pointer (not copied - points to caller's data)
   - result_slot pointer
   - refcount starting at 2 (one for fiber, one for offload thread)
   - atomic completion state: PENDING | RESULT_CLAIMED | CANCELLED
@@ -815,17 +815,17 @@ strand_fiber_cancel on FIBER_PARKED_OFFLOAD:
        decrement refcount; if zero: free work item
   -> if CAS fails (state already RESULT_CLAIMED):
        offload thread will inject result normally
-       fiber will resume with the offload result — cancellation does not override
-       DO NOT decrement refcount here — fiber-side reference is still live
+       fiber will resume with the offload result - cancellation does not override
+       DO NOT decrement refcount here - fiber-side reference is still live
 
 fiber resumes after normal offload completion:
   -> reads result from result_slot
-  -> runtime decrements fiber-side refcount at resume point — exactly once
+  -> runtime decrements fiber-side refcount at resume point - exactly once
   -> if refcount reaches zero: free work item
 ```
 
 **Refcount ownership rule:** The fiber-side reference is released exactly
-once — at fiber resume after normal offload completion, or when
+once - at fiber resume after normal offload completion, or when
 `strand_fiber_cancel`'s CANCELLED CAS succeeds. When the CAS fails because
 RESULT_CLAIMED already won, `strand_fiber_cancel` must not touch the refcount.
 
@@ -833,7 +833,7 @@ RESULT_CLAIMED already won, `strand_fiber_cancel` must not touch the refcount.
 completes even if the waiting fiber is cancelled. Heap-allocate arg data when
 cancellation is possible and the arg points to fiber-local or stack memory.
 
-**Result slot:** Safe under cancellation — the atomic CAS prevents any write
+**Result slot:** Safe under cancellation - the atomic CAS prevents any write
 after CANCELLED.
 
 ### 6.7 Offload Memory Ordering
@@ -843,25 +843,25 @@ injected result. The required ordering chain:
 
 1. Offload thread writes `result_slot` (relaxed or stronger)
 2. Offload thread performs `CAS(PENDING -> RESULT_CLAIMED)` with **release**
-   semantics — publishes the result_slot write
+   semantics - publishes the result_slot write
 3. Offload thread enqueues completion to inject queue with **release** semantics
-4. Fiber's worker drains inject queue with **acquire** semantics — establishes
+4. Fiber's worker drains inject queue with **acquire** semantics - establishes
    happens-before with the enqueue
-5. Fiber reads `result_slot` — acquire from step 4 ensures visibility
+5. Fiber reads `result_slot` - acquire from step 4 ensures visibility
 
 Using seq_cst for the CAS and inject operations is correct and simpler. The
 minimum required is release on write side and acquire on read side.
 
 ---
 
-## 7. Layer 5 — Coordination Primitives
+## 7. Layer 5 - Coordination Primitives
 
 *The first implementation phase delivers Layers 1–4 plus structured
 concurrency scopes (§7.1–§7.7) and fiber-local storage (§7.8). Channels,
 mutexes, and additional timer APIs are deferred to a subsequent
 specification and implementation phase.*
 
-### 7.1 Structured Concurrency Scopes — Overview
+### 7.1 Structured Concurrency Scopes - Overview
 
 A scope is a lifetime container for a set of fibers. The invariant: the
 code that opens a scope cannot proceed past scope exit until all fibers
@@ -869,13 +869,13 @@ spawned under that scope have completed. This eliminates the use-after-free
 class of bug that arises when fibers outlive the state they reference.
 
 **Scope operations:**
-- `strand_scope_open(scope)` — initialise scope, set OWNER_CALLER
-- `strand_scope_spawn(scope, fn, arg)` — spawn a child fiber under this scope
-- `strand_scope_wait(scope)` — block until SCOPE_COMPLETED; terminal
-- `strand_scope_wait_timeout(scope, deadline)` — block until completed or
+- `strand_scope_open(scope)` - initialise scope, set OWNER_CALLER
+- `strand_scope_spawn(scope, fn, arg)` - spawn a child fiber under this scope
+- `strand_scope_wait(scope)` - block until SCOPE_COMPLETED; terminal
+- `strand_scope_wait_timeout(scope, deadline)` - block until completed or
   deadline; non-terminal if timeout fires
-- `strand_scope_cancel(scope)` — initiate cancellation; non-terminal
-- `strand_scope_abandon(scope)` — transfer ownership to runtime; terminal for
+- `strand_scope_cancel(scope)` - initiate cancellation; non-terminal
+- `strand_scope_abandon(scope)` - transfer ownership to runtime; terminal for
   the caller
 
 **`strand_scope_open` from a host thread is forbidden.** The host thread has
@@ -885,36 +885,36 @@ no fiber context and cannot call `strand_scope_wait`.
 
 ```
 Fields:
-  lifecycle_state    — atomic enum: ACTIVE | CANCELLING | DRAINING | COMPLETED
-  owner_flag         — atomic enum: OWNER_CALLER | OWNER_RUNTIME
-  live_child_count   — atomic integer; decremented when a child fiber finishes
-  walk_ref_count     — atomic integer; incremented when a cancellation walk
+  lifecycle_state    - atomic enum: ACTIVE | CANCELLING | DRAINING | COMPLETED
+  owner_flag         - atomic enum: OWNER_CALLER | OWNER_RUNTIME
+  live_child_count   - atomic integer; decremented when a child fiber finishes
+  walk_ref_count     - atomic integer; incremented when a cancellation walk
                        begins, decremented when it ends; control block not freed
                        until this is zero AND lifecycle is COMPLETED
-  first_error        — atomic, CAS-set once by the first failing child
-  spawn_order_list   — intrusive linked list of strand_fiber_handle_t, in spawn
+  first_error        - atomic, CAS-set once by the first failing child
+  spawn_order_list   - intrusive linked list of strand_fiber_handle_t, in spawn
                        order; used for reverse-order cancellation walk
-  parent_fiber       — handle of fiber to notify at SCOPE_COMPLETED;
+  parent_fiber       - handle of fiber to notify at SCOPE_COMPLETED;
                        set to null by strand_scope_abandon
-  cancellation_flag  — set when scope enters CANCELLING state
+  cancellation_flag  - set when scope enters CANCELLING state
 ```
 
 ### 7.3 Scope Lifecycle State Machine
 
 **Two orthogonal dimensions:**
 
-**Lifecycle state** — what the scope is doing:
+**Lifecycle state** - what the scope is doing:
 ```
-SCOPE_ACTIVE      — open; children running; no failure; no cancellation
-SCOPE_CANCELLING  — cancellation initiated; children being cancelled cooperatively
-SCOPE_DRAINING    — all children have been sent cancellation; waiting for last completions
-SCOPE_COMPLETED   — all children finished
+SCOPE_ACTIVE      - open; children running; no failure; no cancellation
+SCOPE_CANCELLING  - cancellation initiated; children being cancelled cooperatively
+SCOPE_DRAINING    - all children have been sent cancellation; waiting for last completions
+SCOPE_COMPLETED   - all children finished
 ```
 
-**Owner flag** — who is responsible for the control block:
+**Owner flag** - who is responsible for the control block:
 ```
-OWNER_CALLER   — programmer's code owns the control block
-OWNER_RUNTIME  — strand_scope_abandon was called; runtime owns cleanup
+OWNER_CALLER   - programmer's code owns the control block
+OWNER_RUNTIME  - strand_scope_abandon was called; runtime owns cleanup
 ```
 
 These dimensions are orthogonal. Any lifecycle state can have either owner
@@ -937,7 +937,7 @@ SCOPE_CANCELLING
   -> SCOPE_COMPLETED    last child finishes before walk completes
                         (live_child_count reaches zero while CANCELLING)
                         Walk continues but remaining stale handles return
-                        STRAND_HANDLE_STALE — walk is idempotent and safe.
+                        STRAND_HANDLE_STALE - walk is idempotent and safe.
 
 SCOPE_DRAINING
   -> SCOPE_COMPLETED    last child finishes
@@ -950,7 +950,7 @@ SCOPE_COMPLETED
 
 **Owner flag transition:**
 ```
-OWNER_CALLER -> OWNER_RUNTIME   strand_scope_abandon called — atomic store
+OWNER_CALLER -> OWNER_RUNTIME   strand_scope_abandon called - atomic store
 ```
 
 **Walk reference rule:** When a cancellation walk begins, the runtime
@@ -965,24 +965,24 @@ is still iterating the spawn-order list.
 
 ### 7.4 Scope Exit Variants
 
-**`strand_scope_wait(scope)` — terminal:**
+**`strand_scope_wait(scope)` - terminal:**
 Blocks until `SCOPE_COMPLETED`. No follow-up required or permitted. When it
 returns, the scope is in `SCOPE_COMPLETED` and `OWNER_CALLER`. The caller may
 then destroy it.
 
-**`strand_scope_wait_timeout(scope, deadline)` — non-terminal if timeout fires:**
+**`strand_scope_wait_timeout(scope, deadline)` - non-terminal if timeout fires:**
 Blocks until `SCOPE_COMPLETED` or `deadline` passes. If the scope completed:
-equivalent to `strand_scope_wait` — terminal. If the timeout fired: scope
+equivalent to `strand_scope_wait` - terminal. If the timeout fired: scope
 remains in whatever lifecycle state it was in at timeout. The caller must
 follow with `strand_scope_wait` or `strand_scope_abandon`. The scope is not
-affected by the timeout return — it continues in its current lifecycle state.
+affected by the timeout return - it continues in its current lifecycle state.
 
-**`strand_scope_cancel(scope)` — non-terminal:**
+**`strand_scope_cancel(scope)` - non-terminal:**
 Initiates cancellation: transitions scope to `SCOPE_CANCELLING` if currently
 `SCOPE_ACTIVE`. Returns immediately. Requires follow-up with
 `strand_scope_wait` or `strand_scope_abandon`.
 
-**`strand_scope_abandon(scope)` — terminal for the caller:**
+**`strand_scope_abandon(scope)` - terminal for the caller:**
 Sets `owner_flag` to `OWNER_RUNTIME` atomically. Sets `parent_fiber` to null.
 The scope pointer is invalid for the caller after this call. Children continue
 running. When `live_child_count` reaches zero and lifecycle reaches
@@ -998,17 +998,17 @@ scope pointer is not within the current fiber's stack range.
 ### 7.5 Error Propagation
 
 First error wins via atomic CAS on `first_error`. Subsequent child failures
-are discarded — `first_error` is written exactly once. The parent receives one
+are discarded - `first_error` is written exactly once. The parent receives one
 error code at `strand_scope_wait`.
 
 ### 7.6 Sibling Cancellation
 
 When the first child fails, the scope transitions to `SCOPE_CANCELLING` and
 initiates a cancellation walk. The walk cancels children in reverse spawn
-order. Cancellation is cooperative — `strand_fiber_cancel` is called on each
+order. Cancellation is cooperative - `strand_fiber_cancel` is called on each
 child handle, which transitions the child fiber to `FIBER_RUNNABLE` with a
 cancellation result at its next park point. Fibers that never yield or park
-cannot be cancelled. Handles validated via generation counter — stale handles
+cannot be cancelled. Handles validated via generation counter - stale handles
 are no-ops.
 
 **Structured concurrency guarantee (honest statement):** All cooperative
@@ -1022,7 +1022,7 @@ be stated accurately in all user-facing documentation.
 Explicit opt-in via `strand_fiber_spawn_detached`. Detached fibers are not
 tracked by any scope. Errors are not propagated. The lifetime of a detached
 fiber is not bounded by any enclosing scope. Use of detached fibers is
-**strongly discouraged** — they make correctness reasoning significantly
+**strongly discouraged** - they make correctness reasoning significantly
 harder and preclude structured cleanup.
 
 ### 7.8 Fiber-Local Storage
@@ -1050,7 +1050,7 @@ Validates the handle (null check, generation check). Then:
 |---|---|
 | `FIBER_PARKED_IO_READ` or `IO_WRITE` | Remove or update epoll/kqueue registration. Transition to `FIBER_RUNNABLE` with cancellation result. |
 | `FIBER_PARKED_TIMER` | Remove from timer heap. Transition to `FIBER_RUNNABLE` with cancellation result. |
-| `FIBER_PARKED_OFFLOAD` | CAS on work item state. If CANCELLED wins: transition to `FIBER_RUNNABLE` with cancellation result. If RESULT_CLAIMED already won: no-op — fiber will resume normally with the offload result. |
+| `FIBER_PARKED_OFFLOAD` | CAS on work item state. If CANCELLED wins: transition to `FIBER_RUNNABLE` with cancellation result. If RESULT_CLAIMED already won: no-op - fiber will resume normally with the offload result. |
 | `FIBER_PARKED_CHANNEL` | Remove from channel wait queue. Transition to `FIBER_RUNNABLE` with cancellation result. |
 | `FIBER_RUNNABLE` or `FIBER_RUNNING` | Set `FIBER_CANCELLATION_PENDING` flag. |
 | `FIBER_FINISHED` | No-op. |
@@ -1122,7 +1122,7 @@ stack consumes one VMA. The stack cache bounds VMA count to the peak watermark
 by caching stacks rather than unmapping them after each fiber completes. The
 cache must have a configurable hard cap to prevent unbounded VMA accumulation.
 
-Stack cache hard cap, reclamation policy, and default stack size: **TBD —
+Stack cache hard cap, reclamation policy, and default stack size: **TBD -
 see §13.**
 
 ### 10.3 fork() and exec()
@@ -1130,7 +1130,7 @@ see §13.**
 | Scenario | Behaviour |
 |---|---|
 | `fork()` before `strand_runtime_init` | Fully supported |
-| `fork()` then immediate `exec()` | Supported — all internal fds have FD_CLOEXEC |
+| `fork()` then immediate `exec()` | Supported - all internal fds have FD_CLOEXEC |
 | `fork()` after init without `exec()` | **Undefined behaviour** |
 | Subprocess spawning from fibers | Via `strand_fiber_offload` for both `fork` and `waitpid` |
 
@@ -1158,7 +1158,7 @@ the fiber wait primitives.
 
 ---
 
-## 11. Cooperative Scheduling — Honest Assessment
+## 11. Cooperative Scheduling - Honest Assessment
 
 ### 11.1 Real Costs
 
@@ -1171,7 +1171,7 @@ the fiber wait primitives.
 
 **Debug watchdog:** Debug builds include a configurable maximum fiber run time
 (wall time between yields). Exceeding the threshold emits a warning. Not a
-hard limit — does not preempt the fiber.
+hard limit - does not preempt the fiber.
 
 **Explicit yield contracts:** Every API that parks a fiber is also an implicit
 yield point and a cancellation point. Code that loops without calling any
@@ -1231,19 +1231,19 @@ spawned, the cache is checked first before calling `mmap`.
 
 ### 13.1 Default Stack Size
 
-**Default: 64 KB.** Per-spawn override is supported — the spawn API accepts
+**Default: 64 KB.** Per-spawn override is supported - the spawn API accepts
 an optional `size_t stack_size` parameter where `0` means use the default.
 
 64 KB is the right default for the target workload. Protocol handling logic,
 I/O waiting, and distributed system coordination code does not have deep call
-stacks. 8–16 KB is too aggressive — a single function using a modest local
+stacks. 8–16 KB is too aggressive - a single function using a modest local
 buffer or a string formatting call can exhaust it. 256 KB–1 MB is safe but
 wastes memory at scale: at 10,000 concurrent fibers, 256 KB per stack is
 2.5 GB reserved before a byte of data is processed. 64 KB sits in the
 practical sweet spot. The guard page catches overflows at any size.
 
-Callers who know their fibers will use more — or can guarantee they will use
-less — pass an explicit `stack_size` at spawn time.
+Callers who know their fibers will use more - or can guarantee they will use
+less - pass an explicit `stack_size` at spawn time.
 
 ### 13.2 Cache Hard Cap
 
@@ -1251,16 +1251,16 @@ less — pass an explicit `stack_size` at spawn time.
 
 The cap is expressed as a fixed count per worker, not a memory budget. A
 memory budget is harder to reason about when stack sizes vary per fiber. At
-the default 64 KB stack size, 64 cached stacks is 4 MB per worker — modest
+the default 64 KB stack size, 64 cached stacks is 4 MB per worker - modest
 and predictable. A deployment running 4 workers retains at most 256 stacks
 across the runtime, enough to absorb burst workloads without retaining memory
 indefinitely.
 
-If large stacks are used (e.g. 1 MB), 64 cached stacks is 64 MB per worker —
+If large stacks are used (e.g. 1 MB), 64 cached stacks is 64 MB per worker -
 significant but bounded and explicit. The configurable cap allows reducing this
 at initialisation.
 
-The cap bounds VMA consumption on Linux — see §10.2.
+The cap bounds VMA consumption on Linux - see §10.2.
 
 ### 13.3 Cache Overflow Policy
 
@@ -1268,7 +1268,7 @@ The cap bounds VMA consumption on Linux — see §10.2.
 returned to the cache: free the incoming stack immediately via `munmap`.**
 
 The cache retains its current contents unchanged. The incoming stack is
-released. This is the simplest correct behaviour — evicting an existing cached
+released. This is the simplest correct behaviour - evicting an existing cached
 stack in favour of the incoming one adds complexity without correctness benefit,
 since there is no basis for preferring one cached stack over another.
 
@@ -1282,7 +1282,7 @@ the excess in LIFO order (most recently cached first).
   reclaiming during normal load variation between requests.
 - The idle floor of 8 stacks keeps warm capacity available for quick
   resumption after an idle period without retaining the full burst allocation.
-- LIFO order frees the most recently cached stacks first — these are coldest
+- LIFO order frees the most recently cached stacks first - these are coldest
   in terms of access recency and least likely to be reused soon.
 
 Both the idle timeout and the idle floor are configurable at runtime
@@ -1296,24 +1296,24 @@ initialisation.
 This is consistent with the library's explicit error handling philosophy
 throughout. The caller decides whether to retry, reduce concurrency, or
 propagate the failure upward. OOM during fiber spawn is not categorically
-different from any other resource exhaustion — a well-written server should
+different from any other resource exhaustion - a well-written server should
 handle it gracefully rather than crash.
 
 **Exception:** If the library cannot allocate its own internal control
 structures at initialisation time, that is a fatal condition and `abort` is
 appropriate. Internal structures are not optional and cannot be partially
-initialised. This applies only to `strand_runtime_init` — not to
+initialised. This applies only to `strand_runtime_init` - not to
 `strand_fiber_spawn`.
 
 ### 13.6 Summary
 
 | Parameter | Default | Configurable |
 |---|---|---|
-| Default stack size | 64 KB | Yes — per-spawn override via `stack_size` parameter |
-| Cache hard cap | 64 stacks per worker | Yes — at runtime init |
+| Default stack size | 64 KB | Yes - per-spawn override via `stack_size` parameter |
+| Cache hard cap | 64 stacks per worker | Yes - at runtime init |
 | Cache overflow policy | Free incoming stack immediately | No |
-| Idle reclamation trigger | Run queue empty for 5 s, cache above 8 stacks | Yes — timeout and floor at init |
-| Idle reclamation target | Shrink to 8 stacks, LIFO order | Yes — floor at init |
+| Idle reclamation trigger | Run queue empty for 5 s, cache above 8 stacks | Yes - timeout and floor at init |
+| Idle reclamation target | Shrink to 8 stacks, LIFO order | Yes - floor at init |
 | Spawn allocation failure | Return error code | N/A |
 | Init allocation failure | Abort | N/A |
 
@@ -1333,7 +1333,7 @@ implemented.
 | License choice | Pre-release | ISC preferred per project philosophy; not yet confirmed |
 | FOSS strategy, community | Pre-release | Not yet discussed |
 
-**Confirmed out-of-scope decisions (not deferred — permanently excluded):**
+**Confirmed out-of-scope decisions (not deferred - permanently excluded):**
 
 | Decision | Rationale |
 |---|---|
