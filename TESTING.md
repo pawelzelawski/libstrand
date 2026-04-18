@@ -152,27 +152,80 @@ test_wait_readable_wakes(void)
 
 ### 2.5 Cross-Worker Test Patterns
 
-Layer 4 tests spin up real worker threads. Tests use a bounded wait with a
-timeout rather than spinning indefinitely:
+Layer 4 tests spin up real worker threads and offload pool threads.  Tests
+use predicate-based wait helpers with generous timeouts rather than fixed-
+duration `nanosleep` loops.  Fixed sleeps fail non-deterministically under
+Valgrind (20-50× slowdown) and on slow CI runners.
+
+**Core helpers** (defined at the top of `test_layer4.c`):
 
 ```c
+typedef int (*wait_pred_fn)(void *);
+
 /*
- * Wait for a flag to become non-zero, up to timeout_ms milliseconds.
- * Returns 1 if flag was set in time, 0 on timeout.
- * Used to detect cross-worker completion without busy-waiting forever.
+ * wait_until_pred -- poll a predicate with 1 ms sleep between checks.
+ * If drive_sched is non-NULL, calls strand_scheduler_advance each
+ * iteration (for tests that drive a scheduler from the main thread).
+ * Returns 1 when the predicate becomes true, 0 on timeout.
  */
 static int
-wait_for_flag(volatile int *flag, int timeout_ms)
-{
-    struct timespec ts = { .tv_nsec = 1000000 };  /* 1ms sleep */
-    for (int i = 0; i < timeout_ms; i++) {
-        if (*flag)
-            return 1;
-        nanosleep(&ts, NULL);
-    }
-    return 0;
-}
+wait_until_pred(wait_pred_fn pred, void *ctx, uint64_t timeout_ms,
+    strand_scheduler_t *drive_sched);
+
+/*
+ * wait_atomic_at_least -- wait for an _Atomic int to reach a target.
+ * Built on wait_until_pred.
+ */
+static int
+wait_atomic_at_least(_Atomic int *value, int target,
+    uint64_t timeout_ms, strand_scheduler_t *drive_sched);
+
+/*
+ * wait_fiber_state -- wait for a fiber handle's state to match.
+ * Used to confirm a fiber has parked (e.g. FIBER_PARKED_OFFLOAD)
+ * before exercising a cancel race.
+ */
+static int
+wait_fiber_state(strand_fiber_handle_t *handle, fiber_state_t expected,
+    uint64_t timeout_ms, strand_scheduler_t *drive_sched);
 ```
+
+**Timeout guidelines:**
+
+| Context | Recommended timeout |
+|---|---|
+| Worker thread executing a trivial fiber | 15 000 ms |
+| Offload thread picking up / completing work | 15 000 ms |
+| Offload arg-outlives-cancel (long spin loop) | 60 000 ms |
+
+These values are deliberately large.  On native hardware each wait
+completes in milliseconds; the generous ceiling exists solely for
+Valgrind.  Tests that time out under Valgrind indicate a real hang, not
+a slow machine.
+
+**Rules for cross-worker / offload tests:**
+
+1. **Never assume a fixed sleep is long enough.**  Use a predicate wait
+   that checks the observable condition (atomic flag, pool state, fiber
+   state) rather than hoping N milliseconds is sufficient.
+2. **Use observable flags to gate race set-up.**  When a test needs an
+   offload thread to have picked up an item before cancelling, add an
+   `_Atomic int` flag that the offload function sets on entry
+   (e.g. `g_cancel_fn_started`).  Wait for it with
+   `wait_atomic_at_least` before proceeding.
+3. **Always release spinning offload functions on failure paths.**  If a
+   test exits early (timeout, assertion), set the release flag so that
+   `strand_offload_pool_destroy` does not deadlock on a blocked thread.
+   Use a `goto cleanup` pattern when multiple exit paths exist.
+4. **Pass `drive_sched` when the test thread is the scheduler.**  The
+   offload tests (single-threaded scheduler driven by the test thread)
+   must pass the scheduler to `wait_until_pred` so that fibers are
+   advanced while waiting.  Runtime tests (real worker threads) pass
+   `NULL`.
+5. **Match predicate to actual invariant.**  A pool with capacity 2 and
+   one blocker has `in_flight=1`, not `count + in_flight >= capacity`.
+   Use `pred_pool_has_inflight` (not `pred_pool_full`) when waiting for
+   a single item to be picked up.
 
 ### 2.6 What Gets Unit Tests
 
@@ -795,7 +848,7 @@ when the test passes cleanly with no Valgrind or ASan errors on both platforms.
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2026-03-28
+**Document Version**: 1.1
+**Last Updated**: 2026-04-18
 **See Also**: PROJECT.md, ARCHITECTURE.md, TECH_STACK.md, CODING_STANDARDS.md,
 DEVELOPMENT.md, REPOSITORY_STRUCTURE.md
