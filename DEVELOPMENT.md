@@ -14,8 +14,7 @@
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1–4.5 done; Linux + OpenBSD clean |
-| 4 | Layer 3: I/O Integration | NOT STARTED | - | epoll/kqueue, fd parking, re-arm protocol |
-| 5 | Layer 4: Multi-Worker Runtime | IN PROGRESS | 58/58 | Tasks 5.1–5.5 done; Linux + OpenBSD clean |
+| 5 | Layer 4: Multi-Worker Runtime | IN PROGRESS | 66/66 | Tasks 5.1–5.8 done; Linux + OpenBSD clean |
 | 6 | Layer 5: Scopes and Coordination | NOT STARTED | - | Structured concurrency, fiber-local storage |
 | 7 | Hardening, Benchmarks, and Release | NOT STARTED | - | Integration tests, benchmarks, documentation |
 
@@ -34,8 +33,8 @@
 | M9 | Context switch preserves all registers - verified by test | DONE (test_context_gpr_preserved passes) |
 | M10 | scheduler_advance is nonblocking - verified by test | DONE (test_advance_nonblocking passes) |
 | M11 | scheduler_stop interrupts indefinitely blocked worker - verified by test | DONE (test_scheduler_run_blocks passes) |
-| M12 | Post-re-arm readiness check correct - verified by test | NOT STARTED |
-| M13 | Offload CAS both outcomes exercised - verified by test | NOT STARTED |
+| M12 | Post-re-arm readiness check correct - verified by test | DONE |
+| M13 | Offload CAS both outcomes exercised - verified by test | DONE |
 | M14 | Scope lifecycle all state transitions verified by test | NOT STARTED |
 | M15 | Integration test suite passes: echo server, fan-out scope, offload cancel | NOT STARTED |
 

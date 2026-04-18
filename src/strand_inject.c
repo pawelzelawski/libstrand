@@ -43,17 +43,17 @@
  *   ARCHITECTURE.md §6.3.
  *
  * Wakeup signal:
- *   inject_queue_push_release writes one byte to the owner scheduler's
- *   wakeup fd after enqueueing, so that a blocked epoll_wait/kevent on the
- *   worker side is interrupted and Step 1 drains the item promptly.
- *   See ARCHITECTURE.md §4.2.
+ *   The queue primitive only enqueues/dequeues items.  Wakeup writes are
+ *   performed by caller paths after successful enqueue (runtime spawn,
+ *   cross-worker cancel, offload completion) so a blocked epoll_wait/kevent
+ *   is interrupted and Step 1 drains promptly.
+ *   See ARCHITECTURE.md §4.2 and §6.3.
  */
 
 #include "strand_inject.h"
 #include "strand_sched.h"
 #include "strand_fiber.h"
 #include "strand_offload.h"
-#include "strand_sched.h"
 
 #include <sched.h>
 #include <stdlib.h>

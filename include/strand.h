@@ -393,7 +393,8 @@ void strand_worker_join(strand_worker_t *w);
  * injects it to the target worker's inject queue.  The fiber is made
  * runnable on the target worker's next strand_scheduler_advance call.
  *
- * worker   - explicit target worker; NULL for automatic round-robin.
+ * worker   - explicit target worker from this runtime; NULL for automatic
+ *            round-robin.
  * fn, arg  - fiber entry function and argument.
  * stack_sz - usable stack bytes; 0 uses STRAND_DEFAULT_STACK_SIZE.
  * out      - if non-NULL, receives the ABA-safe handle on success.
@@ -401,6 +402,7 @@ void strand_worker_join(strand_worker_t *w);
  * Returns STRAND_OK           on success.
  * Returns STRAND_ERR_SHUTDOWN if the runtime's shutdown_flag is set.
  * Returns STRAND_ERR_NO_WORKERS if no workers are registered.
+ * Returns STRAND_ERR_WRONGCTX if worker does not belong to this runtime.
  * Returns STRAND_ERR_NOMEM    on allocation failure.
  * See ARCHITECTURE.md §6.4.
  */

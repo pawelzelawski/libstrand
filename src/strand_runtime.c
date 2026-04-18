@@ -335,6 +335,8 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 	void            *stack_base;
 	unsigned long    vg_id;
 	inject_item_t    item;
+	size_t           i;
+	int              found;
 
 	if (rt == NULL)
 		return (STRAND_ERR_NOMEM);
@@ -349,11 +351,27 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 	/* Select target worker. */
 	if (worker != NULL) {
 		/*
-		 * Explicit override: honour only if not stopped.
+		 * Explicit override: worker must belong to this runtime and
+		 * must not be stopped.
 		 * See ARCHITECTURE.md §6.4.
 		 */
-		if (atomic_load(&worker->sched->stop_flag))
+		runtime_lock(rt);
+		found = 0;
+		for (i = 0; i < rt->worker_count; i++) {
+			if (rt->workers[i] == worker) {
+				found = 1;
+				break;
+			}
+		}
+		if (!found) {
+			runtime_unlock(rt);
+			return (STRAND_ERR_WRONGCTX);
+		}
+		if (atomic_load(&worker->sched->stop_flag)) {
+			runtime_unlock(rt);
 			return (STRAND_ERR_SHUTDOWN);
+		}
+		runtime_unlock(rt);
 		target = worker;
 	} else {
 		runtime_lock(rt);

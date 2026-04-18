@@ -530,6 +530,42 @@ test_spawn_during_shutdown_error(void)
 }
 
 /* -------------------------------------------------------------------------
+ * test_explicit_worker_wrong_runtime_error
+ * Explicit worker override must belong to the same runtime.
+ * -------------------------------------------------------------------------
+ */
+static int
+test_explicit_worker_wrong_runtime_error(void)
+{
+	strand_runtime_t     *rt_a;
+	strand_runtime_t     *rt_b;
+	strand_worker_t      *w_b;
+	strand_fiber_handle_t handle;
+	int                   rc;
+
+	rt_a = make_test_runtime();
+	rt_b = make_test_runtime();
+	if (rt_a == NULL || rt_b == NULL) {
+		strand_runtime_destroy(rt_a);
+		strand_runtime_destroy(rt_b);
+		return (1);
+	}
+
+	w_b = make_test_worker(rt_b);
+	if (w_b == NULL) {
+		strand_runtime_destroy(rt_a);
+		strand_runtime_destroy(rt_b);
+		return (1);
+	}
+
+	rc = strand_runtime_spawn(rt_a, NULL, NULL, 0, w_b, &handle);
+
+	strand_runtime_destroy(rt_a);
+	strand_runtime_destroy(rt_b);
+	return (rc == STRAND_ERR_WRONGCTX) ? 0 : 1;
+}
+
+/* -------------------------------------------------------------------------
  * test_inject_delivers_to_worker
  * Spawn a fiber via strand_runtime_spawn; verify it runs on the target
  * worker by recording the sched pointer inside the fiber.
@@ -1585,6 +1621,8 @@ run_layer4_tests(void)
 	    test_no_workers_registered_error);
 	RUN("test_spawn_during_shutdown_error",
 	    test_spawn_during_shutdown_error);
+	RUN("test_explicit_worker_wrong_runtime_error",
+	    test_explicit_worker_wrong_runtime_error);
 	RUN("test_inject_delivers_to_worker",
 	    test_inject_delivers_to_worker);
 	RUN("test_cross_worker_wakeup",
