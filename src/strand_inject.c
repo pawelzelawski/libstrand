@@ -291,6 +291,30 @@ inject_queue_discard_all(strand_inject_queue_t *q)
 {
 	inject_item_t item;
 
-	while (inject_queue_pop_acquire(q, &item))
-		; /* discard */
+	while (inject_queue_pop_acquire(q, &item)) {
+		switch (item.type) {
+		case INJECT_SPAWN:
+			/*
+			 * The fiber was allocated by strand_runtime_spawn but
+			 * never delivered to a run queue.  Free it here so that
+			 * scheduler teardown does not leak it when stop_flag
+			 * races ahead of the worker processing the item.
+			 */
+			strand_fiber_tsan_destroy(item.u.fiber);
+			free(item.u.fiber);
+			break;
+		case INJECT_OFFLOAD_COMPLETE:
+			/*
+			 * The offload item holds one refcount on behalf of the
+			 * inject path.  Drop it now; the fiber side has already
+			 * released its own refcount (or will never run).
+			 */
+			offload_item_release(item.u.offload);
+			break;
+		case INJECT_CANCEL:
+		default:
+			/* No heap resources to free. */
+			break;
+		}
+	}
 }
