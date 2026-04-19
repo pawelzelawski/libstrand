@@ -9,6 +9,6 @@
 #include "../include/strand.h"
 #include "strand_internal.h"
 
-/* strand_scope_t defined in Phase 6 (Task 6.1). */
+/* strand_scope_t defined in strand_internal.h (Task 6.1). */
 
 #endif /* STRAND_SCOPE_H */

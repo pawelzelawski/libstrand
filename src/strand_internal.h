@@ -115,6 +115,132 @@
 #endif
 
 /*
+ * scope_lifecycle_t - scope lifecycle state machine (ARCHITECTURE.md 7.3).
+ *
+ * SCOPE_ACTIVE      - open; children running; no failure; no cancellation.
+ * SCOPE_CANCELLING  - cancellation initiated; children being cancelled.
+ * SCOPE_DRAINING    - all children notified; waiting for last completions.
+ * SCOPE_COMPLETED   - all children finished; safe to inspect first_error.
+ */
+typedef enum {
+        SCOPE_ACTIVE     = 0,
+        SCOPE_CANCELLING = 1,
+        SCOPE_DRAINING   = 2,
+        SCOPE_COMPLETED  = 3,
+} scope_lifecycle_t;
+
+/*
+ * owner_flag values for strand_scope_t.
+ *
+ * OWNER_CALLER  - the programmer's code owns the control block memory.
+ *                 strand_scope_wait and strand_scope_wait_timeout require
+ *                 this; strand_scope_abandon transitions away from it.
+ * OWNER_RUNTIME - strand_scope_abandon was called; the runtime will free
+ *                 the control block when live_child_count reaches zero and
+ *                 lifecycle is SCOPE_COMPLETED and walk_ref_count is zero.
+ */
+#define OWNER_CALLER  0
+#define OWNER_RUNTIME 1
+
+/*
+ * strand_scope_t - structured concurrency scope control block (Task 6.1).
+ * See ARCHITECTURE.md 7.2 for field semantics and the walk reference rule.
+ *
+ * Memory ownership:
+ *   OWNER_CALLER  - caller-allocated; freed by the caller after scope_wait.
+ *   OWNER_RUNTIME - heap-allocated or caller-allocated but abandoned;
+ *                   freed by the runtime when all three free conditions
+ *                   hold simultaneously (see ARCHITECTURE.md 7.3).
+ *
+ * Thread safety:
+ *   All _Atomic fields may be accessed from any worker thread.
+ *   spawn_list_head is written only at spawn time (single worker) and
+ *   read only during the cancellation walk; the walk_ref_count protocol
+ *   ensures no concurrent modification.
+ *   cancellation_flag is set once under lifecycle CAS protection and
+ *   thereafter read-only.
+ */
+typedef struct strand_scope {
+        /*
+         * CONCURRENT: accessed from the owner fiber (strand_scope_open,
+         * strand_scope_wait, strand_scope_cancel, strand_scope_abandon) and
+         * from child fibers in scope_child_finish and scope_walk_cancel.
+         * All transitions use atomic_compare_exchange with seq_cst so every
+         * reader observes a consistent ordering of state changes.
+         * See ARCHITECTURE.md 7.3.
+         */
+        _Atomic scope_lifecycle_t lifecycle;
+
+        /*
+         * CONCURRENT: written by the owner fiber via strand_scope_abandon
+         * (OWNER_CALLER -> OWNER_RUNTIME, seq_cst store) and read by
+         * scope_child_finish and scope_walk_cancel to determine whether to
+         * free the control block.  Atomic store/load with seq_cst.
+         */
+        _Atomic int owner_flag;
+
+        /*
+         * CONCURRENT: decremented by any worker thread when a child fiber
+         * finishes (scope_child_finish).  Incremented by the spawning fiber
+         * at strand_scope_spawn time (single worker, but other threads may
+         * concurrently decrement).  seq_cst fetch_add / fetch_sub.
+         * Reaching zero triggers SCOPE_COMPLETED transition.
+         */
+        _Atomic int live_child_count;
+
+        /*
+         * CONCURRENT: incremented by scope_walk_cancel before traversing
+         * the spawn-order list; decremented after the walk completes.
+         * The control block must not be freed while this is non-zero, even
+         * if SCOPE_COMPLETED and OWNER_RUNTIME.  seq_cst fetch_add / fetch_sub.
+         * See ARCHITECTURE.md 7.3 (walk reference rule).
+         */
+        _Atomic int walk_ref_count;
+
+        /*
+         * CONCURRENT: CAS-set exactly once by the first failing child fiber
+         * in scope_child_finish.  Subsequent failures discard their error
+         * (CAS will fail because the value is already non-zero).
+         * seq_cst compare_exchange_strong.  See ARCHITECTURE.md 7.5.
+         */
+        _Atomic int first_error;
+
+        /*
+         * spawn_list_head - intrusive singly-linked list of spawned child
+         * fibers in spawn order, linked via strand_fiber_t.next at spawn
+         * time.  Used by scope_walk_cancel to cancel siblings in
+         * reverse-spawn order.
+         * Written only at spawn time (single worker thread).
+         * Read only during cancellation walk; walk_ref_count prevents
+         * concurrent structural modification.
+         * Not _Atomic: guarded by the walk reference rule.
+         */
+        strand_fiber_t *spawn_list_head;
+
+        /*
+         * parent_fiber - ABA-safe handle of the fiber blocked in
+         * strand_scope_wait.  Set by strand_scope_wait when it parks;
+         * nulled by strand_scope_abandon (ptr = NULL, generation = 0).
+         * Read by scope_child_finish when lifecycle reaches SCOPE_COMPLETED
+         * to wake the parent.
+         * Not _Atomic: written once by the owner fiber before parking and
+         * read by the completing-child fiber after the SCOPE_COMPLETED
+         * transition; the seq_cst CAS on lifecycle provides the
+         * happens-before edge between the write and the read.
+         */
+        strand_fiber_handle_t parent_fiber;
+
+        /*
+         * cancellation_flag - set to 1 when the scope enters SCOPE_CANCELLING
+         * state.  Thereafter read-only; used as a fast non-atomic check by
+         * code running on the owner worker where seq_cst ordering is
+         * already established by prior atomic operations.
+         * Written once under lifecycle CAS protection; read-only after.
+         */
+        int cancellation_flag;
+} strand_scope_t;
+
+/*
  * fiber_state_t - fiber execution state machine.
  * See ARCHITECTURE.md §4.5 for all legal transitions and ownership rules.
  *

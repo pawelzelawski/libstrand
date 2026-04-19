@@ -853,7 +853,7 @@ target: Layers 1–4 plus scopes.
 
 ### Tasks
 
-**6.1 - strand_scope_t control block**
+**6.1 - strand_scope_t control block** ✓ DONE
 - Define `strand_scope_t` in `src/strand_internal.h`:
   - `_Atomic scope_lifecycle_t lifecycle`
   - `_Atomic int owner_flag` (OWNER_CALLER / OWNER_RUNTIME)
