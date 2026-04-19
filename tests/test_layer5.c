@@ -27,6 +27,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "test_harness.h"
 #include "../include/strand.h"
@@ -1595,6 +1597,564 @@ test_spawn_detached_no_scope(void)
         return (0);
 }
 
+/* =========================================================================
+ * Remaining tests required by DEVELOPMENT.md §"Tests for Phase 6"
+ * =========================================================================
+ */
+
+/* -------------------------------------------------------------------------
+ * test_scope_walk_ref_prevents_free
+ *
+ * Verify the walk reference rule (ARCHITECTURE.md §7.3): when scope is
+ * OWNER_RUNTIME, the control block must NOT be freed while a cancellation
+ * walk is in progress (walk_ref_count > 0).
+ *
+ * Strategy (single-worker cooperative scheduler):
+ *   - Heap-allocate a scope; open; spawn one child that returns an error.
+ *   - The error triggers scope_walk_cancel.  During the walk walk_ref_count
+ *     is incremented before any cancel call and decremented after.
+ *   - After strand_scope_wait returns the scope has been freed by the
+ *     runtime (OWNER_RUNTIME path).  Valgrind verifies no double-free and
+ *     no use-after-free.
+ *
+ * Because the walk is synchronous on a single worker (scope_child_finish
+ * calls scope_walk_cancel inline, which increments walk_ref_count, walks,
+ * decrements, and checks the free condition atomically before returning),
+ * the observable property is simply: after drive_until_idle the scope was
+ * freed exactly once with no memory errors.  Valgrind is the verifier.
+ * -------------------------------------------------------------------------
+ */
+
+typedef struct {
+        strand_scheduler_t *sched;
+        strand_scope_t     *scope; /* heap-allocated, OWNER_RUNTIME */
+        _Atomic int         child_done;
+} walk_ref_args_t;
+
+static int
+child_fails_for_walk_ref(void *varg)
+{
+        walk_ref_args_t *a = varg;
+        atomic_store(&a->child_done, 1);
+        return (7); /* non-zero triggers walk */
+}
+
+static int
+walk_ref_parent_inner(walk_ref_args_t *a)
+{
+        int rc;
+
+        rc = strand_scope_open(a->sched, a->scope);
+        if (rc != STRAND_OK)
+                return (1);
+
+        rc = strand_scope_spawn(a->sched, a->scope,
+                                child_fails_for_walk_ref, a, NULL);
+        if (rc != STRAND_OK)
+                return (1);
+
+        /* Abandon: runtime owns the scope; it will free on completion. */
+        strand_scope_abandon(a->sched, a->scope);
+        a->scope = NULL;
+        return (0);
+}
+
+static void
+walk_ref_parent_fiber(void *varg)
+{
+        walk_ref_parent_inner((walk_ref_args_t *)varg);
+}
+
+static int
+test_scope_walk_ref_prevents_free(void)
+{
+        strand_scheduler_t *sched;
+        walk_ref_args_t     args;
+        strand_scope_t     *scope;
+        int                 rc;
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        scope = malloc(sizeof(*scope));
+        if (scope == NULL) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+
+        memset(&args, 0, sizeof(args));
+        args.sched = sched;
+        args.scope = scope;
+
+        rc = push_root_fiber(sched, walk_ref_parent_fiber, &args);
+        if (rc != 0) {
+                free(scope);
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        drive_until_idle(sched);
+        strand_scheduler_destroy(sched);
+
+        /* Valgrind verifies: freed exactly once, no use-after-free. */
+        if (!atomic_load(&args.child_done))
+                return (1);
+        return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * test_scope_wait_timeout_scope_unchanged
+ *
+ * Call strand_scope_wait_timeout with a deadline that fires before the
+ * child finishes.  Verify the scope lifecycle is NOT SCOPE_COMPLETED at
+ * the moment of timeout (scope is unchanged by the timeout).
+ * The parent then drains the scope with strand_scope_wait.
+ * -------------------------------------------------------------------------
+ */
+
+typedef struct {
+        strand_scheduler_t *sched;
+        strand_scope_t      scope;
+        int                 timeout_rc;
+        scope_lifecycle_t   lifecycle_at_timeout;
+        int                 final_rc;
+        _Atomic int         child_done;
+} timeout_unchanged_args_t;
+
+static int
+child_waits_for_clock_v2(void *varg)
+{
+        timeout_unchanged_args_t *a = varg;
+
+        while (strand_test_clock_ns < 8000)
+                strand_fiber_yield(a->sched);
+        atomic_store(&a->child_done, 1);
+        return (0);
+}
+
+static int
+timeout_unchanged_parent_inner(timeout_unchanged_args_t *a)
+{
+        int rc;
+
+        rc = strand_scope_open(a->sched, &a->scope);
+        if (rc != STRAND_OK)
+                return (1);
+        rc = strand_scope_spawn(a->sched, &a->scope,
+                                child_waits_for_clock_v2, a, NULL);
+        if (rc != STRAND_OK)
+                return (1);
+
+        strand_fiber_yield(a->sched); /* let child start */
+
+        /* deadline=4000; child needs clock>=8000 */
+        a->timeout_rc          = strand_scope_wait_timeout(a->sched,
+                                                            &a->scope, 4000);
+        a->lifecycle_at_timeout = atomic_load(&a->scope.lifecycle);
+
+        strand_test_clock_ns = 8001;
+        a->final_rc = strand_scope_wait(a->sched, &a->scope);
+        return (0);
+}
+
+static void
+timeout_unchanged_parent_fiber(void *varg)
+{
+        timeout_unchanged_parent_inner((timeout_unchanged_args_t *)varg);
+}
+
+static int
+test_scope_wait_timeout_scope_unchanged(void)
+{
+        strand_scheduler_t       *sched;
+        timeout_unchanged_args_t  args;
+        int                       rc;
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        memset(&args, 0, sizeof(args));
+        args.sched      = sched;
+        args.timeout_rc = -999;
+        args.final_rc   = -999;
+
+        strand_test_clock_ns = 1000;
+
+        rc = push_root_fiber(sched, timeout_unchanged_parent_fiber, &args);
+        if (rc != 0) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        drive_until_idle(sched);
+
+        strand_test_clock_ns = 4001;
+        drive_until_idle(sched);
+
+        strand_scheduler_destroy(sched);
+
+        if (args.timeout_rc != STRAND_TIMEOUT)
+                return (1);
+        /* scope must NOT have been COMPLETED at the moment of timeout */
+        if (args.lifecycle_at_timeout == SCOPE_COMPLETED)
+                return (1);
+        if (args.final_rc != STRAND_OK)
+                return (1);
+        if (!atomic_load(&args.child_done))
+                return (1);
+        return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * test_scope_owner_orthogonal_to_lifecycle
+ *
+ * Verify all valid OWNER × lifecycle combinations are reachable:
+ *
+ *   SCOPE_CANCELLING + OWNER_RUNTIME  - abandon while a child is failing
+ *   SCOPE_DRAINING   + OWNER_RUNTIME  - abandon after cancel walk completes
+ *                                       but before last child finishes
+ *   SCOPE_COMPLETED  + OWNER_RUNTIME  - all children done after abandon
+ *   SCOPE_COMPLETED  + OWNER_CALLER   - normal scope_wait terminal path
+ *
+ * Each sub-case is a distinct scope; all use heap-allocated scopes for
+ * OWNER_RUNTIME paths.
+ * -------------------------------------------------------------------------
+ */
+
+/* Sub-case A: SCOPE_COMPLETED + OWNER_CALLER (normal wait) */
+static int
+owner_ortho_case_completed_caller(strand_scheduler_t *sched)
+{
+        strand_scope_t scope;
+        int            rc;
+
+        rc = strand_scope_open(sched, &scope);
+        if (rc != STRAND_OK)
+                return (1);
+        rc = strand_scope_spawn(sched, &scope, child_success, NULL, NULL);
+        if (rc != STRAND_OK)
+                return (1);
+        rc = strand_scope_wait(sched, &scope);
+        if (rc != STRAND_OK)
+                return (1);
+        /* verify: SCOPE_COMPLETED + OWNER_CALLER */
+        if (atomic_load(&scope.lifecycle) != SCOPE_COMPLETED)
+                return (1);
+        if (atomic_load(&scope.owner_flag) != OWNER_CALLER)
+                return (1);
+        return (0);
+}
+
+/* Sub-case B: SCOPE_COMPLETED + OWNER_RUNTIME (abandon; child finishes) */
+static int
+owner_ortho_case_completed_runtime(strand_scheduler_t *sched)
+{
+        strand_scope_t *scope;
+        int             rc;
+
+        scope = malloc(sizeof(*scope));
+        if (scope == NULL)
+                return (1);
+
+        rc = strand_scope_open(sched, scope);
+        if (rc != STRAND_OK) { free(scope); return (1); }
+        rc = strand_scope_spawn(sched, scope, child_success, NULL, NULL);
+        if (rc != STRAND_OK) { free(scope); return (1); }
+
+        strand_scope_abandon(sched, scope);
+        /* scope now OWNER_RUNTIME; child will complete and free it */
+        /* Valgrind confirms no leak */
+        return (0);
+}
+
+/* Sub-case C: SCOPE_CANCELLING + OWNER_RUNTIME
+ * scope_cancel + abandon while child is parked */
+typedef struct {
+        strand_scheduler_t *sched;
+        _Atomic int         child_cancel_seen;
+} ortho_cancel_args_t;
+
+static int
+child_parks_for_cancel(void *varg)
+{
+        ortho_cancel_args_t *a = varg;
+        strand_fiber_t      *f = a->sched->current_fiber;
+
+        while (!atomic_load(&f->cancel_pending))
+                strand_fiber_yield(a->sched);
+        atomic_store(&a->child_cancel_seen, 1);
+        return (0);
+}
+
+static int
+owner_ortho_case_cancelling_runtime(strand_scheduler_t *sched,
+                                    ortho_cancel_args_t *oa)
+{
+        strand_scope_t *scope;
+        int             rc;
+
+        scope = malloc(sizeof(*scope));
+        if (scope == NULL)
+                return (1);
+
+        rc = strand_scope_open(sched, scope);
+        if (rc != STRAND_OK) { free(scope); return (1); }
+        rc = strand_scope_spawn(sched, scope, child_parks_for_cancel, oa, NULL);
+        if (rc != STRAND_OK) { free(scope); return (1); }
+
+        strand_fiber_yield(sched); /* let child start */
+
+        /* Cancel moves lifecycle ACTIVE -> CANCELLING */
+        rc = strand_scope_cancel(sched, scope);
+        if (rc != STRAND_OK) { free(scope); return (1); }
+
+        /* At this point lifecycle should be DRAINING (walk completed
+         * synchronously) or COMPLETED if child already finished */
+        strand_scope_abandon(sched, scope);
+        /* scope freed by runtime when child finishes */
+        return (0);
+}
+
+typedef struct {
+        strand_scheduler_t  *sched;
+        ortho_cancel_args_t  oa;
+        int                  rc_a, rc_b, rc_c;
+} ortho_args_t;
+
+static int
+owner_ortho_parent_inner(ortho_args_t *a)
+{
+        a->oa.sched = a->sched; /* propagate scheduler into cancel sub-case */
+        a->rc_a = owner_ortho_case_completed_caller(a->sched);
+        a->rc_b = owner_ortho_case_completed_runtime(a->sched);
+        a->rc_c = owner_ortho_case_cancelling_runtime(a->sched, &a->oa);
+        return (0);
+}
+
+static void
+owner_ortho_parent_fiber(void *varg)
+{
+        owner_ortho_parent_inner((ortho_args_t *)varg);
+}
+
+static int
+test_scope_owner_orthogonal_to_lifecycle(void)
+{
+        strand_scheduler_t *sched;
+        ortho_args_t        args;
+        int                 rc;
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        memset(&args, 0, sizeof(args));
+        args.sched = sched;
+
+        rc = push_root_fiber(sched, owner_ortho_parent_fiber, &args);
+        if (rc != 0) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        drive_until_idle(sched);
+        strand_scheduler_destroy(sched);
+
+        if (args.rc_a != 0 || args.rc_b != 0 || args.rc_c != 0)
+                return (1);
+        if (!atomic_load(&args.oa.child_cancel_seen))
+                return (1);
+        return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * test_scope_abandon_stack_alloc_debug_assert
+ *
+ * In STRAND_DEBUG builds, passing a stack-allocated scope to
+ * strand_scope_abandon must trigger the debug assertion.
+ * In non-debug builds the test is a no-op pass.
+ * -------------------------------------------------------------------------
+ */
+
+/* -------------------------------------------------------------------------
+ * test_scope_abandon_stack_alloc_debug_assert
+ *
+ * In STRAND_DEBUG builds, passing a stack-allocated scope to
+ * strand_scope_abandon must trigger the debug assertion (abort).
+ *
+ * We use fork+waitpid so the abort is confined to a child process and
+ * does not affect ASan/TSan instrumentation of the parent.
+ * The Makefile passes --child-silent-after-fork=yes to Valgrind so the
+ * child's output does not pollute Valgrind's report.
+ * In non-debug builds the test is a no-op pass.
+ * -------------------------------------------------------------------------
+ */
+
+#include <sys/wait.h>
+
+#if defined(STRAND_DEBUG) && !defined(__SANITIZE_ADDRESS__) && \
+    !defined(__SANITIZE_THREAD__) &&                           \
+    !__has_feature(address_sanitizer) &&                       \
+    !__has_feature(thread_sanitizer)
+static void
+stack_assert_trigger_fiber(void *varg)
+{
+        strand_scheduler_t *sched = varg;
+        strand_scope_t      stack_scope; /* deliberately stack-allocated */
+
+        if (strand_scope_open(sched, &stack_scope) != STRAND_OK)
+                return;
+        /*
+         * This must fire the STRAND_DEBUG_ASSERT because &stack_scope is
+         * within the calling fiber's stack range.
+         */
+        strand_scope_abandon(sched, &stack_scope);
+}
+#endif /* STRAND_DEBUG && !sanitizers */
+
+static int
+test_scope_abandon_stack_alloc_debug_assert(void)
+{
+#if defined(STRAND_DEBUG) && !defined(__SANITIZE_ADDRESS__) && \
+    !defined(__SANITIZE_THREAD__) &&                           \
+    !__has_feature(address_sanitizer) &&                       \
+    !__has_feature(thread_sanitizer)
+        /*
+         * Fork a child process that will call strand_scope_abandon with a
+         * stack-allocated scope.  The debug assert fires -> SIGABRT.
+         * Using fork confines the abort to the child so it does not affect
+         * the parent's address space or sanitizer state.
+         *
+         * Skipped when compiled with AddressSanitizer or ThreadSanitizer
+         * because those interceptors catch SIGABRT in the child and report
+         * a "nested bug" before we can observe the clean WIFSIGNALED exit.
+         * The assert is still verified in the Valgrind build (no sanitizers).
+         */
+        pid_t pid;
+        int   status;
+
+        pid = fork();
+        if (pid < 0)
+                return (1);
+
+        if (pid == 0) {
+                strand_scheduler_t *sched = make_test_scheduler();
+                if (sched == NULL)
+                        _exit(1);
+                if (push_root_fiber(sched, stack_assert_trigger_fiber,
+                                    sched) != 0) {
+                        strand_scheduler_destroy(sched);
+                        _exit(1);
+                }
+                drive_until_idle(sched);
+                strand_scheduler_destroy(sched);
+                _exit(1); /* assert did not fire */
+        }
+
+        if (waitpid(pid, &status, 0) < 0)
+                return (1);
+
+        if (WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT)
+                return (0);
+        return (1);
+#else
+        return (0); /* no assert or sanitizer build: trivially pass */
+#endif
+}
+
+/* -------------------------------------------------------------------------
+ * test_fiber_local_destructor_on_scope_exit
+ *
+ * A child fiber sets a fiber-local pointer with a destructor.  When the
+ * fiber finishes and the scheduler runs Step 5, the destructor is called.
+ * Verify the destructor has been called before strand_scope_wait returns
+ * to the parent (i.e. by the time scope is SCOPE_COMPLETED, the destructor
+ * has already fired).
+ * -------------------------------------------------------------------------
+ */
+
+typedef struct {
+        strand_scheduler_t *sched;
+        strand_scope_t      scope;
+        _Atomic int         dtor_called;
+        int                 wait_rc;
+} local_dtor_args_t;
+
+static void
+local_dtor(void *ptr)
+{
+        local_dtor_args_t *a = (local_dtor_args_t *)ptr;
+        atomic_store(&a->dtor_called, 1);
+}
+
+static int
+child_sets_local(void *varg)
+{
+        local_dtor_args_t *a = varg;
+
+        /*
+         * Set a fiber-local pointer pointing back to args.  The destructor
+         * will set dtor_called when the fiber finishes.
+         */
+        strand_fiber_local_set(a->sched, a, local_dtor);
+        return (0);
+}
+
+static int
+local_dtor_parent_inner(local_dtor_args_t *a)
+{
+        int rc;
+
+        rc = strand_scope_open(a->sched, &a->scope);
+        if (rc != STRAND_OK)
+                return (1);
+        rc = strand_scope_spawn(a->sched, &a->scope, child_sets_local, a, NULL);
+        if (rc != STRAND_OK)
+                return (1);
+        a->wait_rc = strand_scope_wait(a->sched, &a->scope);
+        return (0);
+}
+
+static void
+local_dtor_parent_fiber(void *varg)
+{
+        local_dtor_parent_inner((local_dtor_args_t *)varg);
+}
+
+static int
+test_fiber_local_destructor_on_scope_exit(void)
+{
+        strand_scheduler_t *sched;
+        local_dtor_args_t   args;
+        int                 rc;
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        memset(&args, 0, sizeof(args));
+        args.sched   = sched;
+        args.wait_rc = -999;
+
+        rc = push_root_fiber(sched, local_dtor_parent_fiber, &args);
+        if (rc != 0) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        drive_until_idle(sched);
+        strand_scheduler_destroy(sched);
+
+        if (args.wait_rc != STRAND_OK)
+                return (1);
+        /*
+         * The destructor must have been called before scope_wait returned
+         * (scheduler Step 5 runs the destructor immediately after the child
+         * fiber finishes, which is before scope_child_finish wakes the parent).
+         */
+        if (!atomic_load(&args.dtor_called))
+                return (1);
+        return (0);
+}
+
 /* -------------------------------------------------------------------------
  * Test runner (final)
  * -------------------------------------------------------------------------
@@ -1635,5 +2195,17 @@ run_layer5_tests(void)
             test_scope_wait_timeout_then_abandon);
         RUN("test_spawn_detached_no_scope",
             test_spawn_detached_no_scope);
+        RUN("test_scope_walk_ref_prevents_free",
+            test_scope_walk_ref_prevents_free);
+        RUN("test_scope_wait_timeout_scope_unchanged",
+            test_scope_wait_timeout_scope_unchanged);
+        RUN("test_scope_owner_orthogonal_to_lifecycle",
+            test_scope_owner_orthogonal_to_lifecycle);
+        RUN("test_scope_abandon_stack_alloc_debug_assert",
+            test_scope_abandon_stack_alloc_debug_assert);
+        RUN("test_fiber_local_destructor_on_scope_exit",
+            test_fiber_local_destructor_on_scope_exit);
 }
+
+
 

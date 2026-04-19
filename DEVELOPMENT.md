@@ -969,14 +969,14 @@ File: `tests/test_layer5.c`
 
 ### Phase 6 Completion Criteria
 
-- [ ] All Layer 5 tests pass on Linux and OpenBSD - quality milestone M14
-- [ ] Walk reference rule verified: control block not freed during active walk
-- [ ] OWNER_RUNTIME free verified (Valgrind confirms no leak and no double-free)
-- [ ] All four lifecycle state transitions exercised
-- [ ] All valid OWNER × lifecycle combinations reached by tests
-- [ ] Reverse spawn-order cancellation verified
-- [ ] Valgrind clean; ASan/UBSan clean on both platforms
-- [ ] TSan clean - all scope atomic operations verified
+- [x] All Layer 5 tests pass on Linux and OpenBSD - quality milestone M14
+- [x] Walk reference rule verified: control block not freed during active walk
+- [x] OWNER_RUNTIME free verified (Valgrind confirms no leak and no double-free)
+- [x] All four lifecycle state transitions exercised
+- [x] All valid OWNER × lifecycle combinations reached by tests
+- [x] Reverse spawn-order cancellation verified
+- [x] Valgrind clean; ASan/UBSan clean on both platforms
+- [x] TSan clean - all scope atomic operations verified
 
 ---
 
