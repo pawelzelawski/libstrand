@@ -16,7 +16,6 @@
 #include "strand_fiber.h"
 #include "strand_sched.h"
 
-/* forward declaration - implemented in Task 6.4 */
 static void scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope);
 
 /* ---------------------------------------------------------------------------
@@ -196,9 +195,7 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
                             memory_order_seq_cst,
                             memory_order_seq_cst);
                         scope->cancellation_flag = 1;
-
-                        /* TODO Task 6.4: scope_walk_cancel(sched, scope); */
-                        (void)scope_walk_cancel; /* suppress unused warning */
+                        scope_walk_cancel(sched, scope);
                 }
         }
 
@@ -328,24 +325,138 @@ strand_scope_wait(strand_scheduler_t *sched, strand_scope_t *scope)
 }
 
 /* ---------------------------------------------------------------------------
- * scope_walk_cancel - Task 6.4 stub.
+ * strand_scope_cancel - externally initiate cancellation of a scope.
  *
- * Walks the spawn list in forward order (= reverse spawn order) and calls
- * strand_fiber_cancel on each child handle.  Transitions lifecycle from
- * SCOPE_CANCELLING to SCOPE_DRAINING when the walk completes.
+ * See include/strand.h for the full contract.
  *
- * Currently a no-op stub.  Task 6.4 will replace this.
+ * Non-terminal: returns immediately.  The caller must follow with
+ * strand_scope_wait or strand_scope_abandon.
+ *
+ * May be called from a running fiber, the host thread, or another worker
+ * thread (see ARCHITECTURE.md §12, thread safety matrix).  No WRONGCTX
+ * check is required.
+ * ---------------------------------------------------------------------------
+ */
+int
+strand_scope_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
+{
+        scope_lifecycle_t expected;
+
+        /*
+         * CAS lifecycle SCOPE_ACTIVE -> SCOPE_CANCELLING.
+         *
+         * If the scope is already SCOPE_CANCELLING, SCOPE_DRAINING, or
+         * SCOPE_COMPLETED a concurrent cancellation or natural completion
+         * has already begun.  The no-op path is correct for all three:
+         *   CANCELLING  - walk already in progress or will start.
+         *   DRAINING    - walk already completed.
+         *   COMPLETED   - all children already done; nothing to cancel.
+         * ATOMIC: seq_cst CAS matches all other seq_cst accesses on lifecycle.
+         */
+        expected = SCOPE_ACTIVE;
+        if (!atomic_compare_exchange_strong_explicit(
+                &scope->lifecycle, &expected, SCOPE_CANCELLING,
+                memory_order_seq_cst, memory_order_seq_cst))
+                return (STRAND_OK); /* already cancelling/draining/completed */
+
+        scope->cancellation_flag = 1;
+        scope_walk_cancel(sched, scope);
+        return (STRAND_OK);
+}
+
+/* ---------------------------------------------------------------------------
+ * scope_walk_cancel - walk the spawn-order list and cancel all children.
+ *
+ * Called when the first child error is recorded (from scope_child_finish)
+ * or when the caller explicitly calls strand_scope_cancel.
+ *
+ * The walk:
+ *   1. Increments walk_ref_count to hold a reference for the duration of
+ *      the walk, preventing OWNER_RUNTIME free while iterating the list.
+ *   2. Walks spawn_list_head via scope_next (forward = reverse spawn order).
+ *   3. Calls strand_fiber_cancel on each child handle.  Stale handles
+ *      (child already finished) return STRAND_HANDLE_STALE - idempotent,
+ *      continue walking.
+ *   4. Transitions lifecycle SCOPE_CANCELLING -> SCOPE_DRAINING.
+ *   5. Decrements walk_ref_count.  If both conditions for OWNER_RUNTIME
+ *      free are met (SCOPE_COMPLETED and walk_ref_count == 0), frees the
+ *      control block.
+ *
+ * See ARCHITECTURE.md §7.3 (walk reference rule) and §7.6.
  * ---------------------------------------------------------------------------
  */
 static void
 scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
 {
-        (void)sched;
-        (void)scope;
+        strand_fiber_t       *f;
+        strand_fiber_handle_t handle;
+        scope_lifecycle_t     expected_lc;
+        int                   prev_walk;
+
         /*
-         * TODO Task 6.4: implement reverse-spawn-order cancellation walk.
-         * Walk scope->spawn_list_head via scope_next; call
-         * strand_fiber_cancel on each handle; transition
-         * SCOPE_CANCELLING -> SCOPE_DRAINING on completion.
+         * Hold walk reference so OWNER_RUNTIME free cannot race with our
+         * traversal of the spawn list.
+         * ATOMIC: seq_cst increment matches seq_cst decrement below and
+         * the seq_cst store in scope_child_finish (ARCHITECTURE.md 7.3).
          */
+        atomic_fetch_add_explicit(&scope->walk_ref_count, 1,
+                                  memory_order_seq_cst);
+
+        /*
+         * Walk forward through spawn_list_head (forward order = reverse
+         * spawn order, because spawns are prepended).  See strand_scope_spawn.
+         */
+        for (f = scope->spawn_list_head; f != NULL; f = f->scope_next) {
+                handle.ptr        = f;
+                handle.generation = f->generation;
+                /*
+                 * strand_fiber_cancel is idempotent for stale handles and
+                 * for fibers already in FIBER_FINISHED.  Ignore the return
+                 * value; both STRAND_OK and STRAND_HANDLE_STALE are benign.
+                 */
+                (void)strand_fiber_cancel(handle);
+        }
+
+        /*
+         * Transition SCOPE_CANCELLING -> SCOPE_DRAINING.
+         * If the last child finished before we completed the walk the
+         * lifecycle will already be SCOPE_COMPLETED; that is valid per
+         * the state machine (ARCHITECTURE.md 7.3) - leave it as is.
+         */
+        expected_lc = SCOPE_CANCELLING;
+        atomic_compare_exchange_strong_explicit(
+            &scope->lifecycle, &expected_lc, SCOPE_DRAINING,
+            memory_order_seq_cst, memory_order_seq_cst);
+
+        /*
+         * Release walk reference.
+         * ATOMIC: seq_cst decrement synchronises with the seq_cst load of
+         * walk_ref_count that checks the free condition below.
+         */
+        prev_walk = atomic_fetch_sub_explicit(&scope->walk_ref_count, 1,
+                                              memory_order_seq_cst);
+
+        /*
+         * OWNER_RUNTIME free check: free the control block if all of the
+         * following hold:
+         *   - We were the last walk (prev_walk == 1, so new count is 0).
+         *   - live_child_count == 0 (all children have finished).
+         *   - lifecycle == SCOPE_COMPLETED.
+         *   - OWNER_RUNTIME (no caller is waiting).
+         *
+         * This is the only free site for OWNER_RUNTIME scopes where the
+         * last walk completes after the last child (Task 6.8 covers the
+         * complementary case where the last child completes after the walk).
+         */
+        if (prev_walk == 1 &&
+            atomic_load_explicit(&scope->live_child_count,
+                                 memory_order_seq_cst) == 0 &&
+            atomic_load_explicit(&scope->lifecycle,
+                                 memory_order_seq_cst) == SCOPE_COMPLETED &&
+            atomic_load_explicit(&scope->owner_flag,
+                                 memory_order_seq_cst) == OWNER_RUNTIME) {
+                free(scope);
+        }
+
+        (void)sched; /* sched reserved for future cross-worker enqueue path */
 }

@@ -532,8 +532,8 @@ int strand_fiber_offload(strand_scheduler_t *sched,
                          blocking_fn_t fn, void *arg, void *result_slot);
 
 /* ===========================================================================
- * Layer 5 - Structured Concurrency Scopes (Tasks 6.2, 6.3, 6.5)
- * See ARCHITECTURE.md 7.
+ * Layer 5 - Structured Concurrency Scopes (Tasks 6.2, 6.3, 6.4, 6.5, 6.7)
+ * See ARCHITECTURE.md §7.
  * ===========================================================================
  */
 
@@ -591,5 +591,26 @@ int strand_scope_spawn(strand_scheduler_t *sched, strand_scope_t *scope,
  * See ARCHITECTURE.md 7.4.
  */
 int strand_scope_wait(strand_scheduler_t *sched, strand_scope_t *scope);
+
+/*
+ * strand_scope_cancel - initiate cancellation of a scope (non-terminal).
+ *
+ * Transitions the scope from SCOPE_ACTIVE to SCOPE_CANCELLING (if it is
+ * currently SCOPE_ACTIVE) and initiates a cancellation walk that calls
+ * strand_fiber_cancel on all spawned children in reverse spawn order.
+ *
+ * Non-terminal: returns immediately after starting the walk.  The caller
+ * must follow with strand_scope_wait or strand_scope_abandon to drain the
+ * scope.
+ *
+ * If the scope is already SCOPE_CANCELLING, SCOPE_DRAINING, or
+ * SCOPE_COMPLETED the call is a no-op and returns STRAND_OK.
+ *
+ * May be called from a running fiber, the host thread, or another worker
+ * thread.  See ARCHITECTURE.md §12 (thread safety matrix).
+ *
+ * Returns STRAND_OK on success.
+ */
+int strand_scope_cancel(strand_scheduler_t *sched, strand_scope_t *scope);
 
 #endif /* STRAND_H */

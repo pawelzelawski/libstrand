@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-19
 **Current Phase**: Phase 6 - Layer 5: Scopes and Coordination
-**Next Task**: Phase 6 - Task 6.4: Cancellation walk
+**Next Task**: Phase 6 - Task 6.6: strand_scope_wait_timeout
 
 ### Phase Summary
 
@@ -15,7 +15,7 @@
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1–4.5 done; Linux + OpenBSD clean |
 | 5 | Layer 4: Multi-Worker Runtime | DONE | 67/67 | Tasks 5.1–5.8 done; Linux + OpenBSD clean |
-| 6 | Layer 5: Scopes and Coordination | IN PROGRESS | 74/74 | Tasks 6.1–6.3, 6.5 done; Linux + OpenBSD clean |
+| 6 | Layer 5: Scopes and Coordination | IN PROGRESS | 78/78 | Tasks 6.1–6.5, 6.7 done; Linux clean |
 | 7 | Hardening, Benchmarks, and Release | NOT STARTED | - | Integration tests, benchmarks, documentation |
 
 ### Quality Milestones
@@ -890,7 +890,7 @@ target: Layers 1–4 plus scopes.
     transition lifecycle to `SCOPE_COMPLETED` (if not already); if
     `OWNER_RUNTIME` and `walk_ref_count == 0`: free control block
 
-**6.4 - Cancellation walk**
+**6.4 - Cancellation walk** ✓ DONE
 - `scope_walk_cancel(scope)`:
   - `atomic_fetch_add(&scope->walk_ref_count, 1)` - hold reference for walk
   - Walk spawn-order list in reverse; call `strand_fiber_cancel` on each handle
@@ -910,7 +910,7 @@ target: Layers 1–4 plus scopes.
 - If timeout: non-terminal - scope unchanged; return timeout indicator
   Caller must follow with `strand_scope_wait` or `strand_scope_abandon`
 
-**6.7 - strand_scope_cancel**
+**6.7 - strand_scope_cancel** ✓ DONE
 - If `lifecycle == SCOPE_ACTIVE`: CAS to `SCOPE_CANCELLING`, initiate walk
 - Non-terminal - return immediately; caller must follow with wait or abandon
 
