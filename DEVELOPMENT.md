@@ -2,9 +2,9 @@
 
 ## Status Overview
 
-**Last Updated**: 2026-04-18
-**Current Phase**: Phase 5 - Layer 4: Multi-Worker Runtime
-**Next Task**: Phase 5 - Task 5.9: Phase 5 completion criteria review and merge
+**Last Updated**: 2026-04-19
+**Current Phase**: Phase 6 - Layer 5: Scopes and Coordination
+**Next Task**: Phase 6 - Task 6.4: Cancellation walk
 
 ### Phase Summary
 
@@ -14,8 +14,8 @@
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1–4.5 done; Linux + OpenBSD clean |
-| 5 | Layer 4: Multi-Worker Runtime | IN PROGRESS | 66/66 | Tasks 5.1–5.8 done; Linux + OpenBSD clean |
-| 6 | Layer 5: Scopes and Coordination | NOT STARTED | - | Structured concurrency, fiber-local storage |
+| 5 | Layer 4: Multi-Worker Runtime | DONE | 67/67 | Tasks 5.1–5.8 done; Linux + OpenBSD clean |
+| 6 | Layer 5: Scopes and Coordination | IN PROGRESS | 74/74 | Tasks 6.1–6.3, 6.5 done; Linux + OpenBSD clean |
 | 7 | Hardening, Benchmarks, and Release | NOT STARTED | - | Integration tests, benchmarks, documentation |
 
 ### Quality Milestones
@@ -865,17 +865,24 @@ target: Layers 1–4 plus scopes.
   - `int cancellation_flag`
 - Add `CONCURRENT:` comment on every `_Atomic` field per CODING_STANDARDS.md §4.5
 
-**6.2 - strand_scope_open and strand_scope_spawn**
-- `strand_scope_open(strand_scope_t *scope)`: memset to zero, set
-  `lifecycle = SCOPE_ACTIVE`, `owner_flag = OWNER_CALLER`,
-  `live_child_count = 0`, `parent_fiber = current_fiber_handle()`
-- `strand_scope_spawn(strand_scope_t *scope, strand_fiber_fn_t fn, void *arg)`:
-  - Spawn fiber (same worker) with `scope` pointer set
-  - Append handle to spawn-order list
+**6.2 - strand_scope_open and strand_scope_spawn** ✓ DONE
+- `strand_scope_open(strand_scheduler_t *sched, strand_scope_t *scope)`:
+  memset to zero, set `lifecycle = SCOPE_ACTIVE`, `owner_flag = OWNER_CALLER`,
+  `live_child_count = 0`, `parent_fiber = current_fiber_handle()`.
+  Returns `STRAND_ERR_WRONGCTX` if called from host thread.
+- `strand_scope_spawn(strand_scheduler_t *sched, strand_scope_t *scope,
+  strand_scope_fiber_fn_t fn, void *arg, strand_fiber_handle_t *out)`:
+  - Takes `strand_scope_fiber_fn_t` (int-returning), not `strand_fiber_fn_t`.
+  - Allocates a `scope_trampoline_t` (scope, fn, arg, sched); passes it as
+    entry_arg to `strand_fiber_spawn` with `scope_fiber_trampoline` as
+    entry_fn.  The trampoline calls the user function, captures its `int`
+    return value, then calls `scope_child_finish(sched, scope, retval)`.
+  - Sets `f->scope = scope` and prepends fiber to scope's spawn list via
+    `f->scope_next` (prepend = forward traversal is reverse spawn order).
   - `atomic_fetch_add(&scope->live_child_count, 1)`
   - Return handle
 
-**6.3 - scope_child_finish**
+**6.3 - scope_child_finish** ✓ DONE
 - Called by scheduler when a tracked fiber reaches `FIBER_FINISHED`:
   - If fiber returned an error: CAS `first_error` from 0 to error code;
     if CAS succeeds (first error): initiate cancellation walk
@@ -892,7 +899,7 @@ target: Layers 1–4 plus scopes.
   - `atomic_fetch_sub(&scope->walk_ref_count, 1)` - release reference
   - If `live_child_count == 0` and `OWNER_RUNTIME`: free control block
 
-**6.5 - strand_scope_wait**
+**6.5 - strand_scope_wait** ✓ DONE
 - Park calling fiber until `scope->lifecycle == SCOPE_COMPLETED`
 - Terminal: return `scope->first_error` (0 if no error)
 - After return: scope is `SCOPE_COMPLETED` and `OWNER_CALLER`

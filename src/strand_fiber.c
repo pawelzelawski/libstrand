@@ -674,8 +674,19 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 
         case FIBER_PARKED_CHANNEL:
                 /*
-                 * Placeholder - handled when channels are implemented (Phase 6).
+                 * Placeholder - handled when channels are implemented.
                  */
+                break;
+
+        case FIBER_PARKED_SCOPE:
+                /*
+                 * Fiber is parked in strand_scope_wait.  Wake it with
+                 * cancel_pending set so scope_wait returns STRAND_CANCELLED.
+                 * See ARCHITECTURE.md 7.4 and DEVELOPMENT.md Task 6.5.
+                 */
+                atomic_store(&f->cancel_pending, 1);
+                atomic_store(&f->state, FIBER_RUNNABLE);
+                run_queue_push(sched, f);
                 break;
 	}
 

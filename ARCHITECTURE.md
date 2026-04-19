@@ -870,7 +870,12 @@ class of bug that arises when fibers outlive the state they reference.
 
 **Scope operations:**
 - `strand_scope_open(scope)` - initialise scope, set OWNER_CALLER
-- `strand_scope_spawn(scope, fn, arg)` - spawn a child fiber under this scope
+- `strand_scope_spawn(scope, fn, arg)` - spawn a child fiber under this scope.
+  Child fibers spawned through `strand_scope_spawn` use
+  `strand_scope_fiber_fn_t` (returns `int`). Return 0 for success, non-zero
+  for failure. The runtime trampoline captures the return value and calls
+  `scope_child_finish` on fiber exit. Fibers spawned via `strand_fiber_spawn`
+  (not scope-tracked) continue to use `strand_fiber_fn_t` (returns `void`).
 - `strand_scope_wait(scope)` - block until SCOPE_COMPLETED; terminal
 - `strand_scope_wait_timeout(scope, deadline)` - block until completed or
   deadline; non-terminal if timeout fires

@@ -256,8 +256,9 @@ typedef enum {
 	FIBER_PARKED_IO_WRITE = 4,
 	FIBER_PARKED_TIMER = 5,
 	FIBER_PARKED_OFFLOAD = 6,
-	FIBER_PARKED_CHANNEL = 7,
-	FIBER_FINISHED = 8,
+        FIBER_PARKED_CHANNEL = 7,
+        FIBER_PARKED_SCOPE   = 8, /* parked in strand_scope_wait */
+        FIBER_FINISHED       = 9,
 } fiber_state_t;
 
 /*
@@ -295,9 +296,17 @@ typedef struct strand_fiber {
 	    *local_ptr; /* fiber-local storage slot; see ARCHITECTURE.md §4.7 */
 	strand_destructor_t
 	    local_dtor; /* destructor for local_ptr; called on FIBER_FINISHED */
-	strand_scope_t *scope; /* owning scope; NULL if detached */
-	struct strand_fiber
-	    *next; /* intrusive link: run queue, scope lists, dead pool */
+        strand_scope_t *scope; /* owning scope; NULL if detached */
+        struct strand_fiber
+            *next; /* intrusive link: run queue, dead pool */
+        /*
+         * scope_next - intrusive link for the scope's spawn-order list.
+         * Separate from next so the run queue and scope list can coexist.
+         * Set by strand_scope_spawn; traversed by scope_walk_cancel.
+         * Spawn list is prepended (newest at head): forward traversal =
+         * reverse spawn order for the cancellation walk (ARCHITECTURE.md 7.6).
+         */
+        struct strand_fiber *scope_next;
 	void *tsan_fiber; /* __tsan_create_fiber handle; NULL if no TSan */
 	unsigned long
 	    valgrind_stack_id; /* VALGRIND_STACK_REGISTER id; 0 if unused */

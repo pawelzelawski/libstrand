@@ -44,6 +44,17 @@ typedef struct strand_fiber_handle {
 typedef void (*strand_fiber_fn_t)(void *arg);
 
 /*
+ * strand_scope_fiber_fn_t - scope-tracked fiber entry function.
+ *
+ * Used exclusively with strand_scope_spawn.  Returns 0 on success, non-zero
+ * on failure.  The runtime trampoline captures the return value and passes
+ * it to scope_child_finish, which performs the first-error CAS.  Fibers
+ * spawned via strand_fiber_spawn (not scope-tracked) use strand_fiber_fn_t.
+ * See ARCHITECTURE.md 7.1 and DEVELOPMENT.md Task 6.2.
+ */
+typedef int (*strand_scope_fiber_fn_t)(void *arg);
+
+/*
  * strand_destructor_t - fiber-local storage destructor.
  * Called with the stored pointer when the fiber finishes.
  */
@@ -519,5 +530,66 @@ void strand_offload_pool_destroy(strand_offload_pool_t *pool);
 int strand_fiber_offload(strand_scheduler_t *sched,
                          strand_offload_pool_t *pool,
                          blocking_fn_t fn, void *arg, void *result_slot);
+
+/* ===========================================================================
+ * Layer 5 - Structured Concurrency Scopes (Tasks 6.2, 6.3, 6.5)
+ * See ARCHITECTURE.md 7.
+ * ===========================================================================
+ */
+
+/*
+ * strand_scope_open - initialise a scope control block.
+ *
+ * memsets scope to zero, sets lifecycle to SCOPE_ACTIVE, owner_flag to
+ * OWNER_CALLER, and records the calling fiber as the parent that will be
+ * woken when all children complete.
+ *
+ * Must be called from inside a running fiber.
+ * Returns STRAND_ERR_WRONGCTX if called from a host thread.
+ * Returns STRAND_OK on success.
+ * See ARCHITECTURE.md 7.1 and 7.2.
+ */
+int strand_scope_open(strand_scheduler_t *sched, strand_scope_t *scope);
+
+/*
+ * strand_scope_spawn - spawn a scope-tracked child fiber.
+ *
+ * Spawns fn(arg) on the same worker as the caller, tracks it under scope,
+ * and increments scope->live_child_count.  Uses strand_scope_fiber_fn_t:
+ * the child returns 0 for success or non-zero to signal a failure to the
+ * scope's first-error slot.
+ *
+ * If out is non-NULL, *out receives an ABA-safe handle to the spawned fiber.
+ *
+ * The spawn list is prepended (newest at head) so that forward traversal
+ * during the cancellation walk visits children in reverse spawn order.
+ *
+ * Returns STRAND_OK on success.
+ * Returns STRAND_ERR_WRONGCTX if called from a host thread.
+ * Returns STRAND_ERR_SHUTDOWN if the scheduler has been stopped.
+ * Returns STRAND_ERR_NOMEM on allocation failure.
+ * See ARCHITECTURE.md 7.1 and DEVELOPMENT.md Task 6.2.
+ */
+int strand_scope_spawn(strand_scheduler_t *sched, strand_scope_t *scope,
+                       strand_scope_fiber_fn_t fn, void *arg,
+                       strand_fiber_handle_t *out);
+
+/*
+ * strand_scope_wait - block until all scope children have finished.
+ *
+ * Parks the calling fiber in FIBER_PARKED_SCOPE until scope->lifecycle
+ * reaches SCOPE_COMPLETED.  Returns scope->first_error (0 if no child
+ * failed).  Terminal: no follow-up call is required or permitted.
+ *
+ * If the scope has no children (live_child_count == 0 at call time and
+ * lifecycle is SCOPE_ACTIVE), it transitions to SCOPE_COMPLETED and returns
+ * 0 immediately without parking.
+ *
+ * Returns STRAND_CANCELLED if the calling fiber is cancelled while parked.
+ * Returns STRAND_ERR_WRONGCTX if called from a host thread.
+ * Returns scope->first_error (>= 0) on normal completion.
+ * See ARCHITECTURE.md 7.4.
+ */
+int strand_scope_wait(strand_scheduler_t *sched, strand_scope_t *scope);
 
 #endif /* STRAND_H */
