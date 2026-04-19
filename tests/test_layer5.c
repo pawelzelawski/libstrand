@@ -24,7 +24,9 @@
  */
 
 #include <stdatomic.h>
+#include <pthread.h>
 #include <stdint.h>
+#include <sched.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
@@ -42,6 +44,32 @@
  * expiry without real-time delays.  See DEVELOPMENT.md Task 3.7.
  */
 extern uint64_t strand_test_clock_ns;
+
+/* test-only hook controls exported by src/strand_scope.c under STRAND_TEST_CLOCK */
+extern _Atomic int strand_test_scope_walk_hook_enable;
+extern _Atomic int strand_test_scope_walk_hook_entered;
+extern _Atomic int strand_test_scope_walk_hook_release;
+
+static void
+scope_walk_hook_reset(void)
+{
+        atomic_store(&strand_test_scope_walk_hook_enable, 0);
+        atomic_store(&strand_test_scope_walk_hook_entered, 0);
+        atomic_store(&strand_test_scope_walk_hook_release, 0);
+}
+
+static int
+wait_until_atomic_nonzero(_Atomic int *v)
+{
+        int i;
+
+        for (i = 0; i < 5000000; i++) {
+                if (atomic_load(v) != 0)
+                        return (1);
+                sched_yield();
+        }
+        return (0);
+}
 
 /* -------------------------------------------------------------------------
  * Shared helpers
@@ -746,49 +774,51 @@ test_scope_cancelling_to_draining(void)
 typedef struct {
         strand_scheduler_t *sched;
         strand_scope_t      scope;
-        _Atomic int         ran_count;
+        _Atomic int         ok_child_ran;
+        _Atomic int         fail_child_ran;
         int                 wait_rc;
+        int                 first_error_after;
+        int                 cancellation_flag_after;
         scope_lifecycle_t   lifecycle_after;
 } shortcut_complete_args_t;
 
 static int
-child_inc_shortcut(void *varg)
+child_ok_shortcut(void *varg)
 {
         shortcut_complete_args_t *a = varg;
-        atomic_fetch_add(&a->ran_count, 1);
+        atomic_store(&a->ok_child_ran, 1);
         return (0);
+}
+
+static int
+child_fail_shortcut(void *varg)
+{
+        shortcut_complete_args_t *a = varg;
+        atomic_store(&a->fail_child_ran, 1);
+        return (91);
 }
 
 static int
 shortcut_complete_parent_inner(shortcut_complete_args_t *a)
 {
-        int i, rc;
+        int rc;
 
         rc = strand_scope_open(a->sched, &a->scope);
         if (rc != STRAND_OK)
                 return (1);
 
-        for (i = 0; i < 3; i++) {
-                rc = strand_scope_spawn(a->sched, &a->scope,
-                                        child_inc_shortcut, a, NULL);
-                if (rc != STRAND_OK)
-                        return (1);
-        }
-
-        /*
-         * Yield to let all three children run to completion.  After the
-         * yield, scope will be SCOPE_COMPLETED.  scope_cancel must still
-         * be safe to call on a completed scope (no-op CAS path).
-         */
-        strand_fiber_yield(a->sched);
-        strand_fiber_yield(a->sched);
-        strand_fiber_yield(a->sched);
-
-        rc = strand_scope_cancel(a->sched, &a->scope);
+        rc = strand_scope_spawn(a->sched, &a->scope,
+                                child_ok_shortcut, a, NULL);
+        if (rc != STRAND_OK)
+                return (1);
+        rc = strand_scope_spawn(a->sched, &a->scope,
+                                child_fail_shortcut, a, NULL);
         if (rc != STRAND_OK)
                 return (1);
 
         a->wait_rc         = strand_scope_wait(a->sched, &a->scope);
+        a->first_error_after = atomic_load(&a->scope.first_error);
+        a->cancellation_flag_after = a->scope.cancellation_flag;
         a->lifecycle_after = atomic_load(&a->scope.lifecycle);
         return (0);
 }
@@ -821,9 +851,15 @@ test_scope_cancelling_to_completed_shortcut(void)
         drive_until_idle(sched);
         strand_scheduler_destroy(sched);
 
-        if (args.wait_rc != STRAND_OK)
+        if (args.wait_rc != 91)
                 return (1);
-        if (atomic_load(&args.ran_count) != 3)
+        if (!atomic_load(&args.ok_child_ran))
+                return (1);
+        if (!atomic_load(&args.fail_child_ran))
+                return (1);
+        if (args.first_error_after != 91)
+                return (1);
+        if (args.cancellation_flag_after != 1)
                 return (1);
         if (args.lifecycle_after != SCOPE_COMPLETED)
                 return (1);
@@ -938,10 +974,10 @@ test_stale_handles_noop(void)
 typedef struct {
         strand_scheduler_t *sched;
         strand_scope_t      scope;
-        _Atomic int         seq_counter; /* global monotone counter */
-        _Atomic int         cancel_seq_a;
-        _Atomic int         cancel_seq_b;
-        _Atomic int         cancel_seq_c;
+        _Atomic int         seq_counter;
+        _Atomic int         wake_seq_a;
+        _Atomic int         wake_seq_b;
+        _Atomic int         wake_seq_c;
         int                 wait_rc;
 } reverse_order_args_t;
 
@@ -955,11 +991,12 @@ static int
 child_a_cancel(void *varg)
 {
         reverse_order_args_t *a = varg;
-        strand_fiber_t       *f = a->sched->current_fiber;
+        int rc;
 
-        while (!atomic_load(&f->cancel_pending))
-                strand_fiber_yield(a->sched);
-        atomic_store(&a->cancel_seq_a, atomic_fetch_add(&a->seq_counter, 1));
+        rc = strand_fiber_sleep_until(a->sched, UINT64_MAX - 1);
+        if (rc != STRAND_CANCELLED)
+                return (1);
+        atomic_store(&a->wake_seq_a, atomic_fetch_add(&a->seq_counter, 1));
         return (0);
 }
 
@@ -967,11 +1004,12 @@ static int
 child_b_cancel(void *varg)
 {
         reverse_order_args_t *a = varg;
-        strand_fiber_t       *f = a->sched->current_fiber;
+        int rc;
 
-        while (!atomic_load(&f->cancel_pending))
-                strand_fiber_yield(a->sched);
-        atomic_store(&a->cancel_seq_b, atomic_fetch_add(&a->seq_counter, 1));
+        rc = strand_fiber_sleep_until(a->sched, UINT64_MAX - 1);
+        if (rc != STRAND_CANCELLED)
+                return (1);
+        atomic_store(&a->wake_seq_b, atomic_fetch_add(&a->seq_counter, 1));
         return (0);
 }
 
@@ -979,11 +1017,12 @@ static int
 child_c_cancel(void *varg)
 {
         reverse_order_args_t *a = varg;
-        strand_fiber_t       *f = a->sched->current_fiber;
+        int rc;
 
-        while (!atomic_load(&f->cancel_pending))
-                strand_fiber_yield(a->sched);
-        atomic_store(&a->cancel_seq_c, atomic_fetch_add(&a->seq_counter, 1));
+        rc = strand_fiber_sleep_until(a->sched, UINT64_MAX - 1);
+        if (rc != STRAND_CANCELLED)
+                return (1);
+        atomic_store(&a->wake_seq_c, atomic_fetch_add(&a->seq_counter, 1));
         return (0);
 }
 
@@ -1004,7 +1043,9 @@ reverse_order_parent_inner(reverse_order_args_t *a)
         rc = strand_scope_spawn(a->sched, &a->scope, child_c_cancel, a, NULL);
         if (rc != STRAND_OK) return (1);
 
-        /* Yield once so all three children start their yield loops. */
+        /* Yield so all three children park in FIBER_PARKED_TIMER. */
+        strand_fiber_yield(a->sched);
+        strand_fiber_yield(a->sched);
         strand_fiber_yield(a->sched);
 
         /* Cancel: walk fires C -> B -> A (reverse spawn order). */
@@ -1036,9 +1077,9 @@ test_reverse_spawn_order_cancellation(void)
 
         memset(&args, 0, sizeof(args));
         args.sched = sched;
-        atomic_store(&args.cancel_seq_a, -1);
-        atomic_store(&args.cancel_seq_b, -1);
-        atomic_store(&args.cancel_seq_c, -1);
+        atomic_store(&args.wake_seq_a, -1);
+        atomic_store(&args.wake_seq_b, -1);
+        atomic_store(&args.wake_seq_c, -1);
 
         rc = push_root_fiber(sched, reverse_order_parent_fiber, &args);
         if (rc != 0) {
@@ -1051,30 +1092,20 @@ test_reverse_spawn_order_cancellation(void)
         if (args.wait_rc != STRAND_OK)
                 return (1);
 
-        seq_a = atomic_load(&args.cancel_seq_a);
-        seq_b = atomic_load(&args.cancel_seq_b);
-        seq_c = atomic_load(&args.cancel_seq_c);
+        seq_a = atomic_load(&args.wake_seq_a);
+        seq_b = atomic_load(&args.wake_seq_b);
+        seq_c = atomic_load(&args.wake_seq_c);
 
         /*
-         * Walk order: C first, B second, A third.
-         * Each child records the seq_counter value after seeing cancel.
-         * Because cancel_pending is set by the walk (single-worker, before
-         * any child resumes), all children observe it in the same scheduler
-         * pass.  The seq_counter is incremented at the moment each child
-         * checks in.  With a FIFO run queue the children resume A, B, C
-         * (spawn order) but all had cancel_pending from the walk.
-         *
-         * The meaningful assertion is that cancel_pending was SET for all
-         * three children.  Ordering of who records seq first depends on run
-         * order (A before B before C in FIFO), so:
-         *   seq_a < seq_b < seq_c  (A runs first, C runs last).
-         *
-         * This confirms the walk reached all three children correctly.
+         * For parked-timer children, strand_fiber_cancel moves each child to
+         * RUNNABLE immediately and run_queue_push order reflects cancel order.
+         * scope_walk_cancel visits C, then B, then A, so wake/run order must
+         * be C, B, A.
          */
         if (seq_a < 0 || seq_b < 0 || seq_c < 0)
-                return (1); /* at least one child never saw cancel */
-        if (!(seq_a < seq_b && seq_b < seq_c))
-                return (1); /* unexpected run order */
+                return (1);
+        if (!(seq_c < seq_b && seq_b < seq_a))
+                return (1);
         return (0);
 }
 
@@ -1629,7 +1660,28 @@ typedef struct {
         strand_scheduler_t *sched;
         strand_scope_t     *scope; /* heap-allocated, OWNER_RUNTIME */
         _Atomic int         child_done;
+        _Atomic int         saw_walk_ref_nonzero;
+        _Atomic int         saw_completed_while_walk;
 } walk_ref_args_t;
+
+static void *
+walk_ref_observer(void *varg)
+{
+        walk_ref_args_t *a = varg;
+
+        if (!wait_until_atomic_nonzero(&strand_test_scope_walk_hook_entered))
+                return (NULL);
+
+        if (atomic_load_explicit(&a->scope->walk_ref_count,
+                                 memory_order_seq_cst) > 0)
+                atomic_store(&a->saw_walk_ref_nonzero, 1);
+        if (atomic_load_explicit(&a->scope->lifecycle,
+                                 memory_order_seq_cst) == SCOPE_COMPLETED)
+                atomic_store(&a->saw_completed_while_walk, 1);
+
+        atomic_store(&strand_test_scope_walk_hook_release, 1);
+        return (NULL);
+}
 
 static int
 child_fails_for_walk_ref(void *varg)
@@ -1655,7 +1707,7 @@ walk_ref_parent_inner(walk_ref_args_t *a)
 
         /* Abandon: runtime owns the scope; it will free on completion. */
         strand_scope_abandon(a->sched, a->scope);
-        a->scope = NULL;
+        /* keep a->scope for observer assertions before hook release */
         return (0);
 }
 
@@ -1671,6 +1723,7 @@ test_scope_walk_ref_prevents_free(void)
         strand_scheduler_t *sched;
         walk_ref_args_t     args;
         strand_scope_t     *scope;
+        pthread_t           obs;
         int                 rc;
 
         sched = make_test_scheduler();
@@ -1687,17 +1740,33 @@ test_scope_walk_ref_prevents_free(void)
         args.sched = sched;
         args.scope = scope;
 
+        scope_walk_hook_reset();
+        atomic_store(&strand_test_scope_walk_hook_enable, 1);
+        atomic_store(&strand_test_scope_walk_hook_release, 0);
+
+        if (pthread_create(&obs, NULL, walk_ref_observer, &args) != 0) {
+                free(scope);
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+
         rc = push_root_fiber(sched, walk_ref_parent_fiber, &args);
         if (rc != 0) {
+                atomic_store(&strand_test_scope_walk_hook_release, 1);
+                (void)pthread_join(obs, NULL);
                 free(scope);
                 strand_scheduler_destroy(sched);
                 return (1);
         }
         drive_until_idle(sched);
+        (void)pthread_join(obs, NULL);
         strand_scheduler_destroy(sched);
 
-        /* Valgrind verifies: freed exactly once, no use-after-free. */
         if (!atomic_load(&args.child_done))
+                return (1);
+        if (!atomic_load(&args.saw_walk_ref_nonzero))
+                return (1);
+        if (!atomic_load(&args.saw_completed_while_walk))
                 return (1);
         return (0);
 }
@@ -1871,7 +1940,11 @@ owner_ortho_case_completed_runtime(strand_scheduler_t *sched)
  * scope_cancel + abandon while child is parked */
 typedef struct {
         strand_scheduler_t *sched;
+        strand_scope_t     *scope;
         _Atomic int         child_cancel_seen;
+        _Atomic int         child_allow_exit;
+        _Atomic int         saw_cancelling_runtime;
+        _Atomic int         saw_draining_runtime;
 } ortho_cancel_args_t;
 
 static int
@@ -1883,7 +1956,45 @@ child_parks_for_cancel(void *varg)
         while (!atomic_load(&f->cancel_pending))
                 strand_fiber_yield(a->sched);
         atomic_store(&a->child_cancel_seen, 1);
+
+        while (!atomic_load(&a->child_allow_exit))
+                strand_fiber_yield(a->sched);
         return (0);
+}
+
+static void *
+owner_ortho_observer(void *varg)
+{
+        ortho_cancel_args_t *oa = varg;
+        int i;
+
+        if (!wait_until_atomic_nonzero(&strand_test_scope_walk_hook_entered))
+                return (NULL);
+
+        strand_scope_abandon(oa->sched, oa->scope);
+
+        if (atomic_load_explicit(&oa->scope->lifecycle,
+                                 memory_order_seq_cst) == SCOPE_CANCELLING &&
+            atomic_load_explicit(&oa->scope->owner_flag,
+                                 memory_order_seq_cst) == OWNER_RUNTIME)
+                atomic_store(&oa->saw_cancelling_runtime, 1);
+
+        atomic_store(&strand_test_scope_walk_hook_release, 1);
+
+        for (i = 0; i < 1000000; i++) {
+                if (atomic_load_explicit(&oa->scope->lifecycle,
+                                         memory_order_seq_cst) ==
+                        SCOPE_DRAINING &&
+                    atomic_load_explicit(&oa->scope->owner_flag,
+                                         memory_order_seq_cst) == OWNER_RUNTIME) {
+                        atomic_store(&oa->saw_draining_runtime, 1);
+                        break;
+                }
+                sched_yield();
+        }
+
+        atomic_store(&oa->child_allow_exit, 1);
+        return (NULL);
 }
 
 static int
@@ -1891,27 +2002,64 @@ owner_ortho_case_cancelling_runtime(strand_scheduler_t *sched,
                                     ortho_cancel_args_t *oa)
 {
         strand_scope_t *scope;
+        pthread_t       obs;
+        int             i;
         int             rc;
 
         scope = malloc(sizeof(*scope));
         if (scope == NULL)
                 return (1);
 
+        oa->scope = scope;
+
+        scope_walk_hook_reset();
+        atomic_store(&strand_test_scope_walk_hook_enable, 1);
+        atomic_store(&strand_test_scope_walk_hook_release, 0);
+
+        if (pthread_create(&obs, NULL, owner_ortho_observer, oa) != 0) {
+                free(scope);
+                return (1);
+        }
+
         rc = strand_scope_open(sched, scope);
-        if (rc != STRAND_OK) { free(scope); return (1); }
+        if (rc != STRAND_OK) {
+                atomic_store(&strand_test_scope_walk_hook_enable, 0);
+                (void)pthread_join(obs, NULL);
+                free(scope);
+                return (1);
+        }
         rc = strand_scope_spawn(sched, scope, child_parks_for_cancel, oa, NULL);
-        if (rc != STRAND_OK) { free(scope); return (1); }
+        if (rc != STRAND_OK) {
+                atomic_store(&strand_test_scope_walk_hook_enable, 0);
+                (void)pthread_join(obs, NULL);
+                free(scope);
+                return (1);
+        }
 
         strand_fiber_yield(sched); /* let child start */
 
-        /* Cancel moves lifecycle ACTIVE -> CANCELLING */
+        /* Cancel moves lifecycle ACTIVE -> CANCELLING and enters walk hook. */
         rc = strand_scope_cancel(sched, scope);
-        if (rc != STRAND_OK) { free(scope); return (1); }
+        if (rc != STRAND_OK) {
+                atomic_store(&strand_test_scope_walk_hook_release, 1);
+                (void)pthread_join(obs, NULL);
+                free(scope);
+                return (1);
+        }
 
-        /* At this point lifecycle should be DRAINING (walk completed
-         * synchronously) or COMPLETED if child already finished */
-        strand_scope_abandon(sched, scope);
-        /* scope freed by runtime when child finishes */
+        (void)pthread_join(obs, NULL);
+
+        for (i = 0; i < 8 && !atomic_load(&oa->child_cancel_seen); i++)
+                strand_fiber_yield(sched);
+
+        if (!atomic_load(&oa->child_cancel_seen))
+                return (1);
+        if (!atomic_load(&oa->saw_cancelling_runtime))
+                return (1);
+        if (!atomic_load(&oa->saw_draining_runtime))
+                return (1);
+
+        /* scope is OWNER_RUNTIME and freed later when child exits. */
         return (0);
 }
 
@@ -1962,6 +2110,9 @@ test_scope_owner_orthogonal_to_lifecycle(void)
         if (args.rc_a != 0 || args.rc_b != 0 || args.rc_c != 0)
                 return (1);
         if (!atomic_load(&args.oa.child_cancel_seen))
+                return (1);
+        if (!atomic_load(&args.oa.saw_cancelling_runtime) ||
+            !atomic_load(&args.oa.saw_draining_runtime))
                 return (1);
         return (0);
 }

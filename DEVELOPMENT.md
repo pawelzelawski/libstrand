@@ -3,8 +3,8 @@
 ## Status Overview
 
 **Last Updated**: 2026-04-19
-**Current Phase**: Phase 6 - Layer 5: Scopes and Coordination
-**Next Task**: Phase 6 - Completion criteria review and merge to main
+**Current Phase**: Phase 7 - Hardening, Benchmarks, and Release
+**Next Task**: Phase 7.1 - Integration test suite implementation
 
 ### Phase Summary
 
@@ -13,9 +13,9 @@
 | 1 | Foundation | DONE | 0/0 | Build system, test harness, skeleton |
 | 2 | Layer 1: Execution Contexts | DONE | 10/10 | Linux/OpenBSD on x86_64/arm64 green in CI; Phase 2 stabilization closed |
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
-| 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1–4.5 done; Linux + OpenBSD clean |
-| 5 | Layer 4: Multi-Worker Runtime | DONE | 67/67 | Tasks 5.1–5.8 done; Linux + OpenBSD clean |
-| 6 | Layer 5: Scopes and Coordination | IN PROGRESS | 83/83 | Tasks 6.1–6.9 done; Linux + OpenBSD clean |
+| 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1-4.5 done; Linux + OpenBSD clean |
+| 5 | Layer 4: Multi-Worker Runtime | DONE | 67/67 | Tasks 5.1-5.8 done; Linux + OpenBSD clean |
+| 6 | Layer 5: Scopes and Coordination | DONE | 83/83 | Tasks 6.1-6.9 done; closure validation complete on Linux + OpenBSD |
 | 7 | Hardening, Benchmarks, and Release | NOT STARTED | - | Integration tests, benchmarks, documentation |
 
 ### Quality Milestones
@@ -23,11 +23,11 @@
 | ID | Milestone | Status |
 |---|---|---|
 | M1 | Build system works on Linux and OpenBSD, both architectures | DONE |
-| M2 | All unit tests pass on Linux | NOT STARTED |
-| M3 | All unit tests pass on OpenBSD | NOT STARTED |
-| M4 | Valgrind clean on Linux | DONE (10/10 tests pass under Valgrind) |
+| M2 | All unit tests pass on Linux | DONE |
+| M3 | All unit tests pass on OpenBSD | DONE |
+| M4 | Valgrind clean on Linux | DONE |
 | M5 | ASan/UBSan clean on both platforms | IN PROGRESS (Linux x86_64 clean; OpenBSD ASan availability and parity under review) |
-| M6 | TSan clean on Linux (Clang only) | DONE (Phase 2: 10/10 tests pass under TSan) |
+| M6 | TSan clean on Linux (Clang only) | DONE |
 | M7 | clang-format clean | DONE |
 | M8 | clang-tidy zero warnings | DONE |
 | M9 | Context switch preserves all registers - verified by test | DONE (test_context_gpr_preserved passes) |
@@ -35,7 +35,7 @@
 | M11 | scheduler_stop interrupts indefinitely blocked worker - verified by test | DONE (test_scheduler_run_blocks passes) |
 | M12 | Post-re-arm readiness check correct - verified by test | DONE |
 | M13 | Offload CAS both outcomes exercised - verified by test | DONE |
-| M14 | Scope lifecycle all state transitions verified by test | NOT STARTED |
+| M14 | Scope lifecycle all state transitions verified by test | DONE |
 | M15 | Integration test suite passes: echo server, fan-out scope, offload cancel | NOT STARTED |
 
 ---
@@ -1102,7 +1102,7 @@ complete. Library is ready for a v0.1.0 release tag.
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2026-03-28
+**Document Version**: 1.1
+**Last Updated**: 2026-04-19
 **See Also**: PROJECT.md, ARCHITECTURE.md, TECH_STACK.md, CODING_STANDARDS.md,
 REPOSITORY_STRUCTURE.md, TESTING.md

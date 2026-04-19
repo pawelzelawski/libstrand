@@ -217,18 +217,18 @@ typedef struct strand_scope {
          */
         strand_fiber_t *spawn_list_head;
 
-        /*
-         * parent_fiber - ABA-safe handle of the fiber blocked in
-         * strand_scope_wait.  Set by strand_scope_wait when it parks;
-         * nulled by strand_scope_abandon (ptr = NULL, generation = 0).
-         * Read by scope_child_finish when lifecycle reaches SCOPE_COMPLETED
-         * to wake the parent.
-         * Not _Atomic: written once by the owner fiber before parking and
-         * read by the completing-child fiber after the SCOPE_COMPLETED
-         * transition; the seq_cst CAS on lifecycle provides the
-         * happens-before edge between the write and the read.
-         */
-        strand_fiber_handle_t parent_fiber;
+		/*
+		 * CONCURRENT: parent_fiber_ptr and parent_fiber_generation form the
+		 * ABA-safe handle of the fiber blocked in strand_scope_wait.
+		 * Updated by strand_scope_open / strand_scope_abandon and read by
+		 * scope_child_finish when lifecycle reaches SCOPE_COMPLETED.
+		 * These fields are atomic because strand_scope_abandon may be called
+		 * from the host thread while child completion runs on the owner worker.
+		 * seq_cst store/load keeps ordering consistent with lifecycle/owner
+		 * transitions.
+		 */
+		_Atomic(strand_fiber_t *) parent_fiber_ptr;
+		_Atomic uint64_t parent_fiber_generation;
 
         /*
          * cancellation_flag - set to 1 when the scope enters SCOPE_CANCELLING
@@ -378,11 +378,15 @@ _Static_assert(sizeof(strand_fiber_handle_t) == 16,
  *                 strand_offload_item_t *.  The fiber's home worker resumes
  *                 the parked fiber with the result already written to
  *                 result_slot.  Added in Task 5.8.
+ * INJECT_SCOPE_CANCEL - cross-thread scope cancel request.  Payload is a
+ *                 strand_scope_t * that must be cancelled on the owning
+ *                 worker thread.
  */
 typedef enum {
         INJECT_CANCEL = 0,
         INJECT_SPAWN  = 1,
         INJECT_OFFLOAD_COMPLETE = 2,
+		INJECT_SCOPE_CANCEL = 3,
 } inject_item_type_t;
 
 /*
@@ -395,6 +399,7 @@ typedef struct inject_item {
                 strand_fiber_handle_t  cancel_handle; /* INJECT_CANCEL */
                 struct strand_fiber   *fiber;         /* INJECT_SPAWN  */
                 struct strand_offload_item *offload;  /* INJECT_OFFLOAD_COMPLETE */
+				struct strand_scope   *scope;         /* INJECT_SCOPE_CANCEL */
         } u;
 } inject_item_t;
 

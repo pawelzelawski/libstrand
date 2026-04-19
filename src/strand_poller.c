@@ -86,7 +86,7 @@ static int
 fd_table_grow(strand_poller_t *p)
 {
 	size_t             new_cap, i, slot;
-	strand_fd_entry_t *new_table, *e;
+	strand_fd_entry_t *new_table;
 
 	new_cap   = p->table_cap * 2;
 	new_table = calloc(new_cap, sizeof(*new_table));
@@ -99,7 +99,7 @@ fd_table_grow(strand_poller_t *p)
 
 	/* Rehash only live entries; tombstones are discarded. */
 	for (i = 0; i < p->table_cap; i++) {
-		e = &p->table[i];
+		const strand_fd_entry_t *e = &p->table[i];
 		if (e->fd < 0) /* empty or tombstone */
 			continue;
 		slot = fd_hash(e->fd, new_cap);
@@ -235,11 +235,10 @@ strand_fd_entry_t *
 fd_table_lookup(strand_poller_t *p, int fd)
 {
 	size_t             slot, i;
-	strand_fd_entry_t *e;
 
 	slot = fd_hash(fd, p->table_cap);
 	for (i = 0; i < p->table_cap; i++) {
-		e = &p->table[(slot + i) & (p->table_cap - 1)];
+		strand_fd_entry_t *e = &p->table[(slot + i) & (p->table_cap - 1)];
 		if (e->fd == FD_ENTRY_EMPTY)
 			return NULL;
 		if (e->fd == fd)
@@ -412,6 +411,14 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 
 	return (STRAND_OK);
 #endif
+
+	/* Defensive fallback for static analyzers / unsupported build configs. */
+	(void)p;
+	(void)fd;
+	(void)new_mask;
+	(void)filter;
+	(void)e;
+	return (STRAND_ERR_IO);
 }
 
 /* ---------------------------------------------------------------------------
@@ -477,6 +484,7 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 #endif
 
 	inserted = 0;
+	rc = STRAND_ERR_IO;
 	e = fd_table_lookup(sched->poller, fd);
 	if (e == NULL) {
 		e = fd_table_insert(sched->poller, fd);
@@ -772,9 +780,8 @@ poller_deliver_event(strand_scheduler_t *sched, struct kevent *kev)
 void
 poller_poll(strand_scheduler_t *sched, int timeout_ms)
 {
-	strand_poller_t *p = sched->poller;
-
 #ifdef STRAND_LINUX
+	strand_poller_t    *p = sched->poller;
 	struct epoll_event evs[POLLER_MAX_EVENTS];
 	int                nfds, i;
 
@@ -784,6 +791,7 @@ poller_poll(strand_scheduler_t *sched, int timeout_ms)
 #endif
 
 #ifdef STRAND_OPENBSD
+	strand_poller_t *p = sched->poller;
 	struct kevent    evs[POLLER_MAX_EVENTS];
 	struct timespec  ts, *tsp;
 	int              nfds, i;
@@ -934,6 +942,11 @@ poller_register_wakeup_fd(strand_poller_t *p, int fd)
 		return (STRAND_ERR_IO);
 	return (STRAND_OK);
 #endif
+
+	/* Defensive fallback for static analyzers / unsupported build configs. */
+	(void)p;
+	(void)fd;
+	return (STRAND_ERR_IO);
 }
 
 /* ---------------------------------------------------------------------------

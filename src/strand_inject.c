@@ -54,6 +54,7 @@
 #include "strand_sched.h"
 #include "strand_fiber.h"
 #include "strand_offload.h"
+#include "strand_scope.h"
 
 #include <sched.h>
 #include <stdlib.h>
@@ -157,7 +158,6 @@ inject_queue_push_release(strand_inject_queue_t *q,
 	size_t          pos;
 	inject_slot_t  *slot;
 	unsigned int    backoff;
-	size_t          seq;
 
 	/*
 	 * Claim an exclusive ring position.  Multiple producers may call
@@ -178,6 +178,8 @@ inject_queue_push_release(strand_inject_queue_t *q,
 	 */
 	backoff = 0;
 	for (;;) {
+		size_t seq;
+
 		seq = atomic_load_explicit(&slot->sequence,
 		    memory_order_acquire);
 		if (seq == pos)
@@ -256,6 +258,13 @@ inject_queue_drain(strand_scheduler_t *sched)
                         atomic_store(&item.u.fiber->state, FIBER_RUNNABLE);
                         run_queue_push(sched, item.u.fiber);
                         break;
+														case INJECT_SCOPE_CANCEL:
+															/*
+															 * Cross-thread scope cancellation is enqueue-only.  Apply it
+															 * on the owner worker while draining Step 1.
+															 */
+															(void)strand_scope_cancel(sched, item.u.scope);
+															break;
                 case INJECT_OFFLOAD_COMPLETE: {
                         /*
                          * Offload thread won RESULT_CLAIMED CAS and injected
@@ -311,6 +320,7 @@ inject_queue_discard_all(strand_inject_queue_t *q)
 			 */
 			offload_item_release(item.u.offload);
 			break;
+		case INJECT_SCOPE_CANCEL:
 		case INJECT_CANCEL:
 		default:
 			/* No heap resources to free. */

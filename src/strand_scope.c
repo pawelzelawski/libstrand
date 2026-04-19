@@ -8,14 +8,41 @@
  */
 
 #include <stdatomic.h>
+#include <sched.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "strand_scope.h"
 #include "strand_fiber.h"
+#include "strand_inject.h"
 #include "strand_sched.h"
 
 static void scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope);
+
+#ifdef STRAND_TEST_CLOCK
+_Atomic int strand_test_scope_walk_hook_enable;
+_Atomic int strand_test_scope_walk_hook_entered;
+_Atomic int strand_test_scope_walk_hook_release;
+#endif
+
+static void
+scope_release_finish_hold(strand_scope_t *scope)
+{
+        int prev_walk;
+
+        prev_walk = atomic_fetch_sub_explicit(&scope->walk_ref_count, 1,
+                                              memory_order_seq_cst);
+        if (prev_walk == 1 &&
+            atomic_load_explicit(&scope->live_child_count,
+                                 memory_order_seq_cst) == 0 &&
+            atomic_load_explicit(&scope->lifecycle,
+                                 memory_order_seq_cst) == SCOPE_COMPLETED &&
+            atomic_load_explicit(&scope->owner_flag,
+                                 memory_order_seq_cst) == OWNER_RUNTIME)
+                free(scope);
+}
 
 /* ---------------------------------------------------------------------------
  * scope_fiber_trampoline - internal entry wrapper for scope-tracked fibers.
@@ -79,8 +106,11 @@ strand_scope_open(strand_scheduler_t *sched, strand_scope_t *scope)
          * The parent is always the fiber that calls scope_open; it must
          * later call scope_wait (or scope_abandon) on this scope.
          */
-        scope->parent_fiber.ptr        = current;
-        scope->parent_fiber.generation = current->generation;
+        atomic_store_explicit(&scope->parent_fiber_ptr, current,
+                              memory_order_seq_cst);
+        atomic_store_explicit(&scope->parent_fiber_generation,
+                              current->generation,
+                              memory_order_seq_cst);
 
         return (STRAND_OK);
 }
@@ -159,8 +189,14 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
 {
         int      prev_count;
         int      expected_err;
+        int      do_walk;
+        int      walk_hold;
         scope_lifecycle_t lifecycle;
         strand_fiber_t   *parent;
+        strand_fiber_handle_t parent_handle;
+
+        do_walk = 0;
+        walk_hold = 0;
 
         /*
          * First-error CAS: if this child failed and no prior child has
@@ -194,7 +230,7 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
                             memory_order_seq_cst,
                             memory_order_seq_cst);
                         scope->cancellation_flag = 1;
-                        scope_walk_cancel(sched, scope);
+                        do_walk = 1;
                 }
         }
 
@@ -208,19 +244,42 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
          */
         prev_count = atomic_fetch_sub_explicit(&scope->live_child_count, 1,
                                                memory_order_seq_cst);
-        if (prev_count != 1)
-                return; /* more children still running */
+        if (prev_count == 1) {
+                /*
+                 * We decremented to zero.  Try to transition to
+                 * SCOPE_COMPLETED.  The valid source states are ACTIVE,
+                 * CANCELLING, and DRAINING.
+                 */
+                lifecycle = atomic_exchange_explicit(&scope->lifecycle,
+                                                     SCOPE_COMPLETED,
+                                                     memory_order_seq_cst);
+        } else {
+                lifecycle = atomic_load_explicit(&scope->lifecycle,
+                                                 memory_order_seq_cst);
+        }
 
         /*
-         * We decremented to zero.  Try to transition to SCOPE_COMPLETED.
-         * The valid source states are ACTIVE, CANCELLING, and DRAINING.
-         * Use a seq_cst exchange (not CAS) since we are the only thread
-         * that can perform this transition (live_child_count just hit zero
-         * on this thread).
+         * Run the cancellation walk after decrementing live_child_count.
+         * This preserves the CANCELLING -> COMPLETED shortcut semantics
+         * when the failing child is also the last live child.
          */
-        lifecycle = atomic_exchange_explicit(&scope->lifecycle,
-                                             SCOPE_COMPLETED,
-                                             memory_order_seq_cst);
+        if (do_walk) {
+                /*
+                 * Hold one extra walk reference so scope_walk_cancel cannot
+                 * free the control block before this function completes its
+                 * post-walk completion path.
+                 */
+                atomic_fetch_add_explicit(&scope->walk_ref_count, 1,
+                                          memory_order_seq_cst);
+                walk_hold = 1;
+                scope_walk_cancel(sched, scope);
+        }
+
+        if (prev_count != 1) {
+                if (walk_hold)
+                        scope_release_finish_hold(scope);
+                return; /* more children still running */
+        }
 
         /*
          * OWNER_RUNTIME free path (Task 6.8): scope was abandoned by the
@@ -238,6 +297,10 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
          */
         if (atomic_load_explicit(&scope->owner_flag,
                                  memory_order_seq_cst) == OWNER_RUNTIME) {
+                if (walk_hold) {
+                        scope_release_finish_hold(scope);
+                        return;
+                }
                 if (atomic_load_explicit(&scope->walk_ref_count,
                                          memory_order_seq_cst) == 0)
                         free(scope);
@@ -258,10 +321,16 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
          * the same worker.  scope_child_finish runs on that worker too, so
          * run_queue_push is safe without cross-worker inject.
          */
-        if (fiber_handle_validate(scope->parent_fiber) != STRAND_OK)
+        parent_handle.ptr = atomic_load_explicit(&scope->parent_fiber_ptr,
+                                                 memory_order_seq_cst);
+        parent_handle.generation = atomic_load_explicit(
+            &scope->parent_fiber_generation,
+            memory_order_seq_cst);
+
+        if (fiber_handle_validate(parent_handle) != STRAND_OK)
                 return;
 
-        parent = scope->parent_fiber.ptr;
+        parent = parent_handle.ptr;
 
         /*
          * The parent may be parked in one of two states:
@@ -292,6 +361,9 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
                         run_queue_push(sched, parent);
                 }
         }
+
+        if (walk_hold)
+                scope_release_finish_hold(scope);
 }
 
 /* ---------------------------------------------------------------------------
@@ -377,6 +449,32 @@ int
 strand_scope_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
 {
         scope_lifecycle_t expected;
+        inject_item_t      item;
+
+        if (!pthread_equal(pthread_self(), sched->owner_thread)) {
+                /*
+                 * SAFETY: cross-thread scope cancel is enqueue-only.  The owner
+                 * worker applies the cancellation walk in Step 1 while draining
+                 * inject items, preserving single-owner access to scope lists.
+                 */
+                item.type = INJECT_SCOPE_CANCEL;
+                item.u.scope = scope;
+                inject_queue_push_release(&sched->inject_queue, &item);
+
+#ifdef STRAND_LINUX
+                {
+                        uint64_t v = 1;
+                        (void)write(sched->wakeup_fd, &v, sizeof(v));
+                }
+#endif
+#ifdef STRAND_OPENBSD
+                {
+                        char v = 1;
+                        (void)write(sched->wakeup_pipe[1], &v, sizeof(v));
+                }
+#endif
+                return (STRAND_OK);
+        }
 
         /*
          * CAS lifecycle SCOPE_ACTIVE -> SCOPE_CANCELLING.
@@ -543,12 +641,14 @@ strand_scope_abandon(strand_scheduler_t *sched, strand_scope_t *scope)
         /*
          * Record the parent fiber handle as null so scope_child_finish
          * will not attempt to wake a fiber that is gone.
-         * ATOMIC: plain store is safe; parent_fiber is only read by
-         * scope_child_finish which runs on the same worker (single-worker
-         * invariant).  We store both fields explicitly to be clear.
+         * ATOMIC: seq_cst stores are required because scope_child_finish may
+         * read these fields concurrently on the owner worker while abandon is
+         * called from a host thread.
          */
-        scope->parent_fiber.ptr        = NULL;
-        scope->parent_fiber.generation = 0;
+        atomic_store_explicit(&scope->parent_fiber_ptr, NULL,
+                              memory_order_seq_cst);
+        atomic_store_explicit(&scope->parent_fiber_generation, 0,
+                              memory_order_seq_cst);
 
         /*
          * Transfer ownership to the runtime.
@@ -615,6 +715,17 @@ scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
          */
         atomic_fetch_add_explicit(&scope->walk_ref_count, 1,
                                   memory_order_seq_cst);
+
+#ifdef STRAND_TEST_CLOCK
+        if (atomic_load_explicit(&strand_test_scope_walk_hook_enable,
+                                 memory_order_seq_cst)) {
+                atomic_store_explicit(&strand_test_scope_walk_hook_entered, 1,
+                                      memory_order_seq_cst);
+                while (!atomic_load_explicit(&strand_test_scope_walk_hook_release,
+                                             memory_order_seq_cst))
+                        sched_yield();
+        }
+#endif
 
         /*
          * Walk forward through spawn_list_head (forward order = reverse
