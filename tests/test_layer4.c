@@ -900,6 +900,8 @@ test_explicit_worker_override(void)
 	strand_runtime_t *rt;
 	strand_worker_t  *wa, *wb;
 	explicit_args_t   args;
+	rr_warmup_args_t  warm;
+	const uint64_t    warmup_timeout_ms = 60000;
 
 	rt = make_test_runtime();
 	if (rt == NULL)
@@ -908,6 +910,25 @@ test_explicit_worker_override(void)
 	wa = make_test_worker(rt);
 	wb = make_test_worker(rt);
 	if (wa == NULL || wb == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/*
+	 * Warmup worker B before spawning the test fiber.  Without this,
+	 * under Valgrind's 20-50x slowdown, the worker thread may not have
+	 * entered its run loop and set strand_sched_current_tls by the time
+	 * the test fiber runs, causing a spurious correct==0.
+	 * Same pattern as test_inject_delivers_to_worker et al.
+	 */
+	atomic_init(&warm.done, 0);
+	warm.expected_sched = wb->sched;
+	if (strand_runtime_spawn(rt, rr_warmup_fiber, &warm,
+	    STRAND_DEFAULT_STACK_SIZE, wb, NULL) != STRAND_OK) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+	if (!wait_atomic_at_least(&warm.done, 1, warmup_timeout_ms, NULL)) {
 		strand_runtime_destroy(rt);
 		return (1);
 	}
