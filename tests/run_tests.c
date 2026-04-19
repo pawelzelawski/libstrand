@@ -21,15 +21,17 @@ void run_layer2_tests(void);
 void run_layer3_tests(void);
 void run_layer4_tests(void);
 void run_layer5_tests(void);
+void run_integration_tests(void);
 
 int
 main(void)
 {
-	run_layer1_tests();
-	run_layer2_tests();
-	run_layer3_tests();
-	run_layer4_tests();
-	run_layer5_tests();
+        run_layer1_tests();
+        run_layer2_tests();
+        run_layer3_tests();
+        run_layer4_tests();
+        run_layer5_tests();
+        run_integration_tests();
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return (tests_passed == tests_run) ? 0 : 1;

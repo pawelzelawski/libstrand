@@ -471,6 +471,16 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 	f = sched->current_fiber;
 
 	/*
+	 * SAFETY: if cancel_pending is already set (e.g. scope cancellation
+	 * fired while the fiber was RUNNABLE), return STRAND_CANCELLED without
+	 * registering in the poller.  Otherwise the fiber would park on I/O
+	 * with no future cancellation to wake it.
+	 * See ARCHITECTURE.md §5.8.
+	 */
+	if (atomic_load_explicit(&f->cancel_pending, memory_order_acquire))
+		return (STRAND_CANCELLED);
+
+	/*
 	 * SAFETY: O_NONBLOCK must be set on fd before calling wait_readable /
 	 * wait_writable.  A blocking fd would stall the entire worker thread.
 	 * See ARCHITECTURE.md §5.1 and CODING_STANDARDS.md §6.1.
@@ -638,8 +648,16 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 			e->write_waiter = NULL;
 			fiber_io_wake(sched, f, STRAND_ERR_IO);
 		}
-		if (e->read_waiter == NULL && e->write_waiter == NULL)
+		if (e->read_waiter == NULL && e->write_waiter == NULL) {
+			/*
+			 * EPOLLONESHOT leaves the fd in the epoll instance
+			 * (disabled).  DEL it so a later EPOLL_CTL_ADD on the
+			 * same fd does not fail with EEXIST.
+			 */
+			(void)epoll_ctl(p->pollfd, EPOLL_CTL_DEL, fd, NULL);
+			e->reg_state = FD_REG_NOT_REGISTERED;
 			fd_table_remove(p, fd);
+		}
 		return;
 	}
 
@@ -717,9 +735,16 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 	 * Remove the table entry if both waiters are gone.  The recursive
 	 * zero-timeout delivery above may have already tombstoned this entry;
 	 * fd_table_remove is a no-op in that case (lookup returns NULL).
+	 *
+	 * EPOLL_CTL_DEL is required because EPOLLONESHOT leaves the fd in
+	 * the epoll instance (disabled).  Without DEL, a subsequent
+	 * EPOLL_CTL_ADD on the same fd would fail with EEXIST.
 	 */
-	if (e->read_waiter == NULL && e->write_waiter == NULL)
+	if (e->read_waiter == NULL && e->write_waiter == NULL) {
+		(void)epoll_ctl(p->pollfd, EPOLL_CTL_DEL, fd, NULL);
+		e->reg_state = FD_REG_NOT_REGISTERED;
 		fd_table_remove(p, fd);
+	}
 }
 
 #endif /* STRAND_LINUX */

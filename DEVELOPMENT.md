@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-19
 **Current Phase**: Phase 7 - Hardening, Benchmarks, and Release
-**Next Task**: Phase 7.1 - Integration test suite implementation
+**Next Task**: Phase 7.2 - Benchmark suite
 
 ### Phase Summary
 
@@ -990,7 +990,7 @@ complete. Library is ready for a v0.1.0 release tag.
 
 ### Tasks
 
-**7.1 - Integration test suite**
+**7.1 - Integration test suite** ✓ DONE
 - Implement all integration tests in `tests/test_integration.c` per
   REPOSITORY_STRUCTURE.md §4 and TESTING.md:
   - Echo server: accept, per-connection fiber, read/write loop, scope
@@ -1054,7 +1054,7 @@ complete. Library is ready for a v0.1.0 release tag.
 
 ### Phase 7 Completion Criteria
 
-- [ ] Integration test suite passes on Linux and OpenBSD - M15 confirmed
+- [x] Integration test suite passes on Linux and OpenBSD - M15 confirmed
 - [ ] Benchmark baselines recorded on Linux x86_64 and ARM64, OpenBSD amd64
 - [ ] `make lint` zero warnings on all platforms - M7, M8 confirmed
 - [ ] All unit and integration tests pass on all platforms - M2, M3 confirmed

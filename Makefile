@@ -171,7 +171,7 @@ test-tsan:
 	    $(TSAN_DIR)/strand_scope.o
 	test -z "$(ASM_OBJ_TSAN)" || ar qs $(LIB_TSAN) $(ASM_OBJ_TSAN)
 	clang $(CFLAGS_TSAN) $(INCLUDES) -I tests/ -I src/              \
-	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c $(LIB_TSAN) $(LDFLAGS) \
+	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c $(LIB_TSAN) $(LDFLAGS) \
 	    -o $(TEST_BIN_TSAN)
 	TSAN_OPTIONS=die_after_fork=0 $(TEST_BIN_TSAN)
 
@@ -265,18 +265,18 @@ $(LIB_RELEASE): $(LIB_SRCS) $(ASM_SRC)
 
 # --- Test binary (ASan/UBSan build) -----------------------------------------
 
-$(TEST_BIN): $(LIB_DEV) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_harness.h
+$(TEST_BIN): $(LIB_DEV) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c tests/test_harness.h
 	@mkdir -p $(BUILD_TESTS_DIR)
-	$(CC) $(CFLAGS_DEV) $(INCLUDES) -I tests/ -I src/		\
-	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c $(LIB_DEV) $(LDFLAGS)	\
+	$(CC) $(CFLAGS_DEV) $(INCLUDES) -I tests/ -I src/               \
+	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c $(LIB_DEV) $(LDFLAGS) \
 	    -o $(TEST_BIN)
 
 # --- Valgrind test binary (no sanitizers) -----------------------------------
 
-$(TEST_BIN_VG): $(LIB_VG) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_harness.h
+$(TEST_BIN_VG): $(LIB_VG) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c tests/test_harness.h
 	@mkdir -p $(BUILD_TESTS_DIR)
-	$(CC) $(CFLAGS_VG) $(INCLUDES) -I tests/ -I src/		\
-	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c $(LIB_VG) $(LDFLAGS)	\
+	$(CC) $(CFLAGS_VG) $(INCLUDES) -I tests/ -I src/                \
+	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c $(LIB_VG) $(LDFLAGS)  \
 	    -o $(TEST_BIN_VG)
 
 # --- Valgrind library (no sanitizers) ---------------------------------------
