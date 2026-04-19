@@ -2,9 +2,9 @@
  * strand_scope.c - structured concurrency scopes.
  * See ARCHITECTURE.md §7.
  *
- * Tasks 6.2, 6.3, 6.4, 6.5, 6.6, 6.7: strand_scope_open, strand_scope_spawn,
+ * Tasks 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8: strand_scope_open, strand_scope_spawn,
  * scope_child_finish (internal), strand_scope_wait, scope_walk_cancel,
- * strand_scope_cancel, strand_scope_wait_timeout.
+ * strand_scope_cancel, strand_scope_wait_timeout, strand_scope_abandon.
  */
 
 #include <stdatomic.h>
@@ -223,12 +223,24 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
                                              memory_order_seq_cst);
 
         /*
-         * OWNER_RUNTIME free path (Task 6.8): if scope was abandoned, the
-         * walk_ref_count check and free would happen here.
-         * TODO Task 6.8: if OWNER_RUNTIME and walk_ref_count == 0: free.
+         * OWNER_RUNTIME free path (Task 6.8): scope was abandoned by the
+         * caller.  No parent to wake.  Free the control block if and only
+         * if the walk reference count is also zero - i.e. no cancellation
+         * walk is currently iterating the spawn list (walk reference rule,
+         * ARCHITECTURE.md 7.3).
+         *
+         * ATOMIC: seq_cst load of walk_ref_count is ordered after the
+         * seq_cst exchange of lifecycle above, so if a concurrent walk
+         * decremented walk_ref_count to zero before we read it, we see
+         * that zero here and free correctly.  If the walk decremented to
+         * zero after our load, the walk itself will see SCOPE_COMPLETED
+         * and handle the free in scope_walk_cancel.
          */
-        if (atomic_load(&scope->owner_flag) == OWNER_RUNTIME) {
-                /* Abandoned scope: no parent to wake; runtime owns cleanup. */
+        if (atomic_load_explicit(&scope->owner_flag,
+                                 memory_order_seq_cst) == OWNER_RUNTIME) {
+                if (atomic_load_explicit(&scope->walk_ref_count,
+                                         memory_order_seq_cst) == 0)
+                        free(scope);
                 return;
         }
 
@@ -476,6 +488,94 @@ strand_scope_wait_timeout(strand_scheduler_t *sched, strand_scope_t *scope,
 
         /* Deadline expired before scope completed. */
         return (STRAND_TIMEOUT);
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_scope_abandon - hand scope ownership to the runtime (terminal for
+ * the caller).
+ *
+ * See include/strand.h for the full contract.
+ *
+ * After this call the scope pointer is invalid for the caller.  Children
+ * continue running.  When live_child_count reaches zero and lifecycle
+ * reaches SCOPE_COMPLETED, scope_child_finish (or scope_walk_cancel if a
+ * walk is in progress) frees the control block.
+ *
+ * Callable from a running fiber or the host thread.  No WRONGCTX check.
+ *
+ * SAFETY: In debug builds, if called from a fiber context, assert that the
+ * scope pointer does not fall within the current fiber's stack.  A scope
+ * on the calling fiber's stack will be invalidated when the stack unwinds;
+ * passing it to strand_scope_abandon is undefined behaviour.
+ * See ARCHITECTURE.md §7.4 (allocation requirement) and CODING_STANDARDS.md §6.2.
+ * ---------------------------------------------------------------------------
+ */
+void
+strand_scope_abandon(strand_scheduler_t *sched, strand_scope_t *scope)
+{
+        strand_fiber_t *f;
+
+        f = sched->current_fiber;
+
+#ifdef STRAND_DEBUG
+        /*
+         * SAFETY: assert the scope control block is NOT on the current
+         * fiber's stack.  Stack-allocated scopes are only valid when
+         * strand_scope_wait is used exclusively and the scope is destroyed
+         * before the stack frame exits.  Passing a stack-allocated scope
+         * to strand_scope_abandon is undefined behaviour because the
+         * runtime will later try to free() a stack pointer.
+         *
+         * Only check when called from a fiber context (f != NULL).
+         * Host-thread callers have no fiber stack to check against.
+         */
+        if (f != NULL && f->stack_base != NULL) {
+                const char *lo = (const char *)f->stack_base;
+                const char *hi = lo + f->stack_size;
+                const char *sp = (const char *)scope;
+                STRAND_DEBUG_ASSERT(
+                    (sp < lo || sp >= hi) &&
+                    "strand_scope_abandon: scope must not be stack-allocated "
+                    "on the calling fiber's stack");
+        }
+#endif /* STRAND_DEBUG */
+
+        /*
+         * Record the parent fiber handle as null so scope_child_finish
+         * will not attempt to wake a fiber that is gone.
+         * ATOMIC: plain store is safe; parent_fiber is only read by
+         * scope_child_finish which runs on the same worker (single-worker
+         * invariant).  We store both fields explicitly to be clear.
+         */
+        scope->parent_fiber.ptr        = NULL;
+        scope->parent_fiber.generation = 0;
+
+        /*
+         * Transfer ownership to the runtime.
+         * ATOMIC: seq_cst store ensures that scope_child_finish, which
+         * loads owner_flag with seq_cst, sees OWNER_RUNTIME immediately
+         * after this point.
+         */
+        atomic_store_explicit(&scope->owner_flag, OWNER_RUNTIME,
+                              memory_order_seq_cst);
+
+        /*
+         * If all children have already finished (live_child_count == 0)
+         * and no walk is in progress (walk_ref_count == 0), free now.
+         * This covers the race where all children finished before we
+         * stored OWNER_RUNTIME, so scope_child_finish could not have freed.
+         *
+         * ATOMIC: seq_cst loads ordered after the seq_cst store of
+         * owner_flag above.
+         */
+        if (atomic_load_explicit(&scope->live_child_count,
+                                 memory_order_seq_cst) == 0 &&
+            atomic_load_explicit(&scope->walk_ref_count,
+                                 memory_order_seq_cst) == 0) {
+                free(scope);
+        }
+
+        (void)f; /* used only in STRAND_DEBUG block above */
 }
 
 /* ---------------------------------------------------------------------------

@@ -408,6 +408,80 @@ strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 		out->generation = f->generation;
 	}
 
+        return (STRAND_OK);
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_fiber_spawn_detached - spawn a fiber with no scope tracking.
+ *
+ * Identical to strand_fiber_spawn except f->scope is explicitly NULL.
+ * fiber_alloc already zeroes the descriptor, so NULL is the default; this
+ * function exists to make the explicit opt-out visible at the call site.
+ *
+ * STRONGLY DISCOURAGED.  Detached fibers are not tracked by any scope.
+ * Errors are not propagated.  The fiber's lifetime is not bounded by any
+ * enclosing scope.  Use of detached fibers makes correctness reasoning
+ * significantly harder and precludes structured cleanup.
+ * See ARCHITECTURE.md §7.7.
+ *
+ * Returns STRAND_OK on success.
+ * Returns STRAND_ERR_SHUTDOWN if the scheduler has been stopped.
+ * Returns STRAND_ERR_WRONGCTX if called from the host thread.
+ * Returns STRAND_ERR_NOMEM on allocation failure.
+ * ---------------------------------------------------------------------------
+ */
+int
+strand_fiber_spawn_detached(strand_scheduler_t *sched, strand_fiber_fn_t fn,
+                            void *arg, size_t stack_sz,
+                            strand_fiber_handle_t *out)
+{
+	strand_fiber_t *f;
+	void           *base;
+	unsigned long   vg_id;
+	char           *stack_top;
+	size_t          sz;
+
+	if (atomic_load_explicit(&sched->stop_flag, memory_order_acquire))
+		return (STRAND_ERR_SHUTDOWN);
+
+	if (sched->current_fiber == NULL)
+		return (STRAND_ERR_WRONGCTX);
+
+	sz = (stack_sz != 0) ? stack_sz : STRAND_DEFAULT_STACK_SIZE;
+
+	f = fiber_alloc(&sched->dead_pool);
+	if (f == NULL)
+		return (STRAND_ERR_NOMEM);
+
+	base = sched_stack_alloc(sched, sz, &vg_id);
+	if (base == NULL) {
+		fiber_free(&sched->dead_pool, f);
+		return (STRAND_ERR_NOMEM);
+	}
+
+	f->stack_base        = (char *)base + page_size();
+	f->stack_size        = sz;
+	f->valgrind_stack_id = vg_id;
+	f->entry_fn          = fn;
+	f->entry_arg         = arg;
+	f->scope             = NULL; /* explicit: detached, no scope tracking */
+
+	stack_top = (char *)f->stack_base + sz;
+	strand_context_init(&f->context, stack_top, strand_fiber_entry_start, f);
+
+	strand_fiber_tsan_init(f);
+
+	f->home_sched = sched;
+	atomic_store(&f->state, FIBER_NEW);
+	atomic_store(&f->state, FIBER_RUNNABLE);
+
+	run_queue_push(sched, f);
+
+	if (out != NULL) {
+		out->ptr        = f;
+		out->generation = f->generation;
+	}
+
 	return (STRAND_OK);
 }
 

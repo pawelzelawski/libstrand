@@ -4,7 +4,7 @@
 
 **Last Updated**: 2026-04-19
 **Current Phase**: Phase 6 - Layer 5: Scopes and Coordination
-**Next Task**: Phase 6 - Task 6.8: strand_scope_abandon
+**Next Task**: Phase 6 - Completion criteria review and merge to main
 
 ### Phase Summary
 
@@ -15,7 +15,7 @@
 | 3 | Layer 2: Fiber Scheduler | DONE | 30/30 | All tasks and completion criteria confirmed; Linux + OpenBSD clean |
 | 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1–4.5 done; Linux + OpenBSD clean |
 | 5 | Layer 4: Multi-Worker Runtime | DONE | 67/67 | Tasks 5.1–5.8 done; Linux + OpenBSD clean |
-| 6 | Layer 5: Scopes and Coordination | IN PROGRESS | 80/80 | Tasks 6.1–6.7 done; Linux clean |
+| 6 | Layer 5: Scopes and Coordination | IN PROGRESS | 83/83 | Tasks 6.1–6.9 done; Linux + OpenBSD clean |
 | 7 | Hardening, Benchmarks, and Release | NOT STARTED | - | Integration tests, benchmarks, documentation |
 
 ### Quality Milestones
@@ -914,14 +914,14 @@ target: Layers 1–4 plus scopes.
 - If `lifecycle == SCOPE_ACTIVE`: CAS to `SCOPE_CANCELLING`, initiate walk
 - Non-terminal - return immediately; caller must follow with wait or abandon
 
-**6.8 - strand_scope_abandon**
+**6.8 - strand_scope_abandon** ✓ DONE
 - Debug check: assert scope pointer not within current fiber's stack range.
   Add `SAFETY:` comment per CODING_STANDARDS.md §6.2.
 - `atomic_store(&scope->owner_flag, OWNER_RUNTIME)`
 - Set `parent_fiber` handle to null (null ptr, any generation)
 - Scope pointer invalid for caller after this call
 
-**6.9 - strand_fiber_spawn_detached**
+**6.9 - strand_fiber_spawn_detached** ✓ DONE
 - Spawn fiber with `scope = NULL`; not tracked; no error propagation
 - Document strongly discouraged per ARCHITECTURE.md §7.7
 

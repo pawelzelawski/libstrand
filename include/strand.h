@@ -208,6 +208,26 @@ int strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn,
                        void *arg, size_t stack_sz, strand_fiber_handle_t *out);
 
 /*
+ * strand_fiber_spawn_detached - spawn a fiber with no scope tracking.
+ *
+ * Identical to strand_fiber_spawn except the fiber's scope pointer is
+ * explicitly NULL.  The fiber is not tracked by any scope; errors are
+ * not propagated; the fiber's lifetime is not bounded by any enclosing
+ * scope.
+ *
+ * STRONGLY DISCOURAGED.  Use only when structured concurrency is
+ * genuinely inappropriate.  See ARCHITECTURE.md §7.7.
+ *
+ * Returns STRAND_OK on success.
+ * Returns STRAND_ERR_SHUTDOWN if the scheduler has been stopped.
+ * Returns STRAND_ERR_WRONGCTX if called from the host thread.
+ * Returns STRAND_ERR_NOMEM on allocation failure.
+ */
+int strand_fiber_spawn_detached(strand_scheduler_t *sched, strand_fiber_fn_t fn,
+                                void *arg, size_t stack_sz,
+                                strand_fiber_handle_t *out);
+
+/*
  * strand_fiber_yield - voluntarily yield the current fiber.
  *
  * Transitions the calling fiber from FIBER_RUNNING to FIBER_RUNNABLE,
@@ -638,5 +658,24 @@ int strand_scope_cancel(strand_scheduler_t *sched, strand_scope_t *scope);
  */
 int strand_scope_wait_timeout(strand_scheduler_t *sched, strand_scope_t *scope,
                               uint64_t deadline_ns);
+
+/*
+ * strand_scope_abandon - hand scope ownership to the runtime (terminal for
+ * the caller).
+ *
+ * Sets owner_flag to OWNER_RUNTIME atomically and nulls parent_fiber.
+ * The scope pointer is invalid for the caller after this call.  Children
+ * continue running.  When live_child_count reaches zero and lifecycle
+ * reaches SCOPE_COMPLETED, the runtime frees the control block.
+ *
+ * IMPORTANT: The control block must be heap-allocated.  Passing a
+ * stack-allocated scope to strand_scope_abandon is undefined behaviour.
+ * Debug builds assert that the scope pointer is not within the calling
+ * fiber's stack range.
+ *
+ * Callable from a running fiber or the host thread.
+ * See ARCHITECTURE.md §7.4 (allocation requirement and terminal contract).
+ */
+void strand_scope_abandon(strand_scheduler_t *sched, strand_scope_t *scope);
 
 #endif /* STRAND_H */

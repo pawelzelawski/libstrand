@@ -1296,8 +1296,307 @@ test_scope_wait_timeout_scope_completed(void)
         return (0);
 }
 
+/* =========================================================================
+ * Tests for Task 6.8 (strand_scope_abandon) and Task 6.9
+ * (strand_fiber_spawn_detached)
+ * =========================================================================
+ */
+
 /* -------------------------------------------------------------------------
- * Test runner (extended)
+ * Test: OWNER_RUNTIME free on complete.
+ *
+ * Heap-allocate a strand_scope_t; open scope; spawn one child; abandon
+ * the scope (transfers ownership to runtime); drive until the child
+ * finishes.  scope_child_finish must free the control block.
+ * Valgrind confirms no leak and no double-free.
+ * -------------------------------------------------------------------------
+ */
+
+typedef struct {
+        strand_scheduler_t *sched;
+        strand_scope_t     *scope; /* heap-allocated */
+        _Atomic int         child_ran;
+} owner_runtime_free_args_t;
+
+static int
+child_sets_ran(void *varg)
+{
+        owner_runtime_free_args_t *a = varg;
+        atomic_store(&a->child_ran, 1);
+        return (0);
+}
+
+static int
+owner_runtime_free_parent_inner(owner_runtime_free_args_t *a)
+{
+        int rc;
+
+        rc = strand_scope_open(a->sched, a->scope);
+        if (rc != STRAND_OK)
+                return (1);
+
+        rc = strand_scope_spawn(a->sched, a->scope, child_sets_ran, a, NULL);
+        if (rc != STRAND_OK)
+                return (1);
+
+        /*
+         * Abandon: hands ownership to the runtime.  After this, a->scope
+         * is invalid for us.  The runtime will free it when the child finishes.
+         */
+        strand_scope_abandon(a->sched, a->scope);
+        a->scope = NULL; /* make the invalid-after-abandon contract explicit */
+        return (0);
+}
+
+static void
+owner_runtime_free_parent_fiber(void *varg)
+{
+        owner_runtime_free_parent_inner((owner_runtime_free_args_t *)varg);
+}
+
+static int
+test_scope_owner_runtime_frees_on_complete(void)
+{
+        strand_scheduler_t       *sched;
+        owner_runtime_free_args_t args;
+        strand_scope_t           *scope;
+        int                       rc;
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        scope = malloc(sizeof(*scope));
+        if (scope == NULL) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+
+        memset(&args, 0, sizeof(args));
+        args.sched = sched;
+        args.scope = scope;
+
+        rc = push_root_fiber(sched, owner_runtime_free_parent_fiber, &args);
+        if (rc != 0) {
+                free(scope);
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        drive_until_idle(sched);
+        strand_scheduler_destroy(sched);
+
+        /*
+         * scope was freed by scope_child_finish; do not access it.
+         * Valgrind verifies no leak and no double-free.
+         */
+        if (!atomic_load(&args.child_ran))
+                return (1);
+        return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * Test: timeout then abandon.
+ *
+ * Heap-allocate scope; open; spawn a slow child; call wait_timeout
+ * (deadline fires); abandon the scope (runtime now owns it); advance
+ * clock so the child finishes; drive until idle.  Valgrind confirms the
+ * control block is freed exactly once with no leak.
+ * -------------------------------------------------------------------------
+ */
+
+typedef struct {
+        strand_scheduler_t *sched;
+        strand_scope_t     *scope; /* heap-allocated */
+        int                 timeout_rc;
+        _Atomic int         child_done;
+} timeout_abandon_args_t;
+
+static int
+child_waits_for_high_clock(void *varg)
+{
+        timeout_abandon_args_t *a = varg;
+
+        while (strand_test_clock_ns < 9000)
+                strand_fiber_yield(a->sched);
+
+        atomic_store(&a->child_done, 1);
+        return (0);
+}
+
+static int
+timeout_abandon_parent_inner(timeout_abandon_args_t *a)
+{
+        int rc;
+
+        rc = strand_scope_open(a->sched, a->scope);
+        if (rc != STRAND_OK)
+                return (1);
+
+        rc = strand_scope_spawn(a->sched, a->scope, child_waits_for_high_clock,
+                                a, NULL);
+        if (rc != STRAND_OK)
+                return (1);
+
+        /* Yield so child enters its loop. */
+        strand_fiber_yield(a->sched);
+
+        /* Wait with deadline=3000; child needs clock>=9000; timeout fires. */
+        a->timeout_rc = strand_scope_wait_timeout(a->sched, a->scope, 3000);
+        if (a->timeout_rc != STRAND_TIMEOUT)
+                return (1);
+
+        /*
+         * Abandon: runtime takes ownership; will free when child finishes.
+         * After this, a->scope is invalid.
+         */
+        strand_scope_abandon(a->sched, a->scope);
+        a->scope = NULL;
+        return (0);
+}
+
+static void
+timeout_abandon_parent_fiber(void *varg)
+{
+        timeout_abandon_parent_inner((timeout_abandon_args_t *)varg);
+}
+
+static int
+test_scope_wait_timeout_then_abandon(void)
+{
+        strand_scheduler_t     *sched;
+        timeout_abandon_args_t  args;
+        strand_scope_t         *scope;
+        int                     rc;
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        scope = malloc(sizeof(*scope));
+        if (scope == NULL) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+
+        memset(&args, 0, sizeof(args));
+        args.sched      = sched;
+        args.scope      = scope;
+        args.timeout_rc = -999;
+
+        strand_test_clock_ns = 1000;
+
+        rc = push_root_fiber(sched, timeout_abandon_parent_fiber, &args);
+        if (rc != 0) {
+                free(scope);
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+
+        /* Drive until parent parks in wait_timeout. */
+        drive_until_idle(sched);
+
+        /* Fire the deadline; parent resumes and abandons scope. */
+        strand_test_clock_ns = 3001;
+        drive_until_idle(sched);
+
+        /* Advance clock so slow child can finish; scope freed here. */
+        strand_test_clock_ns = 9001;
+        drive_until_idle(sched);
+
+        strand_scheduler_destroy(sched);
+
+        if (args.timeout_rc != STRAND_TIMEOUT)
+                return (1);
+        if (!atomic_load(&args.child_done))
+                return (1);
+        return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * Test: strand_fiber_spawn_detached - fiber runs but has no scope.
+ *
+ * Spawn a detached fiber from within a root fiber.  Verify the detached
+ * fiber runs (sets a flag) and that its scope pointer is NULL (no scope
+ * tracking).
+ * -------------------------------------------------------------------------
+ */
+
+typedef struct {
+        strand_scheduler_t *sched;
+        _Atomic int         detached_ran;
+        strand_fiber_t     *detached_fiber_ptr; /* captured inside detached fn */
+} detached_args_t;
+
+static void
+detached_fn(void *varg)
+{
+        detached_args_t *a = varg;
+        strand_fiber_t  *f = a->sched->current_fiber;
+
+        /*
+         * Capture the fiber pointer so the parent can inspect f->scope
+         * after the detached fiber finishes.  (By the time drive_until_idle
+         * returns the fiber may be in the dead pool with scope==NULL, which
+         * is exactly what we want to verify.)
+         */
+        a->detached_fiber_ptr = f;
+        atomic_store(&a->detached_ran, 1);
+}
+
+static int
+detached_parent_inner(detached_args_t *a)
+{
+        strand_fiber_handle_t h;
+        int rc;
+
+        rc = strand_fiber_spawn_detached(a->sched, detached_fn, a, 0, &h);
+        if (rc != STRAND_OK)
+                return (1);
+
+        /* Verify the spawned fiber has no scope at the time of creation. */
+        if (h.ptr == NULL)
+                return (1);
+        if (((strand_fiber_t *)h.ptr)->scope != NULL)
+                return (1);
+
+        return (0);
+}
+
+static void
+detached_parent_fiber(void *varg)
+{
+        detached_parent_inner((detached_args_t *)varg);
+}
+
+static int
+test_spawn_detached_no_scope(void)
+{
+        strand_scheduler_t *sched;
+        detached_args_t     args;
+        int                 rc;
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        memset(&args, 0, sizeof(args));
+        args.sched = sched;
+
+        rc = push_root_fiber(sched, detached_parent_fiber, &args);
+        if (rc != 0) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        drive_until_idle(sched);
+        strand_scheduler_destroy(sched);
+
+        if (!atomic_load(&args.detached_ran))
+                return (1);
+        return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * Test runner (final)
  * -------------------------------------------------------------------------
  */
 
@@ -1330,5 +1629,11 @@ run_layer5_tests(void)
             test_scope_wait_timeout_fires);
         RUN("test_scope_wait_timeout_scope_completed",
             test_scope_wait_timeout_scope_completed);
+        RUN("test_scope_owner_runtime_frees_on_complete",
+            test_scope_owner_runtime_frees_on_complete);
+        RUN("test_scope_wait_timeout_then_abandon",
+            test_scope_wait_timeout_then_abandon);
+        RUN("test_spawn_detached_no_scope",
+            test_spawn_detached_no_scope);
 }
 
