@@ -2,10 +2,9 @@
  * strand_scope.c - structured concurrency scopes.
  * See ARCHITECTURE.md §7.
  *
- * Tasks 6.2, 6.3, 6.5: strand_scope_open, strand_scope_spawn,
- * scope_child_finish (internal), strand_scope_wait.
- *
- * Task 6.4 (cancellation walk) is stubbed - see scope_child_finish.
+ * Tasks 6.2, 6.3, 6.4, 6.5, 6.6, 6.7: strand_scope_open, strand_scope_spawn,
+ * scope_child_finish (internal), strand_scope_wait, scope_walk_cancel,
+ * strand_scope_cancel, strand_scope_wait_timeout.
  */
 
 #include <stdatomic.h>
@@ -251,11 +250,36 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
                 return;
 
         parent = scope->parent_fiber.ptr;
-        if (atomic_load(&parent->state) != FIBER_PARKED_SCOPE)
-                return;
 
-        atomic_store(&parent->state, FIBER_RUNNABLE);
-        run_queue_push(sched, parent);
+        /*
+         * The parent may be parked in one of two states:
+         *
+         * FIBER_PARKED_SCOPE  - plain strand_scope_wait; wake directly.
+         * FIBER_PARKED_TIMER  - strand_scope_wait_timeout; remove from
+         *   timer heap first so the timer does not fire spuriously, then
+         *   wake the fiber.  On resume the fiber checks lifecycle to
+         *   distinguish scope-complete wakeup from timer expiry.
+         */
+        {
+                fiber_state_t st = atomic_load(&parent->state);
+                if (st == FIBER_PARKED_SCOPE) {
+                        atomic_store(&parent->state, FIBER_RUNNABLE);
+                        run_queue_push(sched, parent);
+                } else if (st == FIBER_PARKED_TIMER) {
+                        /*
+                         * SAFETY: timer_heap_remove is safe here because
+                         * parent and all children are pinned to the same
+                         * single worker; no concurrent heap mutation is
+                         * possible.  If the timer already fired and moved
+                         * the fiber to FIBER_RUNNABLE before this point,
+                         * the state load above would have been FIBER_RUNNABLE
+                         * and we would skip this branch correctly.
+                         */
+                        timer_heap_remove(sched, parent);
+                        atomic_store(&parent->state, FIBER_RUNNABLE);
+                        run_queue_push(sched, parent);
+                }
+        }
 }
 
 /* ---------------------------------------------------------------------------
@@ -362,6 +386,96 @@ strand_scope_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
         scope->cancellation_flag = 1;
         scope_walk_cancel(sched, scope);
         return (STRAND_OK);
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_scope_wait_timeout - park until scope completes or deadline passes.
+ *
+ * See include/strand.h for the full contract.
+ *
+ * Implementation strategy: park the fiber in FIBER_PARKED_TIMER so the
+ * scheduler's timer heap can wake it on deadline expiry (same mechanism as
+ * strand_fiber_sleep_until).  scope_child_finish detects FIBER_PARKED_TIMER
+ * on the parent, removes it from the heap, and moves it to FIBER_RUNNABLE
+ * when all children complete - whichever event fires first wins.
+ *
+ * On resume, the fiber inspects lifecycle to determine which event fired:
+ *   SCOPE_COMPLETED -> terminal path (return first_error).
+ *   other           -> timeout fired (return STRAND_TIMEOUT).
+ * cancel_pending is also checked first.
+ * ---------------------------------------------------------------------------
+ */
+int
+strand_scope_wait_timeout(strand_scheduler_t *sched, strand_scope_t *scope,
+                          uint64_t deadline_ns)
+{
+        strand_fiber_t *f;
+
+        f = sched->current_fiber;
+        if (f == NULL)
+                return (STRAND_ERR_WRONGCTX);
+
+        /*
+         * Fast path A: scope already completed.
+         */
+        if (atomic_load_explicit(&scope->lifecycle, memory_order_seq_cst) ==
+            SCOPE_COMPLETED)
+                return ((int)atomic_load(&scope->first_error));
+
+        /*
+         * Fast path B: no children spawned.
+         */
+        if (atomic_load_explicit(&scope->live_child_count,
+                                 memory_order_seq_cst) == 0) {
+                scope_lifecycle_t expected = SCOPE_ACTIVE;
+                atomic_compare_exchange_strong_explicit(
+                    &scope->lifecycle, &expected, SCOPE_COMPLETED,
+                    memory_order_seq_cst, memory_order_seq_cst);
+                return (0);
+        }
+
+        /*
+         * Slow path: arm the timer and park.
+         *
+         * Transition to FIBER_PARKED_TIMER before pushing the timer entry.
+         * scope_child_finish checks for FIBER_PARKED_TIMER in addition to
+         * FIBER_PARKED_SCOPE, and will remove this entry from the heap
+         * and enqueue the fiber if scope completion races the timer.
+         * ATOMIC: relaxed store is safe - visibility to other fibers is
+         * provided by the context switch that follows.
+         */
+        atomic_store_explicit(&f->state, FIBER_PARKED_TIMER,
+                              memory_order_relaxed);
+
+        if (timer_heap_push(sched, deadline_ns, f) != 0) {
+                /* Restore state on alloc failure - cannot park. */
+                atomic_store_explicit(&f->state, FIBER_RUNNING,
+                                      memory_order_relaxed);
+                return (STRAND_ERR_NOMEM);
+        }
+
+        strand_context_switch(f, &sched->scheduler_ctx);
+
+        /*
+         * Resumed.  Three possible reasons:
+         * 1. Timer fired (scheduler popped expired entry): lifecycle may
+         *    or may not be SCOPE_COMPLETED depending on race.
+         * 2. scope_child_finish woke us (removed from heap): lifecycle IS
+         *    SCOPE_COMPLETED.
+         * 3. strand_fiber_cancel: cancel_pending set; timer removed by
+         *    strand_fiber_cancel already.
+         */
+        if (atomic_load(&f->cancel_pending)) {
+                atomic_store(&f->cancel_pending, 0);
+                return (STRAND_CANCELLED);
+        }
+
+        if (atomic_load_explicit(&scope->lifecycle, memory_order_seq_cst) ==
+            SCOPE_COMPLETED)
+                return ((int)atomic_load(&scope->first_error));
+
+        /* Deadline expired before scope completed. */
+        return (STRAND_TIMEOUT);
 }
 
 /* ---------------------------------------------------------------------------

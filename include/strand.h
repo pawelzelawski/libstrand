@@ -80,6 +80,7 @@ typedef void (*strand_destructor_t)(void *ptr);
 #define STRAND_ERR_NO_WORKERS (-9)  /* host-thread spawn with no workers registered */
 #define STRAND_ERR_NO_OFFLOAD_POOL (-10) /* strand_fiber_offload called with no pool initialised */
 #define STRAND_EAGAIN (-11)         /* offload pool full; caller must yield and retry */
+#define STRAND_TIMEOUT (-12)        /* deadline expired before operation completed */
 /*
  * Default scheduler and stack cache parameters.
  * These are the values used when zero is passed in strand_sched_config_t.
@@ -612,5 +613,30 @@ int strand_scope_wait(strand_scheduler_t *sched, strand_scope_t *scope);
  * Returns STRAND_OK on success.
  */
 int strand_scope_cancel(strand_scheduler_t *sched, strand_scope_t *scope);
+
+/*
+ * strand_scope_wait_timeout - block until all scope children finish or
+ * deadline_ns passes (non-terminal on timeout).
+ *
+ * If the scope reaches SCOPE_COMPLETED before the deadline: equivalent to
+ * strand_scope_wait - terminal.  Returns scope->first_error (0 on success,
+ * non-zero error code on child failure).
+ *
+ * If the deadline fires first: non-terminal.  The scope continues in its
+ * current lifecycle state.  Returns STRAND_TIMEOUT.  The caller must follow
+ * with strand_scope_wait or strand_scope_abandon.
+ *
+ * If strand_fiber_cancel is called on this fiber while parked: returns
+ * STRAND_CANCELLED.  Non-terminal; caller must still drain the scope.
+ *
+ * deadline_ns is an absolute CLOCK_MONOTONIC timestamp in nanoseconds.
+ * Use strand_clock_now() to obtain the current time.
+ *
+ * Must be called from inside a running fiber.
+ * Returns STRAND_ERR_WRONGCTX if called from a host thread.
+ * Returns STRAND_ERR_NOMEM if the timer heap allocation fails.
+ */
+int strand_scope_wait_timeout(strand_scheduler_t *sched, strand_scope_t *scope,
+                              uint64_t deadline_ns);
 
 #endif /* STRAND_H */

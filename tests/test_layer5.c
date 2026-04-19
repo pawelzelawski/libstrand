@@ -1,9 +1,9 @@
 /*
  * tests/test_layer5.c - Layer 5 (Phase 6) test suite.
  *
- * Tasks 6.2, 6.3, 6.4, 6.5, 6.7: strand_scope_open, strand_scope_spawn,
+ * Tasks 6.2, 6.3, 6.4, 6.5, 6.6, 6.7: strand_scope_open, strand_scope_spawn,
  * scope_child_finish, strand_scope_wait, scope_walk_cancel,
- * strand_scope_cancel.
+ * strand_scope_cancel, strand_scope_wait_timeout.
  *
  * Tests covered here:
  *   test_scope_open_from_host_thread_error
@@ -17,6 +17,8 @@
  *   test_scope_cancelling_to_completed_shortcut
  *   test_stale_handles_noop
  *   test_reverse_spawn_order_cancellation
+ *   test_scope_wait_timeout_fires
+ *   test_scope_wait_timeout_scope_completed
  *
  * See DEVELOPMENT.md "Tests for Phase 6" and TESTING.md §5.
  */
@@ -31,6 +33,13 @@
 #include "../src/strand_internal.h"
 #include "../src/strand_sched.h"
 #include "../src/strand_fiber.h"
+
+/*
+ * strand_test_clock_ns - mock monotonic clock used by the scheduler when
+ * built with -DSTRAND_TEST_CLOCK.  Set directly in tests to control timer
+ * expiry without real-time delays.  See DEVELOPMENT.md Task 3.7.
+ */
+extern uint64_t strand_test_clock_ns;
 
 /* -------------------------------------------------------------------------
  * Shared helpers
@@ -1067,6 +1076,226 @@ test_reverse_spawn_order_cancellation(void)
         return (0);
 }
 
+
+/* =========================================================================
+ * Tests for Task 6.6: strand_scope_wait_timeout
+ * =========================================================================
+ *//* -------------------------------------------------------------------------
+ * Test: timeout fires before scope completes.
+ *
+ * Open scope; spawn one child that parks until strand_test_clock_ns
+ * advances past a sentinel (simulating a slow child).  Call
+ * strand_scope_wait_timeout with a deadline before the child would finish.
+ * Advance the test clock past the deadline.  Verify:
+ *   - strand_scope_wait_timeout returns STRAND_TIMEOUT.
+ *   - scope lifecycle is NOT SCOPE_COMPLETED (still alive).
+ * Then let the child finish via drive_until_idle and confirm cleanup.
+ * -------------------------------------------------------------------------
+ */
+
+typedef struct {
+        strand_scheduler_t *sched;
+        strand_scope_t      scope;
+        int                 timeout_rc;
+        scope_lifecycle_t   lifecycle_at_timeout;
+        _Atomic int         child_done;
+} timeout_fires_args_t;
+
+static int
+child_waits_for_clock(void *varg)
+{
+        timeout_fires_args_t *a = varg;
+
+        /*
+         * Yield until the test clock reaches 5000.  The parent sets the
+         * wait_timeout deadline to 2000, so the timeout fires well before
+         * the child "finishes" at clock 5000.
+         */
+        while (strand_test_clock_ns < 5000)
+                strand_fiber_yield(a->sched);
+
+        atomic_store(&a->child_done, 1);
+        return (0);
+}
+
+static int
+timeout_fires_parent_inner(timeout_fires_args_t *a)
+{
+        int rc;
+
+        rc = strand_scope_open(a->sched, &a->scope);
+        if (rc != STRAND_OK)
+                return (1);
+
+        rc = strand_scope_spawn(a->sched, &a->scope, child_waits_for_clock,
+                                a, NULL);
+        if (rc != STRAND_OK)
+                return (1);
+
+        /* Yield once so child starts its yield loop. */
+        strand_fiber_yield(a->sched);
+
+        /*
+         * Wait with deadline = 2000.  Test clock is at 1000; child needs
+         * clock >= 5000.  The deadline will fire first.
+         */
+        a->timeout_rc          = strand_scope_wait_timeout(a->sched, &a->scope,
+                                                            2000);
+        a->lifecycle_at_timeout = atomic_load(&a->scope.lifecycle);
+
+        /*
+         * Non-terminal: we must now drain the scope.  Advance the clock so
+         * the child can finish, then do a blocking wait.
+         */
+        strand_test_clock_ns = 6000;
+        rc = strand_scope_wait(a->sched, &a->scope);
+        return (rc != STRAND_OK) ? 1 : 0;
+}
+
+static void
+timeout_fires_parent_fiber(void *varg)
+{
+        timeout_fires_parent_inner((timeout_fires_args_t *)varg);
+}
+
+static int
+test_scope_wait_timeout_fires(void)
+{
+        strand_scheduler_t   *sched;
+        timeout_fires_args_t  args;
+        int                   rc;
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        memset(&args, 0, sizeof(args));
+        args.sched      = sched;
+        args.timeout_rc = -999;
+
+        strand_test_clock_ns = 1000;
+
+        rc = push_root_fiber(sched, timeout_fires_parent_fiber, &args);
+        if (rc != 0) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+
+        /*
+         * Drive until the parent parks in wait_timeout (FIBER_PARKED_TIMER).
+         * The scheduler will see deadline=2000 > clock=1000 and not fire yet.
+         */
+        drive_until_idle(sched);
+
+        /*
+         * Advance clock past the deadline; drive again so the timer fires
+         * and the parent resumes, records the timeout, advances clock to 6000,
+         * lets the child finish, and calls strand_scope_wait to drain.
+         */
+        strand_test_clock_ns = 2001;
+        drive_until_idle(sched);
+
+        strand_scheduler_destroy(sched);
+
+        if (args.timeout_rc != STRAND_TIMEOUT)
+                return (1);
+        /* lifecycle must not have been COMPLETED at the moment of timeout */
+        if (args.lifecycle_at_timeout == SCOPE_COMPLETED)
+                return (1);
+        if (!atomic_load(&args.child_done))
+                return (1);
+        return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * Test: scope completes before timeout.
+ *
+ * Open scope; spawn one child that returns immediately.  Call
+ * strand_scope_wait_timeout with a far-future deadline.  scope_child_finish
+ * should wake the parent via FIBER_PARKED_TIMER path, remove it from the
+ * timer heap, and put it on the run queue.  Verify:
+ *   - strand_scope_wait_timeout returns STRAND_OK (0).
+ *   - scope lifecycle is SCOPE_COMPLETED.
+ * -------------------------------------------------------------------------
+ */
+
+typedef struct {
+        strand_scheduler_t *sched;
+        strand_scope_t      scope;
+        int                 wait_rc;
+        scope_lifecycle_t   lifecycle_after;
+} timeout_completed_args_t;
+
+static int
+child_returns_immediately(void *varg)
+{
+        (void)varg;
+        return (0);
+}
+
+static int
+timeout_completed_parent_inner(timeout_completed_args_t *a)
+{
+        int rc;
+
+        rc = strand_scope_open(a->sched, &a->scope);
+        if (rc != STRAND_OK)
+                return (1);
+
+        rc = strand_scope_spawn(a->sched, &a->scope, child_returns_immediately,
+                                NULL, NULL);
+        if (rc != STRAND_OK)
+                return (1);
+
+        /*
+         * Wait with a far-future deadline (999999999).  The child finishes
+         * before the deadline; scope_child_finish removes the timer and wakes
+         * this fiber.  The function must return 0 (not STRAND_TIMEOUT).
+         */
+        a->wait_rc        = strand_scope_wait_timeout(a->sched, &a->scope,
+                                                       999999999);
+        a->lifecycle_after = atomic_load(&a->scope.lifecycle);
+        return (0);
+}
+
+static void
+timeout_completed_parent_fiber(void *varg)
+{
+        timeout_completed_parent_inner((timeout_completed_args_t *)varg);
+}
+
+static int
+test_scope_wait_timeout_scope_completed(void)
+{
+        strand_scheduler_t       *sched;
+        timeout_completed_args_t  args;
+        int                       rc;
+
+        sched = make_test_scheduler();
+        if (sched == NULL)
+                return (1);
+
+        memset(&args, 0, sizeof(args));
+        args.sched   = sched;
+        args.wait_rc = -999;
+
+        strand_test_clock_ns = 1000;
+
+        rc = push_root_fiber(sched, timeout_completed_parent_fiber, &args);
+        if (rc != 0) {
+                strand_scheduler_destroy(sched);
+                return (1);
+        }
+        drive_until_idle(sched);
+        strand_scheduler_destroy(sched);
+
+        if (args.wait_rc != STRAND_OK)
+                return (1);
+        if (args.lifecycle_after != SCOPE_COMPLETED)
+                return (1);
+        return (0);
+}
+
 /* -------------------------------------------------------------------------
  * Test runner (extended)
  * -------------------------------------------------------------------------
@@ -1097,5 +1326,9 @@ run_layer5_tests(void)
             test_stale_handles_noop);
         RUN("test_reverse_spawn_order_cancellation",
             test_reverse_spawn_order_cancellation);
+        RUN("test_scope_wait_timeout_fires",
+            test_scope_wait_timeout_fires);
+        RUN("test_scope_wait_timeout_scope_completed",
+            test_scope_wait_timeout_scope_completed);
 }
 
