@@ -10,6 +10,8 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>     /* fprintf - debug watchdog warnings */
+#include <inttypes.h>  /* PRIu64 */
 #include <stdlib.h>
 #include <string.h>
 #include <time.h> /* clock_gettime, CLOCK_MONOTONIC */
@@ -215,6 +217,10 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	sched->run_queue_len = 0;
 	sched->current_fiber = NULL;
 	sched->dead_pool = NULL;
+	sched->watchdog_threshold_ns =
+	    (cfg != NULL && cfg->watchdog_threshold_ns != 0)
+	        ? cfg->watchdog_threshold_ns
+	        : STRAND_DEFAULT_WATCHDOG_NS;
 	sched->poller = poller_create(0);
 	if (sched->poller == NULL) {
 		inject_queue_destroy(&sched->inject_queue);
@@ -356,6 +362,25 @@ now_ns(void)
 	return ((uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec);
 }
 #endif /* STRAND_TEST_CLOCK */
+
+#ifdef STRAND_DEBUG
+/*
+ * now_ns_real -- always return real CLOCK_MONOTONIC time in nanoseconds.
+ *
+ * Unlike now_ns(), this function is never overridden by STRAND_TEST_CLOCK.
+ * Used by the debug watchdog to measure wall-clock fiber run time even in
+ * test builds where now_ns() returns a mock value.
+ * See DEVELOPMENT.md Task 7.3.
+ */
+static uint64_t
+now_ns_real(void)
+{
+	struct timespec ts;
+	// NOLINTNEXTLINE(misc-include-cleaner)
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec);
+}
+#endif /* STRAND_DEBUG */
 
 /*
  * heap_swap -- exchange two entries in the timer heap.
@@ -633,7 +658,38 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 		atomic_store_explicit(&f->state, FIBER_RUNNING,
 		                      memory_order_relaxed);
 		sched->current_fiber = f;
+
+#ifdef STRAND_DEBUG
+		/*
+		 * Debug watchdog - record wall time before fiber starts.
+		 * After the fiber yields or finishes, check elapsed time
+		 * against watchdog_threshold_ns.  If exceeded, emit a
+		 * warning to stderr.  Watchdog does not preempt.
+		 * See ARCHITECTURE.md §11.2 and DEVELOPMENT.md Task 7.3.
+		 */
+		{
+			uint64_t wd_start = now_ns_real();
+#endif
 		strand_context_switch(&sched->scheduler_ctx, f);
+#ifdef STRAND_DEBUG
+			{
+				uint64_t wd_elapsed = now_ns_real() - wd_start;
+				if (wd_elapsed >
+				    sched->watchdog_threshold_ns) {
+					fprintf(stderr,
+					    "strand: watchdog: fiber %p "
+					    "(gen %" PRIu64 ") ran for "
+					    "%" PRIu64 " ms without "
+					    "yielding (threshold %" PRIu64
+					    " ms)\n",
+					    (void *)f, f->generation,
+					    (uint64_t)(wd_elapsed / 1000000ULL),
+					    (uint64_t)(sched->watchdog_threshold_ns /
+					        1000000ULL));
+				}
+			}
+		}
+#endif
 		sched->current_fiber = NULL;
 
 		/*

@@ -90,6 +90,7 @@ typedef void (*strand_destructor_t)(void *ptr);
 #define STRAND_DEFAULT_SCHED_BUDGET ((size_t)64)
 #define STRAND_DEFAULT_CACHE_CAP ((size_t)64)
 #define STRAND_DEFAULT_CACHE_FLOOR ((size_t)8)
+#define STRAND_DEFAULT_WATCHDOG_NS ((uint64_t)(100 * 1000000ULL)) /* 100 ms */
 
 /*
  * strand_sched_config_t - scheduler creation parameters.
@@ -99,6 +100,11 @@ typedef void (*strand_destructor_t)(void *ptr);
  * inject_cap  - inject queue capacity (Phase 5; ignored in Phase 3).
  * cache_cap   - stack cache hard cap (stacks per worker).
  * idle_floor  - stack cache idle reclamation floor.
+ * watchdog_threshold_ns - debug watchdog: if a fiber runs for longer than
+ *              this many nanoseconds without yielding, a warning is emitted
+ *              to stderr.  0 uses STRAND_DEFAULT_WATCHDOG_NS.  Only active
+ *              in STRAND_DEBUG builds; ignored in release builds.
+ *              See ARCHITECTURE.md §11.2.
  * See ARCHITECTURE.md §4.4, §13.
  */
 typedef struct strand_sched_config {
@@ -106,6 +112,7 @@ typedef struct strand_sched_config {
 	size_t inject_cap;
 	size_t cache_cap;
 	size_t idle_floor;
+	uint64_t watchdog_threshold_ns;
 } strand_sched_config_t;
 
 /*

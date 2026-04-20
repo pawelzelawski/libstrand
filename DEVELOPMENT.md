@@ -1030,7 +1030,7 @@ complete. Library is ready for a v0.1.0 release tag.
   speedup, confirming the stack cache works as designed.
 - Baseline results recorded in `bench/BASELINES.md`.
 
-**7.3 - Debug watchdog**
+**7.3 - Debug watchdog** ✓ DONE
 - Implement scheduler watchdog in debug builds (`STRAND_DEBUG=1`):
   - Track wall time since a fiber started running
   - If a fiber runs for more than a configurable threshold (default 100ms)
@@ -1070,7 +1070,7 @@ complete. Library is ready for a v0.1.0 release tag.
 - [ ] TSan clean on Linux - M6 confirmed
 - [ ] All quality milestone status cells updated to DONE
 - [ ] README.md complete and integration example compiles and runs
-- [ ] v0.1.0 release tag applied
+- [ ] v1.0.0 release tag applied
 
 ---
 

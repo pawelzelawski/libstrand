@@ -585,6 +585,15 @@ typedef struct strand_scheduler {
 	 * fiber_alloc pops from here when available; fiber_free pushes here. */
 	strand_fiber_t *dead_pool;
 
+	/*
+	 * Debug watchdog threshold (nanoseconds).  In STRAND_DEBUG builds,
+	 * if a fiber runs for longer than this without yielding, a warning
+	 * is emitted to stderr.  Default STRAND_DEFAULT_WATCHDOG_NS (100 ms).
+	 * Watchdog does not preempt - warning only.
+	 * See ARCHITECTURE.md §11.2 and DEVELOPMENT.md Task 7.3.
+	 */
+	uint64_t watchdog_threshold_ns;
+
 	/* Owner thread for same-worker operations (Phase 3).
 	 * Set at create and refreshed by scheduler entry points. */
 	pthread_t owner_thread;
