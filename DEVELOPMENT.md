@@ -2,9 +2,8 @@
 
 ## Status Overview
 
-**Last Updated**: 2026-04-20
 **Current Phase**: Phase 7 - Hardening, Benchmarks, and Release
-**Next Task**: Phase 7.3 - Debug watchdog
+**Next Task**: Phase 7.5 - Final quality pass
 
 ### Phase Summary
 
@@ -16,7 +15,7 @@
 | 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1-4.5 done; Linux + OpenBSD clean |
 | 5 | Layer 4: Multi-Worker Runtime | DONE | 67/67 | Tasks 5.1-5.8 done; Linux + OpenBSD clean |
 | 6 | Layer 5: Scopes and Coordination | DONE | 83/83 | Tasks 6.1-6.9 done; closure validation complete on Linux + OpenBSD |
-| 7 | Hardening, Benchmarks, and Release | NOT STARTED | - | Integration tests, benchmarks, documentation |
+| 7 | Hardening, Benchmarks, and Release | IN PROGRESS | 101/101 | Tasks 7.1-7.4 done; 7.5-7.6 remaining |
 
 ### Quality Milestones
 
@@ -26,7 +25,7 @@
 | M2 | All unit tests pass on Linux | DONE |
 | M3 | All unit tests pass on OpenBSD | DONE |
 | M4 | Valgrind clean on Linux | DONE |
-| M5 | ASan/UBSan clean on both platforms | IN PROGRESS (Linux x86_64 clean; OpenBSD ASan availability and parity under review) |
+| M5 | ASan/UBSan clean on both platforms | DONE |
 | M6 | TSan clean on Linux (Clang only) | DONE |
 | M7 | clang-format clean | DONE |
 | M8 | clang-tidy zero warnings | DONE |
@@ -36,7 +35,7 @@
 | M12 | Post-re-arm readiness check correct - verified by test | DONE |
 | M13 | Offload CAS both outcomes exercised - verified by test | DONE |
 | M14 | Scope lifecycle all state transitions verified by test | DONE |
-| M15 | Integration test suite passes: echo server, fan-out scope, offload cancel | NOT STARTED |
+| M15 | Integration test suite passes: echo server, fan-out scope, offload cancel | DONE |
 
 ---
 
@@ -1109,7 +1108,5 @@ complete. Library is ready for a v0.1.0 release tag.
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: 2026-04-19
 **See Also**: PROJECT.md, ARCHITECTURE.md, TECH_STACK.md, CODING_STANDARDS.md,
 REPOSITORY_STRUCTURE.md, TESTING.md

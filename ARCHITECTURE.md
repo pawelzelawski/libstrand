@@ -735,7 +735,7 @@ correctness failure.
 uses acquire semantics. This establishes the happens-before chain required for
 offload result visibility (see §6.6).
 
-### 6.3.1 Cross-Worker Wakeup Latency — Platform Characteristics
+### 6.3.1 Cross-Worker Wakeup Latency - Platform Characteristics
 
 The cross-worker cancel→resume path (inject queue enqueue + wakeup fd write +
 target worker wakes from poll + inject drain + fiber dispatch) has different
@@ -754,12 +754,12 @@ latency characteristics on the two target platforms:
 
 **Practical impact:** Cross-worker wakeup latency is only relevant when
 cross-worker cancellation is on the hot path at very high frequency. For the
-target workload — connection-oriented protocol daemons — cross-worker cancel
+target workload - connection-oriented protocol daemons - cross-worker cancel
 is an exceptional event (connection teardown, timeout-triggered cleanup), not
 a per-request operation. The ~7 µs latency is not a bottleneck in practice.
 
-**Potential future optimization:** A spin-before-block strategy — spinning on
-the inject queue for a configurable duration before entering `epoll_wait` —
+**Potential future optimization:** A spin-before-block strategy - spinning on
+the inject queue for a configurable duration before entering `epoll_wait` -
 could reduce Linux cross-worker latency to ~100–300 ns (inject queue pop +
 dispatch latency) at the cost of CPU burn during idle periods. This
 optimization is not implemented in v0.1.0. If user feedback indicates
@@ -1378,7 +1378,4 @@ implemented.
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2026-03-28
-**Source**: Derived from concurrency_library_architecture_v10.md (final)
 **See Also**: PROJECT.md, TECH_STACK.md, CODING_STANDARDS.md, DEVELOPMENT.md, TESTING.md

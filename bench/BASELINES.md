@@ -39,13 +39,13 @@ Notes:
 - Methodology: spawn one fiber, drive it to completion, repeat. Each iteration
   exercises either the full mmap+mprotect+munmap path (cold) or the stack cache
   hit path (warm). This replaced the original batch-spawn methodology which was
-  flawed — it spawned 100k fibers against a 64-entry cache, resulting in a
+  flawed - it spawned 100k fibers against a 64-entry cache, resulting in a
   0.064% cache hit rate that made warm and cold numbers nearly identical.
-- Warm path (cache hit) is 66× faster than cold (mmap+munmap) — the stack
+- Warm path (cache hit) is 66× faster than cold (mmap+munmap) - the stack
   cache eliminates all syscall overhead from the spawn path.
 - Warm 117 ns/spawn meets the < 500 ns design target with 4× headroom.
 - Cold 7.8 µs cost is dominated by mmap/mprotect/munmap syscall overhead
-  (not TLB shootdowns — verified via taskset pinning experiments).
+  (not TLB shootdowns - verified via taskset pinning experiments).
 
 ### bench_io_roundtrip
 
@@ -123,7 +123,7 @@ Notes:
 Notes:
 - ~8 µs cross-worker wakeup latency on Linux with eventfd + epoll.
 - Dominated by the CFS scheduler wakeup latency after eventfd write.
-- Exceeds the 5 µs design target — this is a known Linux platform
+- Exceeds the 5 µs design target - this is a known Linux platform
   characteristic, not a libstrand defect. See ARCHITECTURE.md §6.3.1.
 - OpenBSD achieves ~3 µs (kqueue + pipe path); see OpenBSD section below.
 
@@ -161,7 +161,7 @@ Notes:
 
 Notes:
 - Warm path 168 ns meets the < 500 ns design target.
-- Cold path is 1.7× slower than Linux (13.3 µs vs 7.8 µs) — OpenBSD's
+- Cold path is 1.7× slower than Linux (13.3 µs vs 7.8 µs) - OpenBSD's
   mmap/mprotect/munmap syscall path has higher per-call overhead.
 - Warm cache hit provides 79× speedup over cold.
 
@@ -220,6 +220,6 @@ Notes:
 ```
 
 Notes:
-- 3.0 µs cross-worker wakeup — meets the < 5 µs design target.
+- 3.0 µs cross-worker wakeup - meets the < 5 µs design target.
 - OpenBSD kqueue + pipe path is ~2.6× faster than Linux epoll + eventfd.
 
