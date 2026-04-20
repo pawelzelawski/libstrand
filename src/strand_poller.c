@@ -458,7 +458,7 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 {
 	strand_fiber_t    *f;
 	strand_fd_entry_t *e;
-	int                inserted, rc;
+	int                inserted, rc = 0;
 
 	STRAND_DEBUG_ASSERT(sched != NULL);
 	STRAND_DEBUG_ASSERT(sched->current_fiber != NULL);
@@ -489,7 +489,6 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 #endif
 
 	inserted = 0;
-	rc = STRAND_ERR_IO;
 	e = fd_table_lookup(sched->poller, fd);
 	if (e == NULL) {
 		e = fd_table_insert(sched->poller, fd);

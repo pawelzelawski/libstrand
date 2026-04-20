@@ -800,6 +800,23 @@ strand_scheduler_get_fd(const strand_scheduler_t *sched)
 }
 
 /* ---------------------------------------------------------------------------
+ * strand_fiber_self_scheduler -- return the calling fiber's home scheduler.
+ *
+ * Uses the __thread-local current_sched pointer set by strand_scheduler_advance
+ * when a fiber is resumed.  Returns NULL if called from outside a fiber context.
+ * See ARCHITECTURE.md §12.
+ * ---------------------------------------------------------------------------
+ */
+strand_scheduler_t *
+strand_fiber_self_scheduler(void)
+{
+	strand_scheduler_t *sched = strand_sched_current_tls;
+	if (sched == NULL || sched->current_fiber == NULL)
+		return (NULL);
+	return (sched);
+}
+
+/* ---------------------------------------------------------------------------
  * strand_scheduler_stop -- signal the scheduler to stop.
  *
  * SAFETY: atomic_store with release ordering ensures all prior writes

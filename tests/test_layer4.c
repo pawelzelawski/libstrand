@@ -1895,6 +1895,129 @@ test_offload_yield_retry_pattern(void)
  * Suite runner
  * -------------------------------------------------------------------------
  */
+/* -------------------------------------------------------------------------
+ * test_worker_get_scheduler
+ * strand_worker_get_scheduler returns the worker's non-NULL scheduler.
+ * -------------------------------------------------------------------------
+ */
+static int
+test_worker_get_scheduler(void)
+{
+	strand_runtime_t   *rt;
+	strand_worker_t    *w;
+	strand_scheduler_t *sched;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	w = make_test_worker(rt);
+	if (w == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	sched = strand_worker_get_scheduler(w);
+	if (sched == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/* Verify it matches the internal field. */
+	if (sched != w->sched) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	strand_runtime_destroy(rt);
+	return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * test_fiber_self_scheduler_inside_fiber
+ * strand_fiber_self_scheduler returns non-NULL from inside a running fiber.
+ * -------------------------------------------------------------------------
+ */
+typedef struct {
+	strand_scheduler_t *self_sched;
+	_Atomic int         done;
+} self_sched_args_t;
+
+static void
+self_sched_fiber(void *arg)
+{
+	self_sched_args_t *a = arg;
+
+	a->self_sched = strand_fiber_self_scheduler();
+	atomic_store(&a->done, 1);
+}
+
+static int
+test_fiber_self_scheduler_inside_fiber(void)
+{
+	strand_runtime_t   *rt;
+	strand_worker_t    *w;
+	self_sched_args_t   args;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	w = make_test_worker(rt);
+	if (w == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	memset(&args, 0, sizeof(args));
+	atomic_init(&args.done, 0);
+
+	if (strand_runtime_spawn(rt, self_sched_fiber, &args, 0, NULL,
+	    NULL) != STRAND_OK) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/* Poll until fiber completes (worker thread drives it). */
+	for (int i = 0; i < 5000; i++) {
+		if (atomic_load_explicit(&args.done, memory_order_acquire))
+			break;
+		test_sleep_1ms();
+	}
+
+	if (!atomic_load(&args.done)) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/* Must be non-NULL and match the worker's scheduler. */
+	if (args.self_sched == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+	if (args.self_sched != w->sched) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	strand_runtime_destroy(rt);
+	return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * test_fiber_self_scheduler_host_thread
+ * strand_fiber_self_scheduler returns NULL from the host thread.
+ * -------------------------------------------------------------------------
+ */
+static int
+test_fiber_self_scheduler_host_thread(void)
+{
+	strand_scheduler_t *sched;
+
+	sched = strand_fiber_self_scheduler();
+	return (sched == NULL) ? 0 : 1;
+}
+
 void
 run_layer4_tests(void)
 {
@@ -1938,5 +2061,11 @@ run_layer4_tests(void)
             test_offload_arg_outlives_cancel);
         RUN("test_offload_yield_retry_pattern",
             test_offload_yield_retry_pattern);
+        RUN("test_worker_get_scheduler",
+            test_worker_get_scheduler);
+        RUN("test_fiber_self_scheduler_inside_fiber",
+            test_fiber_self_scheduler_inside_fiber);
+        RUN("test_fiber_self_scheduler_host_thread",
+            test_fiber_self_scheduler_host_thread);
 }
 

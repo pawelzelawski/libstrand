@@ -983,7 +983,7 @@ File: `tests/test_layer5.c`
 
 **Goal**: Full integration test suite passes. All benchmarks produce baseline
 numbers. All quality milestones confirmed on all platforms. Documentation
-complete. Library is ready for a v0.1.0 release tag.
+complete. Library is ready for a v1.0.0 release tag.
 
 **Prerequisite**: Phase 6 complete. All unit tests passing.
 
@@ -1037,12 +1037,12 @@ complete. Library is ready for a v0.1.0 release tag.
   - Watchdog does not preempt - warning only
 - Add test: spin loop fiber exceeding threshold; verify warning emitted
 
-**7.4 - strand_inspect tool** ✅
+**7.4 - strand_inspect tool** ✓ DONE
 - Implement `tools/strand_inspect.c` per REPOSITORY_STRUCTURE.md §6:
   scheduler state dump - run queue depth, timer heap size, inject queue depth,
   fiber count by state, stack cache depth
 
-**7.5 - Final quality pass**
+**7.5 - Final quality pass** ✓ DONE
 - `make lint` → zero clang-tidy and cppcheck warnings on all platforms
 - `make test` → all tests pass
 - `make valgrind` → clean on Linux
@@ -1050,7 +1050,7 @@ complete. Library is ready for a v0.1.0 release tag.
 - Full TSan run on Linux
 - All quality milestone status cells updated
 
-**7.6 - README.md**
+**7.6 - README.md** ✓ DONE
 - Written for an embedder coming to the project cold
 - Contents: one-paragraph description, requirements (libc, pthreads),
   how to build (`make && make install`), minimal integration example
@@ -1062,13 +1062,13 @@ complete. Library is ready for a v0.1.0 release tag.
 
 - [x] Integration test suite passes on Linux and OpenBSD - M15 confirmed
 - [x] Benchmark baselines recorded on Linux x86_64 and ARM64, OpenBSD amd64
-- [ ] `make lint` zero warnings on all platforms - M7, M8 confirmed
-- [ ] All unit and integration tests pass on all platforms - M2, M3 confirmed
-- [ ] Valgrind clean - M4 confirmed
-- [ ] ASan/UBSan clean on all platforms - M5 confirmed
-- [ ] TSan clean on Linux - M6 confirmed
-- [ ] All quality milestone status cells updated to DONE
-- [ ] README.md complete and integration example compiles and runs
+- [x] `make lint` zero warnings on all platforms - M7, M8 confirmed
+- [x] All unit and integration tests pass on all platforms - M2, M3 confirmed
+- [x] Valgrind clean - M4 confirmed
+- [x] ASan/UBSan clean on all platforms - M5 confirmed
+- [x] TSan clean on Linux - M6 confirmed
+- [x] All quality milestone status cells updated to DONE
+- [x] README.md complete and integration example compiles and runs
 - [ ] v1.0.0 release tag applied
 
 ---

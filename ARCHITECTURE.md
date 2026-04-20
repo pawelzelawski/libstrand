@@ -1245,6 +1245,8 @@ and fiber run time are planned. Specifics deferred.
 | `strand_scheduler_stop` | No | Yes | Yes | No | No |
 | `strand_scheduler_next_deadline` | No | Yes | No | No | No |
 | `strand_scheduler_get_fd` | No | Yes | No | No | No |
+| `strand_worker_get_scheduler` | No | Yes | No | No | No |
+| `strand_fiber_self_scheduler` | Yes | Returns NULL | Returns NULL | No | No |
 
 **† Enqueue-only:** Returns after enqueueing to the target worker's inject
 queue, not after the operation is applied. Post-return guarantees (fd freedom,

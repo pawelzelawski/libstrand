@@ -314,6 +314,18 @@ strand_worker_join(strand_worker_t *w)
 }
 
 /*
+ * strand_worker_get_scheduler - return the scheduler owned by a worker.
+ * See ARCHITECTURE.md §12.
+ */
+strand_scheduler_t *
+strand_worker_get_scheduler(strand_worker_t *w)
+{
+	if (w == NULL)
+		return (NULL);
+	return (w->sched);
+}
+
+/*
  * strand_runtime_spawn - spawn a fiber from the host thread.
  *
  * Check shutdown/no-workers, select worker (round-robin or
