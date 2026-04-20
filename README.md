@@ -32,7 +32,7 @@ make install    # install to /usr/local (or PREFIX=...)
 The build produces `build/libstrand.a` and the public header is
 `include/strand.h`.
 
-## Quick Start — Worker Mode
+## Quick Start - Worker Mode
 
 The primary usage pattern: the runtime owns worker threads; the host
 thread spawns fibers and shuts down when done.
@@ -52,7 +52,7 @@ static void echo_fiber(void *arg) {
     ssize_t n;
 
     for (;;) {
-        /* Park until data arrives — releases the worker. */
+        /* Park until data arrives - releases the worker. */
         if (strand_fiber_wait_readable(sched, fd) != STRAND_OK)
             break;
         n = read(fd, buf, sizeof(buf));
@@ -120,12 +120,12 @@ results on Linux x86_64, Linux AArch64, and OpenBSD amd64.
 
 ## Documentation
 
-- [`include/strand.h`](include/strand.h) — public API with inline
+- [`include/strand.h`](include/strand.h) - public API with inline
   documentation; the primary reference for embedders
-- [ARCHITECTURE.md](ARCHITECTURE.md) — full five-layer design document
-- [CODING_STANDARDS.md](CODING_STANDARDS.md) — code style and conventions
-- [DEVELOPMENT.md](DEVELOPMENT.md) — phased implementation plan
-- [TESTING.md](TESTING.md) — test strategy and quality milestones
+- [ARCHITECTURE.md](ARCHITECTURE.md) - full five-layer design document
+- [CODING_STANDARDS.md](CODING_STANDARDS.md) - code style and conventions
+- [DEVELOPMENT.md](DEVELOPMENT.md) - phased implementation plan
+- [TESTING.md](TESTING.md) - test strategy and quality milestones
 
 ## License
 

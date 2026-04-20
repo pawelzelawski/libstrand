@@ -1023,7 +1023,7 @@ complete. Library is ready for a v1.0.0 release tag.
 - Numbers are baselines, not pass/fail gates at this stage
 - **Note**: `bench_fiber_spawn` methodology was corrected from batch-spawn
   (spawn 100k then run all) to spawn-one-run-one (spawn 1, drive to
-  completion, repeat). The batch methodology was flawed — it exhausted the
+  completion, repeat). The batch methodology was flawed - it exhausted the
   64-entry stack cache after 64 spawns, making warm and cold paths
   indistinguishable. The corrected benchmark shows a 66–79× warm/cold
   speedup, confirming the stack cache works as designed.
@@ -1069,7 +1069,7 @@ complete. Library is ready for a v1.0.0 release tag.
 - [x] TSan clean on Linux - M6 confirmed
 - [x] All quality milestone status cells updated to DONE
 - [x] README.md complete and integration example compiles and runs
-- [ ] v1.0.0 release tag applied
+- [x] v1.0.0 release tag applied
 
 ---
 
