@@ -164,7 +164,7 @@ strand_scope_spawn(strand_scheduler_t *sched, strand_scope_t *scope,
         /*
          * Prepend to the spawn-order list via scope_next.  Forward traversal
          * of the list = reverse spawn order, which is what the cancellation
-         * walk (Task 6.4) requires.  See ARCHITECTURE.md 7.6.
+         * walk requires.  See ARCHITECTURE.md §7.6.
          */
         f->scope_next          = scope->spawn_list_head;
         scope->spawn_list_head = f;
@@ -202,11 +202,7 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
          * First-error CAS: if this child failed and no prior child has
          * claimed first_error, claim it now.  If the CAS fails, a sibling
          * already won - discard this error (first error wins, ARCHITECTURE.md
-         * 7.5).  If the CAS succeeds, initiate the cancellation walk.
-         *
-         * Task 6.4 stub: the walk is not yet implemented; scope transitions
-         * directly ACTIVE -> CANCELLING without sending cancel signals.
-         * Tests for error propagation and sibling cancellation require 6.4.
+         * §7.5).  If the CAS succeeds, initiate the cancellation walk.
          */
         if (retval != 0) {
                 expected_err = 0;
@@ -282,7 +278,7 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
         }
 
         /*
-         * OWNER_RUNTIME free path (Task 6.8): scope was abandoned by the
+         * OWNER_RUNTIME free path: scope was abandoned by the
          * caller.  No parent to wake.  Free the control block if and only
          * if the walk reference count is also zero - i.e. no cancellation
          * walk is currently iterating the spawn list (walk reference rule,
@@ -770,7 +766,7 @@ scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
          *   - OWNER_RUNTIME (no caller is waiting).
          *
          * This is the only free site for OWNER_RUNTIME scopes where the
-         * last walk completes after the last child (Task 6.8 covers the
+         * last walk completes after the last child (scope_child_finish covers the
          * complementary case where the last child completes after the walk).
          */
         if (prev_walk == 1 &&

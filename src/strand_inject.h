@@ -18,7 +18,7 @@
 /*
  * Default inject queue capacity when cfg->inject_cap is 0.
  * Must be a power of 2.  4 × STRAND_DEFAULT_SCHED_BUDGET is the
- * documented default (DEVELOPMENT.md Task 5.1).
+ * documented default.  See ARCHITECTURE.md §6.3.
  */
 #define STRAND_DEFAULT_INJECT_CAP ((size_t)(4 * STRAND_DEFAULT_SCHED_BUDGET))
 
@@ -65,7 +65,7 @@ int inject_queue_pop_acquire(strand_inject_queue_t *q, inject_item_t *item);
  * inject_queue_drain -- drain all queued items into the scheduler.
  * Called in Step 1 of strand_scheduler_advance.
  * For INJECT_CANCEL items: calls strand_fiber_cancel on the target handle.
- * Additional item types handled as they are added in later Phase 5 tasks.
+ * Additional item types handled for each inject_type variant.
  */
 void inject_queue_drain(strand_scheduler_t *sched);
 

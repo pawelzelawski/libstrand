@@ -21,7 +21,6 @@
  *     provide CPU affinity APIs; cfg->cpu_affinity is silently ignored there.
  *
  * See ARCHITECTURE.md §6.1, §6.2, §6.4.
- * See DEVELOPMENT.md Tasks 5.2, 5.3, 5.4.
  */
 
 #include "strand_runtime.h"
@@ -205,7 +204,7 @@ strand_runtime_destroy(strand_runtime_t *rt)
 /*
  * strand_worker_start - create and register a new worker thread.
  *
- * Task 5.3: allocate strand_worker_t, create scheduler, spawn pthread.
+ * Allocate strand_worker_t, create scheduler, spawn pthread.
  * On Linux: apply CPU affinity if cfg->cpu_affinity >= 0.
  * On OpenBSD: cpu_affinity silently ignored.
  */
@@ -289,7 +288,7 @@ strand_worker_stop(strand_worker_t *w)
 	 * here because stopping one worker must not prevent spawning to other
 	 * live workers.  strand_runtime_spawn detects "all workers stopped"
 	 * when runtime_select_worker returns NULL.
-	 * See ARCHITECTURE.md 6.2; DEVELOPMENT.md Task 5.3.
+	 * See ARCHITECTURE.md §6.2.
 	 */
 	strand_scheduler_stop(w->sched);
 }
@@ -317,7 +316,7 @@ strand_worker_join(strand_worker_t *w)
 /*
  * strand_runtime_spawn - spawn a fiber from the host thread.
  *
- * Task 5.4: check shutdown/no-workers, select worker (round-robin or
+ * Check shutdown/no-workers, select worker (round-robin or
  * explicit), allocate fiber on the host thread, inject INJECT_SPAWN.
  *
  * Fiber allocation uses fiber_alloc(NULL) (malloc) and stack_alloc()

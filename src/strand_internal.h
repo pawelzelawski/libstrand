@@ -71,7 +71,7 @@
  * STRAND_TSAN_SWITCH must be called on the outgoing fiber immediately
  * before strand_context_swap to establish correct happens-before ordering.
  * STRAND_TSAN_CREATE / STRAND_TSAN_DESTROY manage the per-fiber TSan
- * handle (Task 2.7). Without these TSan produces both false positives and
+ * handle. Without these TSan produces both false positives and
  * false negatives across context switch boundaries.
  * See TECH_STACK.md §7.3 and ARCHITECTURE.md §3.7.
  */
@@ -143,7 +143,7 @@ typedef enum {
 #define OWNER_RUNTIME 1
 
 /*
- * strand_scope_t - structured concurrency scope control block (Task 6.1).
+ * strand_scope_t - structured concurrency scope control block.
  * See ARCHITECTURE.md 7.2 for field semantics and the walk reference rule.
  *
  * Memory ownership:
@@ -262,7 +262,7 @@ typedef enum {
 } fiber_state_t;
 
 /*
- * strand_fiber_t - complete fiber descriptor (Phase 2 + Phase 3 Task 3.1).
+ * strand_fiber_t - complete fiber descriptor.
  *
  * Layout invariants:
  *   - context MUST be at offset 0: assembly stubs in src/arch/ rely on it.
@@ -330,7 +330,7 @@ typedef struct strand_fiber {
 	/*
 	 * parked_fd - fd this fiber is parked on when state is
 	 * FIBER_PARKED_IO_READ or FIBER_PARKED_IO_WRITE.
-	 * Used by strand_fiber_cancel (Task 4.4) to find the fd table entry
+	 * Used by strand_fiber_cancel to find the fd table entry
 	 * without scanning the full poller table.
 	 * Meaningful only while fiber is in a PARKED_IO state; value is
 	 * undefined otherwise.
@@ -349,7 +349,7 @@ typedef struct strand_fiber {
 	 * Set at spawn time (strand_fiber_spawn) and used by
 	 * strand_fiber_cancel to access the run queue and timer heap without
 	 * requiring the caller to supply a scheduler pointer.
-	 * In Phase 5 (multi-worker) this will identify the fiber's pinned
+	 * This identifies the fiber's pinned
 	 * worker for cross-worker inject routing.
 	 * Zeroed by fiber_alloc on descriptor reuse; set again at next spawn.
 	 */
@@ -373,11 +373,10 @@ _Static_assert(sizeof(strand_fiber_handle_t) == 16,
  * INJECT_CANCEL - cross-worker fiber cancel request; payload is cancel_handle.
  * INJECT_SPAWN  - host-thread fiber spawn; payload is a fully-initialised
  *                 strand_fiber_t * to be pushed onto the worker's run queue.
- *                 Added in Task 5.4.
  * INJECT_OFFLOAD_COMPLETE - offload thread finished; payload is the completed
  *                 strand_offload_item_t *.  The fiber's home worker resumes
  *                 the parked fiber with the result already written to
- *                 result_slot.  Added in Task 5.8.
+ *                 result_slot.
  * INJECT_SCOPE_CANCEL - cross-thread scope cancel request.  Payload is a
  *                 strand_scope_t * that must be cancelled on the owning
  *                 worker thread.
@@ -469,7 +468,7 @@ typedef struct strand_timer_entry {
 } strand_timer_entry_t;
 
 /*
- * strand_scheduler_t - complete single-worker fiber scheduler (Task 3.2).
+ * strand_scheduler_t - complete single-worker fiber scheduler.
  *
  * Ownership:
  *   - All strand_fiber_t descriptors on the run queue or timer heap are
@@ -483,7 +482,7 @@ typedef struct strand_timer_entry {
  *     thread that calls strand_scheduler_advance / strand_scheduler_run.
  *   - stop_flag is the only field modified from other threads; it is
  *     _Atomic for that reason.
- *   - The inject queue will have its own memory-ordering protocol in Phase 5.
+ *   - The inject queue has its own memory-ordering protocol.
  *
  * Wakeup fd:
  *   - Linux: eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK) - single int.
@@ -537,12 +536,12 @@ typedef struct strand_scheduler {
 	 * inspects the flag. */
 	_Atomic int stop_flag;
 
-	/* Inject queue - bounded MPSC ring buffer (Task 5.1).
+	/* Inject queue - bounded MPSC ring buffer.
 	 * Capacity set from cfg->inject_cap at create time.
 	 * See ARCHITECTURE.md §6.3 and strand_inject.c. */
 	strand_inject_queue_t inject_queue;
 
-	/* I/O poller - NULL in Phase 3; initialised in Phase 4 (Task 4.1). */
+	/* I/O poller.  See ARCHITECTURE.md §5. */
 	strand_poller_t *poller;
 
 	/* Stack cache - LIFO, per-scheduler.  Only stacks of matching size
@@ -590,11 +589,11 @@ typedef struct strand_scheduler {
 	 * if a fiber runs for longer than this without yielding, a warning
 	 * is emitted to stderr.  Default STRAND_DEFAULT_WATCHDOG_NS (100 ms).
 	 * Watchdog does not preempt - warning only.
-	 * See ARCHITECTURE.md §11.2 and DEVELOPMENT.md Task 7.3.
+	 * See ARCHITECTURE.md §11.2.
 	 */
 	uint64_t watchdog_threshold_ns;
 
-	/* Owner thread for same-worker operations (Phase 3).
+	/* Owner thread for same-worker operations.
 	 * Set at create and refreshed by scheduler entry points. */
 	pthread_t owner_thread;
 } strand_scheduler_t;
@@ -638,7 +637,7 @@ typedef struct strand_worker {
  *                  All spawn paths check this before proceeding.
  *
  * See ARCHITECTURE.md §6.1, §6.2, §6.4.
- * See DEVELOPMENT.md Task 5.2.
+ * See ARCHITECTURE.md §6.1, §6.2, §6.4.
  */
 typedef struct strand_runtime {
 	strand_worker_t   **workers;

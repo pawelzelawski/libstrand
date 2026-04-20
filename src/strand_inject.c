@@ -1,5 +1,5 @@
 /*
- * strand_inject.c - bounded MPSC inject ring buffer (Task 5.1).
+ * strand_inject.c - bounded MPSC inject ring buffer.
  *
  * Algorithm: Dmitry Vyukov's MPMC queue adapted for single-consumer use.
  * Each slot carries an atomic sequence number that acts as the exclusive
@@ -253,7 +253,7 @@ inject_queue_drain(strand_scheduler_t *sched)
 			 * Fiber was fully initialised by the host thread via
 			 * strand_runtime_spawn.  home_sched is already set.
 			 * Transition to RUNNABLE and push to run queue.
-			 * See ARCHITECTURE.md §6.4 and DEVELOPMENT.md Task 5.4.
+			 * See ARCHITECTURE.md §6.4.
 			 */
                         atomic_store(&item.u.fiber->state, FIBER_RUNNABLE);
                         run_queue_push(sched, item.u.fiber);

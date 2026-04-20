@@ -4,10 +4,6 @@
 /*
  * strand_poller.h - I/O poller internal interface.
  * epoll (Linux) and kqueue (OpenBSD). See ARCHITECTURE.md §5.
- *
- * Task 4.1: strand_poller_t definition and fd waiter hash table interface.
- * Task 4.3: poller_poll and event delivery.
- * Task 4.5: wakeup fd integration into poller.
  */
 
 #include "../include/strand.h"
@@ -170,9 +166,9 @@ int poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
  *
  * Sets f->io_result = result, transitions f to FIBER_RUNNABLE, and
  * pushes f onto sched's run queue.  Called from poller_deliver_event
- * (Task 4.3) and poller_cancel_io (Task 4.4).
+ * and poller_cancel_io.
  *
- * Must be called from the owning worker (same-worker path only in Phase 4).
+ * Must be called from the owning worker (same-worker path only).
  */
 void fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f,
                    int result);
@@ -217,8 +213,8 @@ void poller_poll(struct strand_scheduler *sched, int timeout_ms);
  *
  * The fd table entry is removed when both waiters are gone.
  *
- * Must be called from the owning worker (same-worker path only in Phase 4).
- * Cross-worker cancel is enqueued to the inject queue (Phase 5, Task 5.5).
+ * Must be called from the owning worker (same-worker path only).
+ * Cross-worker cancel is enqueued to the inject queue.
  * See ARCHITECTURE.md §5.8.
  */
 void poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f);
@@ -237,7 +233,7 @@ void poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f);
  * and skip fiber wakeup.  The actual drain happens in advance Step 3.
  *
  * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
- * See ARCHITECTURE.md §5 and DEVELOPMENT.md Task 4.5.
+ * See ARCHITECTURE.md §5.
  */
 int poller_register_wakeup_fd(strand_poller_t *p, int fd);
 

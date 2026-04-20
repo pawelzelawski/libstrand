@@ -1,5 +1,5 @@
 /*
- * tests/test_integration.c - integration test suite (Phase 7, Task 7.1)
+ * tests/test_integration.c - integration test suite 
  *
  * Cross-layer end-to-end tests that exercise realistic usage scenarios.
  * Each test is documented to serve as a usage example for libstrand.
@@ -22,7 +22,7 @@
  *   STRAND_LINUX   - test 7.9 uses Linux-specific epoll host loop
  *   STRAND_OPENBSD - test 7.9 and 7.10 use kqueue host loop
  *
- * See DEVELOPMENT.md Task 7.1, TESTING.md 7, ARCHITECTURE.md 4-7.
+ * See TESTING.md §7, ARCHITECTURE.md §4-7.
  */
 
 #include <errno.h>
@@ -62,7 +62,7 @@
 /*
  * strand_test_clock_ns - mock monotonic clock for STRAND_TEST_CLOCK builds.
  * Written directly by single-scheduler tests to control timer expiry without
- * real-time delays.  See strand_sched.c and DEVELOPMENT.md Task 3.7.
+ * real-time delays.  See strand_sched.c now_ns / STRAND_TEST_CLOCK.
  */
 extern uint64_t strand_test_clock_ns;
 
@@ -2224,7 +2224,7 @@ test_integration_stop_interrupts_worker(void)
 }
 
 /* =========================================================================
- * 13. Watchdog warning for long-running fibers (Task 7.3)
+ * 13. Watchdog warning for long-running fibers
  * =========================================================================
  */
 

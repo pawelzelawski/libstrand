@@ -10,7 +10,6 @@
  * Drive a scheduler from a host loop with strand_scheduler_advance().
  *
  * See ARCHITECTURE.md for the full five-layer design.
- * See DEVELOPMENT.md for the phased implementation plan.
  */
 
 #include <stddef.h>
@@ -50,7 +49,7 @@ typedef void (*strand_fiber_fn_t)(void *arg);
  * on failure.  The runtime trampoline captures the return value and passes
  * it to scope_child_finish, which performs the first-error CAS.  Fibers
  * spawned via strand_fiber_spawn (not scope-tracked) use strand_fiber_fn_t.
- * See ARCHITECTURE.md 7.1 and DEVELOPMENT.md Task 6.2.
+ * See ARCHITECTURE.md §7.1.
  */
 typedef int (*strand_scope_fiber_fn_t)(void *arg);
 
@@ -97,7 +96,7 @@ typedef void (*strand_destructor_t)(void *ptr);
  * Pass zero for any field to use the corresponding default.
  *
  * budget      - max fibers to run per strand_scheduler_advance call.
- * inject_cap  - inject queue capacity (Phase 5; ignored in Phase 3).
+ * inject_cap  - inject queue capacity; must be a power of 2.
  * cache_cap   - stack cache hard cap (stacks per worker).
  * idle_floor  - stack cache idle reclamation floor.
  * watchdog_threshold_ns - debug watchdog: if a fiber runs for longer than
@@ -195,10 +194,9 @@ int strand_scheduler_get_fd(const strand_scheduler_t *sched);
 /*
  * strand_fiber_spawn - spawn a new fiber on sched.
  *
- * In Phase 3 (single-worker), must be called from inside a running fiber
- * (sched->current_fiber != NULL).  Host-thread spawning is added in
- * Phase 5 (Task 5.4).  Returns STRAND_ERR_WRONGCTX if called from the
- * host thread.
+ * Must be called from inside a running fiber (sched->current_fiber != NULL).
+ * Host-thread spawning uses strand_runtime_spawn.
+ * Returns STRAND_ERR_WRONGCTX if called from the host thread.
  *
  * fn       - fiber entry function; called as fn(arg)
  * arg      - argument passed to fn; ownership is the caller's
@@ -596,7 +594,7 @@ int strand_scope_open(strand_scheduler_t *sched, strand_scope_t *scope);
  * Returns STRAND_ERR_WRONGCTX if called from a host thread.
  * Returns STRAND_ERR_SHUTDOWN if the scheduler has been stopped.
  * Returns STRAND_ERR_NOMEM on allocation failure.
- * See ARCHITECTURE.md 7.1 and DEVELOPMENT.md Task 6.2.
+ * See ARCHITECTURE.md §7.1.
  */
 int strand_scope_spawn(strand_scheduler_t *sched, strand_scope_t *scope,
                        strand_scope_fiber_fn_t fn, void *arg,

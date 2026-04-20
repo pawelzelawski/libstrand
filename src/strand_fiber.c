@@ -221,7 +221,7 @@ strand_fiber_entry_start(void *varg)
  * Checks the top cache slot first.  If it has a matching size, pops and
  * returns it (LIFO cache hit).  Otherwise calls the raw stack_alloc.
  * Only the top slot is checked - different-sized stacks cannot be used
- * interchangeably (ARCHITECTURE.md §13, DEVELOPMENT.md §3.9).
+ * interchangeably (ARCHITECTURE.md §13).
  * See ARCHITECTURE.md §13.
  */
 void *
@@ -340,8 +340,8 @@ fiber_free(strand_fiber_t **dead_pool, strand_fiber_t *f)
 /* ---------------------------------------------------------------------------
  * strand_fiber_spawn - spawn a new fiber on a scheduler.
  *
- * Phase 3 within-worker path only.  Host-thread spawning (via the inject
- * queue) is added in Phase 5 (Task 5.4).
+ * Within-worker spawn path.  Host-thread spawning uses the inject queue
+ * (see strand_runtime.c).
  *
  * Returns STRAND_OK on success; *out receives the handle.
  * Returns STRAND_ERR_SHUTDOWN if the scheduler has been stopped.
@@ -365,10 +365,10 @@ strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 		return (STRAND_ERR_SHUTDOWN);
 
 	/*
-	 * Phase 3: only same-worker (within-fiber) spawning is supported.
+	 * Only same-worker (within-fiber) spawning is supported here.
 	 * current_fiber is NULL when the caller is the host thread / scheduler
-	 * context.  Host-thread spawning via the inject queue is Task 5.4.
-	 * Reading current_fiber without a lock is safe in Phase 3's
+	 * context.  Host-thread spawning uses the inject queue.
+	 * Reading current_fiber without a lock is safe in the
 	 * single-worker model.
 	 */
 	if (sched->current_fiber == NULL)
@@ -532,7 +532,7 @@ strand_fiber_yield(strand_scheduler_t *sched)
  * heap and puts the fiber back into the run queue.
  *
  * On return, the cancel_pending flag is checked and cleared.  If it was set
- * (by a concurrent strand_fiber_cancel - Task 3.8), STRAND_CANCELLED is
+ * (by a concurrent strand_fiber_cancel), STRAND_CANCELLED is
  * returned.  Otherwise STRAND_OK.
  *
  * Must be called from inside a running fiber.  Debug builds assert this.
@@ -575,7 +575,7 @@ strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns)
 
 	/*
 	 * Check and clear the cancellation flag atomically.
-	 * If strand_fiber_cancel (Task 3.8) set this flag before we resumed,
+	 * If strand_fiber_cancel set this flag before we resumed,
 	 * return STRAND_CANCELLED so the caller can propagate cancellation.
 	 * The exchange clears the flag so subsequent park calls start clean.
 	 */
@@ -587,8 +587,8 @@ strand_fiber_sleep_until(strand_scheduler_t *sched, uint64_t deadline_ns)
 /* ---------------------------------------------------------------------------
  * strand_fiber_cancel - cancel a fiber by ABA-safe handle.
  *
- * Phase 3: timer and run-queue states.
- * Phase 4 (Task 4.4): I/O parked states (FIBER_PARKED_IO_READ/WRITE).
+ * Handles timer, run-queue, I/O-parked, offload-parked, and scope-parked
+ * states.
  * See ARCHITECTURE.md §8.1 and the doc comment in include/strand.h.
  * ---------------------------------------------------------------------------
  */
@@ -617,7 +617,7 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 		 * pushed to the target scheduler's inject queue and processed in
 		 * Step 1 of strand_scheduler_advance on the owning worker.
 		 * Post-return fd-freedom guarantees do not apply until processed.
-		 * See ARCHITECTURE.md §5.3 and DEVELOPMENT.md Task 5.5.
+		 * See ARCHITECTURE.md §5.3.
 		 */
 		item.type = INJECT_CANCEL;
 		item.u.cancel_handle = handle;
@@ -680,7 +680,7 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 		 * Remove the fiber from the fd waiter table, adjust the OS
 		 * registration (MOD to remaining direction or DEL), and wake
 		 * the fiber with STRAND_CANCELLED.
-		 * See ARCHITECTURE.md §5.8 and DEVELOPMENT.md Task 4.4.
+		 * See ARCHITECTURE.md §5.8.
 		 */
 		poller_cancel_io(sched, f);
 		break;
@@ -756,7 +756,7 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
                 /*
                  * Fiber is parked in strand_scope_wait.  Wake it with
                  * cancel_pending set so scope_wait returns STRAND_CANCELLED.
-                 * See ARCHITECTURE.md 7.4 and DEVELOPMENT.md Task 6.5.
+                 * See ARCHITECTURE.md §7.4.
                  */
                 atomic_store(&f->cancel_pending, 1);
                 atomic_store(&f->state, FIBER_RUNNABLE);

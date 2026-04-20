@@ -14,7 +14,7 @@
  *   strand_inspect_dump(sched, stdout);
  *
  * Built by `make tools`.  Links against libstrand.a.
- * See REPOSITORY_STRUCTURE.md §6 and DEVELOPMENT.md Task 7.4.
+ * See REPOSITORY_STRUCTURE.md §6.
  */
 
 #include <inttypes.h>
