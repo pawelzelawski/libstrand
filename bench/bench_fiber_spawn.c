@@ -156,7 +156,7 @@ bench_spawn_cold(void)
 	memset(&a, 0, sizeof(a));
 	a.sched    = sched;
 	a.iters    = SPAWN_ITERS;
-	a.stack_sz = 0; /* default size — same as warm, only cache is disabled */
+	a.stack_sz = 0; /* default size - same as warm, only cache is disabled */
 
 	if (push_root_fiber(sched, spawner_fiber, &a) != 0) {
 		fprintf(stderr, "push_root_fiber failed\n");
@@ -192,7 +192,7 @@ bench_spawn_warm(void)
 	memset(&a, 0, sizeof(a));
 	a.sched    = sched;
 	a.iters    = SPAWN_ITERS;
-	a.stack_sz = 0; /* default size — matches cache entries */
+	a.stack_sz = 0; /* default size - matches cache entries */
 
 	if (push_root_fiber(sched, spawner_fiber, &a) != 0) {
 		fprintf(stderr, "push_root_fiber failed\n");

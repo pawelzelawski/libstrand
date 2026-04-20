@@ -1,8 +1,8 @@
 /*
- * tests/test_layer4.c - Layer 4 (Phase 5) test suite.
+ * tests/test_layer4.c - Layer 4 test suite.
  *
- * Task 5.1: bounded MPSC inject ring buffer tests.
- * Tasks 5.2/5.3/5.4: strand_runtime_t, strand_worker_start, host-thread spawn.
+ * Bounded MPSC inject ring buffer tests.
+ * strand_runtime_t, strand_worker_start, host-thread spawn.
  *
  * See DEVELOPMENT.md §"Tests for Phase 5", TESTING.md §2.4.
  */
@@ -1054,7 +1054,7 @@ test_stopped_worker_excluded_roundrobin(void)
  *
  * This directly exercises the "wakeup write" path in strand_poller.c that
  * is triggered whenever an item is pushed to a sleeping worker's inject
- * queue.  See DEVELOPMENT.md "test_cross_worker_wakeup".
+ * queue.
  * -------------------------------------------------------------------------
  */
 typedef struct {
@@ -1140,7 +1140,7 @@ test_cross_worker_wakeup(void)
  *
  * Offload a function that writes a known value to result_slot.
  * Verify the fiber receives STRAND_OK and the correct result.
- * See DEVELOPMENT.md "test_offload_result_delivered".
+ *
  * -------------------------------------------------------------------------
  */
 
@@ -1237,7 +1237,7 @@ test_offload_result_delivered(void)
  * submit offload_fn_block which spins on g_eagain_release.  Both items
  * become outstanding (one in-flight, one queued).  A third fiber then
  * calls offload and must see STRAND_EAGAIN.
- * See DEVELOPMENT.md "test_offload_eagain_when_full".
+ *
  * -------------------------------------------------------------------------
  */
 
@@ -1360,7 +1360,7 @@ test_offload_eagain_when_full(void)
  * Verify:
  *   - fiber resumes with STRAND_CANCELLED
  *   - result_slot is not written (remains sentinel value)
- * See DEVELOPMENT.md "test_offload_cancelled_wins".
+ *
  * -------------------------------------------------------------------------
  */
 
@@ -1478,7 +1478,7 @@ test_offload_cancelled_wins(void)
  *
  * Arrange for RESULT_CLAIMED CAS to win: let the offload complete normally,
  * then (after completion) call cancel.  Fiber must receive STRAND_OK.
- * See DEVELOPMENT.md "test_offload_result_claimed_wins".
+ *
  * -------------------------------------------------------------------------
  */
 
@@ -1574,7 +1574,7 @@ test_offload_result_claimed_wins(void)
  * Run both CAS outcome paths (RESULT_CLAIMED and CANCELLED) in sequence and
  * verify no double-free and no leak.  Valgrind (--leak-check=full) is the
  * definitive gate; this test provides the execution paths.
- * See DEVELOPMENT.md "test_offload_refcount_released_exactly_once".
+ *
  * -------------------------------------------------------------------------
  */
 static int
@@ -1603,7 +1603,7 @@ test_offload_refcount_released_exactly_once(void)
  * arg is a heap-allocated counter; the offload function increments it in
  * a loop while the cancel races in.  After the offload thread exits we
  * verify the counter was modified (proving the thread ran after cancel).
- * See DEVELOPMENT.md "test_offload_arg_outlives_cancel".
+ *
  * -------------------------------------------------------------------------
  */
 
@@ -1752,7 +1752,7 @@ test_offload_arg_outlives_cancel(void)
  * the pool drains and the offload eventually succeeds.
  *
  * This validates the recommended "yield-then-retry" idiom described in
- * DEVELOPMENT.md "test_offload_yield_retry_pattern".
+ * EAGAIN recovery on a full offload pool.
  * -------------------------------------------------------------------------
  */
 
@@ -1895,6 +1895,129 @@ test_offload_yield_retry_pattern(void)
  * Suite runner
  * -------------------------------------------------------------------------
  */
+/* -------------------------------------------------------------------------
+ * test_worker_get_scheduler
+ * strand_worker_get_scheduler returns the worker's non-NULL scheduler.
+ * -------------------------------------------------------------------------
+ */
+static int
+test_worker_get_scheduler(void)
+{
+	strand_runtime_t   *rt;
+	strand_worker_t    *w;
+	strand_scheduler_t *sched;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	w = make_test_worker(rt);
+	if (w == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	sched = strand_worker_get_scheduler(w);
+	if (sched == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/* Verify it matches the internal field. */
+	if (sched != w->sched) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	strand_runtime_destroy(rt);
+	return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * test_fiber_self_scheduler_inside_fiber
+ * strand_fiber_self_scheduler returns non-NULL from inside a running fiber.
+ * -------------------------------------------------------------------------
+ */
+typedef struct {
+	strand_scheduler_t *self_sched;
+	_Atomic int         done;
+} self_sched_args_t;
+
+static void
+self_sched_fiber(void *arg)
+{
+	self_sched_args_t *a = arg;
+
+	a->self_sched = strand_fiber_self_scheduler();
+	atomic_store(&a->done, 1);
+}
+
+static int
+test_fiber_self_scheduler_inside_fiber(void)
+{
+	strand_runtime_t   *rt;
+	strand_worker_t    *w;
+	self_sched_args_t   args;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+
+	w = make_test_worker(rt);
+	if (w == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	memset(&args, 0, sizeof(args));
+	atomic_init(&args.done, 0);
+
+	if (strand_runtime_spawn(rt, self_sched_fiber, &args, 0, NULL,
+	    NULL) != STRAND_OK) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/* Poll until fiber completes (worker thread drives it). */
+	for (int i = 0; i < 5000; i++) {
+		if (atomic_load_explicit(&args.done, memory_order_acquire))
+			break;
+		test_sleep_1ms();
+	}
+
+	if (!atomic_load(&args.done)) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	/* Must be non-NULL and match the worker's scheduler. */
+	if (args.self_sched == NULL) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+	if (args.self_sched != w->sched) {
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+
+	strand_runtime_destroy(rt);
+	return (0);
+}
+
+/* -------------------------------------------------------------------------
+ * test_fiber_self_scheduler_host_thread
+ * strand_fiber_self_scheduler returns NULL from the host thread.
+ * -------------------------------------------------------------------------
+ */
+static int
+test_fiber_self_scheduler_host_thread(void)
+{
+	strand_scheduler_t *sched;
+
+	sched = strand_fiber_self_scheduler();
+	return (sched == NULL) ? 0 : 1;
+}
+
 void
 run_layer4_tests(void)
 {
@@ -1938,5 +2061,11 @@ run_layer4_tests(void)
             test_offload_arg_outlives_cancel);
         RUN("test_offload_yield_retry_pattern",
             test_offload_yield_retry_pattern);
+        RUN("test_worker_get_scheduler",
+            test_worker_get_scheduler);
+        RUN("test_fiber_self_scheduler_inside_fiber",
+            test_fiber_self_scheduler_inside_fiber);
+        RUN("test_fiber_self_scheduler_host_thread",
+            test_fiber_self_scheduler_host_thread);
 }
 

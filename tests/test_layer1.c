@@ -1,5 +1,5 @@
 /*
- * tests/test_layer1.c - Layer 1 (Phase 2) test suite.
+ * tests/test_layer1.c - Layer 1 test suite.
  *
  * Tests the raw context switch in isolation: strand_context_switch,
  * strand_context_init, stack allocation with guard pages, register
@@ -7,7 +7,7 @@
  * and documentation correctness.
  *
  * No scheduler, no run queue - purely Layer 1 primitives.
- * See DEVELOPMENT.md §"Tests for Phase 2".
+ * See TESTING.md §1.
  */
 
 #include <errno.h>

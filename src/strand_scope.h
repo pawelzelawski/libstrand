@@ -11,7 +11,7 @@
 #include "../include/strand.h"
 #include "strand_internal.h"
 
-/* strand_scope_t defined in strand_internal.h (Task 6.1). */
+/* strand_scope_t defined in strand_internal.h. */
 
 /*
  * scope_trampoline_t - heap-allocated per-spawn context for scope-tracked
@@ -38,8 +38,7 @@ typedef struct scope_trampoline {
  * and wakes the parent fiber if it is parked in FIBER_PARKED_SCOPE.
  *
  * retval == 0  : child succeeded.
- * retval != 0  : child failed; CAS first_error; initiate cancellation walk
- *                (Task 6.4 stub - walk not yet implemented).
+ * retval != 0  : child failed; CAS first_error; initiate cancellation walk.
  *
  * Must be called from the completing fiber's trampoline, on the same worker
  * thread as the scope's parent.  sched is the owning scheduler.

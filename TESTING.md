@@ -710,7 +710,7 @@ Actual results on specific hardware will differ.
   are consistent with production expectations for event-loop-based I/O.
 
 - **Cross-worker wakeup on Linux**: The 7.9 µs exceeds the 5 µs target due
-  to Linux CFS scheduler wakeup latency — a known platform characteristic
+  to Linux CFS scheduler wakeup latency - a known platform characteristic
   documented in ARCHITECTURE.md §6.3.1. The target is met on OpenBSD (3.0 µs).
   This latency is only relevant when cross-worker cancellation is on the hot
   path at very high frequency, which is not the common case for the target
@@ -863,7 +863,5 @@ when the test passes cleanly with no Valgrind or ASan errors on both platforms.
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: 2026-04-18
 **See Also**: PROJECT.md, ARCHITECTURE.md, TECH_STACK.md, CODING_STANDARDS.md,
 DEVELOPMENT.md, REPOSITORY_STRUCTURE.md

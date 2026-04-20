@@ -1,5 +1,5 @@
 /*
- * tests/test_layer3.c - Layer 3 (Phase 4) test suite.
+ * tests/test_layer3.c - Layer 3 test suite.
  *
  * Tests fd parking, epoll/kqueue event delivery, post-re-arm readiness check,
  * cancellation, error/hangup/EOF events, and scheduler stop while I/O parked.
@@ -12,7 +12,7 @@
  *   STRAND_OPENBSD - EV_DISPATCH/EV_EOF-specific tests
  *   STRAND_DEBUG   - O_NONBLOCK assertion test (uses fork/SIGABRT)
  *
- * See DEVELOPMENT.md §"Tests for Phase 4", TESTING.md §2.4, §5.2, §6.1, §6.2.
+ * See TESTING.md §2.4, §5.2, §6.1, §6.2.
  */
 
 #include <fcntl.h>
@@ -746,7 +746,7 @@ test_same_worker_readiness_wins(void)
  * strand_scheduler_stop from a second thread.  Verify the scheduler run
  * loop returns within a bounded time.
  *
- * This tests that the wakeup fd is registered with the poller (Task 4.5)
+ * This tests that the wakeup fd is registered with the poller
  * so that stop's write to the wakeup fd interrupts the blocking
  * epoll_wait / kevent inside strand_scheduler_run.
  *
@@ -1751,7 +1751,7 @@ cwcw_cancel_thread(void *varg)
          * Call strand_fiber_cancel from a different thread.  This exercises
          * the cross-worker inject path: pthread_self() != sched->owner_thread,
          * so the cancel is enqueued to the target scheduler's inject queue.
-         * See ARCHITECTURE.md 5.3 and DEVELOPMENT.md Task 5.5.
+         * See ARCHITECTURE.md 5.3.
          */
         (void)strand_fiber_cancel(a->handle);
 

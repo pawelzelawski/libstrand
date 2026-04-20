@@ -1,5 +1,5 @@
 /*
- * tests/test_integration.c - integration test suite (Phase 7, Task 7.1)
+ * tests/test_integration.c - integration test suite 
  *
  * Cross-layer end-to-end tests that exercise realistic usage scenarios.
  * Each test is documented to serve as a usage example for libstrand.
@@ -22,7 +22,7 @@
  *   STRAND_LINUX   - test 7.9 uses Linux-specific epoll host loop
  *   STRAND_OPENBSD - test 7.9 and 7.10 use kqueue host loop
  *
- * See DEVELOPMENT.md Task 7.1, TESTING.md 7, ARCHITECTURE.md 4-7.
+ * See TESTING.md §7, ARCHITECTURE.md §4-7.
  */
 
 #include <errno.h>
@@ -62,7 +62,7 @@
 /*
  * strand_test_clock_ns - mock monotonic clock for STRAND_TEST_CLOCK builds.
  * Written directly by single-scheduler tests to control timer expiry without
- * real-time delays.  See strand_sched.c and DEVELOPMENT.md Task 3.7.
+ * real-time delays.  See strand_sched.c now_ns / STRAND_TEST_CLOCK.
  */
 extern uint64_t strand_test_clock_ns;
 
@@ -2224,6 +2224,98 @@ test_integration_stop_interrupts_worker(void)
 }
 
 /* =========================================================================
+ * 13. Watchdog warning for long-running fibers
+ * =========================================================================
+ */
+
+/*
+ * Fiber that busy-spins briefly to trigger the debug watchdog.
+ */
+static void
+watchdog_spin_fiber(void *arg)
+{
+        volatile int *done = arg;
+        /*
+         * Spin for ~5 ms.  With a 1 ns threshold the watchdog will fire.
+         */
+        struct timespec ts;
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        uint64_t start = (uint64_t)ts.tv_sec * 1000000000ULL +
+                         (uint64_t)ts.tv_nsec;
+        for (;;) {
+                clock_gettime(CLOCK_MONOTONIC, &ts);
+                uint64_t now = (uint64_t)ts.tv_sec * 1000000000ULL +
+                               (uint64_t)ts.tv_nsec;
+                if (now - start > 5000000ULL) /* 5 ms */
+                        break;
+        }
+        *done = 1;
+}
+
+static int
+test_integration_watchdog_warning(void)
+{
+        int fds[2];
+        if (pipe(fds) != 0)
+                return (1);
+
+        /* Redirect stderr to the pipe write end. */
+        int saved_stderr = dup(STDERR_FILENO);
+        dup2(fds[1], STDERR_FILENO);
+
+        strand_sched_config_t cfg = {
+            .budget     = 64,
+            .inject_cap = 256,
+            .cache_cap  = 8,
+            .idle_floor = 2,
+            .watchdog_threshold_ns = 1, /* 1 ns - guaranteed to trigger */
+        };
+        strand_scheduler_t *sched = strand_scheduler_create(&cfg);
+        if (sched == NULL) {
+                dup2(saved_stderr, STDERR_FILENO);
+                close(saved_stderr);
+                close(fds[0]);
+                close(fds[1]);
+                return (1);
+        }
+
+        volatile int done = 0;
+        if (push_root_fiber(sched, watchdog_spin_fiber, (void *)&done) != 0) {
+                strand_scheduler_destroy(sched);
+                dup2(saved_stderr, STDERR_FILENO);
+                close(saved_stderr);
+                close(fds[0]);
+                close(fds[1]);
+                return (1);
+        }
+
+        strand_scheduler_advance(sched, NULL);
+
+        /* Restore stderr and close write end so read sees EOF. */
+        fflush(stderr);
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stderr);
+        close(fds[1]);
+
+        /* Read captured output. */
+        char buf[1024];
+        ssize_t n = read(fds[0], buf, sizeof(buf) - 1);
+        close(fds[0]);
+
+        strand_scheduler_destroy(sched);
+
+        if (!done)
+                return (1);
+        if (n <= 0)
+                return (1);
+        buf[n] = '\0';
+        if (strstr(buf, "strand: watchdog:") == NULL)
+                return (1);
+
+        return (0);
+}
+
+/* =========================================================================
  * Suite entry point
  * =========================================================================
  */
@@ -2270,5 +2362,8 @@ run_integration_tests(void)
         if (n == 0 || n == 12)
         RUN("test_integration_stop_interrupts_worker",
             test_integration_stop_interrupts_worker);
+        if (n == 0 || n == 13)
+        RUN("test_integration_watchdog_warning",
+            test_integration_watchdog_warning);
 }
 

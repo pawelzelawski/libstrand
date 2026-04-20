@@ -1,11 +1,6 @@
 /*
  * strand_poller.c - I/O multiplexing: epoll (Linux) and kqueue (OpenBSD).
  * See ARCHITECTURE.md §5.
- *
- * Task 4.1: strand_poller_t and fd waiter hash table implementation.
- * Task 4.2: strand_fiber_wait_readable / strand_fiber_wait_writable.
- * Task 4.3: poller_poll and event delivery.
- * Task 4.5: wakeup fd integration into poller.
  */
 
 #include "strand_poller.h"
@@ -426,7 +421,7 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
  *
  * Sets io_result on the fiber, transitions state to FIBER_RUNNABLE, and
  * appends the fiber to the scheduler run queue.  Called from
- * poller_deliver_event (Task 4.3) and poller_cancel_io (Task 4.4).
+ * poller_deliver_event and poller_cancel_io.
  *
  * Must be called from the owning worker.
  * ---------------------------------------------------------------------------
@@ -463,7 +458,7 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 {
 	strand_fiber_t    *f;
 	strand_fd_entry_t *e;
-	int                inserted, rc;
+	int                inserted, rc = 0;
 
 	STRAND_DEBUG_ASSERT(sched != NULL);
 	STRAND_DEBUG_ASSERT(sched->current_fiber != NULL);
@@ -494,7 +489,6 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 #endif
 
 	inserted = 0;
-	rc = STRAND_ERR_IO;
 	e = fd_table_lookup(sched->poller, fd);
 	if (e == NULL) {
 		e = fd_table_insert(sched->poller, fd);
@@ -890,8 +884,7 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 		/*
 		 * No remaining waiters: remove the fd from epoll entirely.
 		 * Errors are ignored - the fd may have been closed concurrently
-		 * by the application (same-worker path only here; cross-worker
-		 * close races are a Phase 5 concern).
+		 * by the application (same-worker path only here).
 		 */
 		if (e->reg_state != FD_REG_NOT_REGISTERED) {
 			(void)epoll_ctl(p->pollfd, EPOLL_CTL_DEL, fd, NULL);
@@ -938,7 +931,7 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 	 * as the delivery sentinel.
  *
  * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
- * See ARCHITECTURE.md §5 and DEVELOPMENT.md Task 4.5.
+ * See ARCHITECTURE.md §5.
  * ---------------------------------------------------------------------------
  */
 int

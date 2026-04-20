@@ -10,6 +10,8 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>     /* fprintf - debug watchdog warnings */
+#include <inttypes.h>  /* PRIu64 */
 #include <stdlib.h>
 #include <string.h>
 #include <time.h> /* clock_gettime, CLOCK_MONOTONIC */
@@ -215,6 +217,10 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	sched->run_queue_len = 0;
 	sched->current_fiber = NULL;
 	sched->dead_pool = NULL;
+	sched->watchdog_threshold_ns =
+	    (cfg != NULL && cfg->watchdog_threshold_ns != 0)
+	        ? cfg->watchdog_threshold_ns
+	        : STRAND_DEFAULT_WATCHDOG_NS;
 	sched->poller = poller_create(0);
 	if (sched->poller == NULL) {
 		inject_queue_destroy(&sched->inject_queue);
@@ -228,7 +234,7 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	/*
 	 * Register the wakeup fd with the poller so that a write by
 	 * strand_scheduler_stop unblocks a blocked epoll_wait / kevent.
-	 * See ARCHITECTURE.md §5 and DEVELOPMENT.md Task 4.5.
+	 * See ARCHITECTURE.md §5.
 	 */
 #ifdef STRAND_LINUX
 	if (poller_register_wakeup_fd(sched->poller, sched->wakeup_fd) !=
@@ -356,6 +362,24 @@ now_ns(void)
 	return ((uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec);
 }
 #endif /* STRAND_TEST_CLOCK */
+
+#ifdef STRAND_DEBUG
+/*
+ * now_ns_real -- always return real CLOCK_MONOTONIC time in nanoseconds.
+ *
+ * Unlike now_ns(), this function is never overridden by STRAND_TEST_CLOCK.
+ * Used by the debug watchdog to measure wall-clock fiber run time even in
+ * test builds where now_ns() returns a mock value.
+ */
+static uint64_t
+now_ns_real(void)
+{
+	struct timespec ts;
+	// NOLINTNEXTLINE(misc-include-cleaner)
+	(void)clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec);
+}
+#endif /* STRAND_DEBUG */
 
 /*
  * heap_swap -- exchange two entries in the timer heap.
@@ -546,7 +570,7 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	size_t ran;
 	strand_fiber_t *f;
 
-	/* Phase 3 same-worker bookkeeping: current caller owns scheduler access. */
+	/* Same-worker bookkeeping: current caller owns scheduler access. */
 	sched->owner_thread = pthread_self();
 
 	/*
@@ -590,7 +614,7 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	 * Step 1: drain injected cross-worker items (bounded MPSC ring buffer).
 	 * Handles INJECT_CANCEL items by calling strand_fiber_cancel.
 	 * Additional item types (INJECT_SPAWN, INJECT_OFFLOAD_COMPLETE) are
-	 * added in Phase 5 Tasks 5.4 and 5.8.
+	 * also handled here.
 	 * See ARCHITECTURE.md §6.3.
 	 */
 	inject_queue_drain(sched);
@@ -633,7 +657,38 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 		atomic_store_explicit(&f->state, FIBER_RUNNING,
 		                      memory_order_relaxed);
 		sched->current_fiber = f;
+
+#ifdef STRAND_DEBUG
+		/*
+		 * Debug watchdog - record wall time before fiber starts.
+		 * After the fiber yields or finishes, check elapsed time
+		 * against watchdog_threshold_ns.  If exceeded, emit a
+		 * warning to stderr.  Watchdog does not preempt.
+			 * See ARCHITECTURE.md §11.2.
+		 */
+		{
+			uint64_t wd_start = now_ns_real();
+#endif
 		strand_context_switch(&sched->scheduler_ctx, f);
+#ifdef STRAND_DEBUG
+			{
+				uint64_t wd_elapsed = now_ns_real() - wd_start;
+				if (wd_elapsed >
+				    sched->watchdog_threshold_ns) {
+					fprintf(stderr,
+					    "strand: watchdog: fiber %p "
+					    "(gen %" PRIu64 ") ran for "
+					    "%" PRIu64 " ms without "
+					    "yielding (threshold %" PRIu64
+					    " ms)\n",
+					    (void *)f, f->generation,
+					    (uint64_t)(wd_elapsed / 1000000ULL),
+					    (uint64_t)(sched->watchdog_threshold_ns /
+					        1000000ULL));
+				}
+			}
+		}
+#endif
 		sched->current_fiber = NULL;
 
 		/*
@@ -727,7 +782,7 @@ strand_scheduler_next_deadline(const strand_scheduler_t *sched)
 /* ---------------------------------------------------------------------------
  * strand_scheduler_get_fd -- return the scheduler activity fd for host loops.
  *
- * In Phase 4 this is the internal poller fd (epoll on Linux, kqueue on
+ * Returns the internal poller fd (epoll on Linux, kqueue on
  * OpenBSD), not the raw wakeup channel.  The poller fd becomes readable when
  * any scheduler event is pending: libstrand-managed I/O readiness, wakeup
  * control writes (stop/cross-worker), or other poller-delivered activity.
@@ -742,6 +797,23 @@ strand_scheduler_get_fd(const strand_scheduler_t *sched)
 	if (sched == NULL || sched->poller == NULL)
 		return (-1);
 	return (sched->poller->pollfd);
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_fiber_self_scheduler -- return the calling fiber's home scheduler.
+ *
+ * Uses the __thread-local current_sched pointer set by strand_scheduler_advance
+ * when a fiber is resumed.  Returns NULL if called from outside a fiber context.
+ * See ARCHITECTURE.md §12.
+ * ---------------------------------------------------------------------------
+ */
+strand_scheduler_t *
+strand_fiber_self_scheduler(void)
+{
+	strand_scheduler_t *sched = strand_sched_current_tls;
+	if (sched == NULL || sched->current_fiber == NULL)
+		return (NULL);
+	return (sched);
 }
 
 /* ---------------------------------------------------------------------------
@@ -799,8 +871,8 @@ strand_scheduler_stop(strand_scheduler_t *sched)
  * the next timer deadline expires or strand_scheduler_stop writes a byte
  * to the wakeup fd.  Returns only after stop_flag is set.
  *
- * In Phase 4 the idle wait is replaced with the real poller (epoll/kqueue
- * fd from strand_poller_t) so that I/O readiness also wakes the worker.
+ * The idle wait uses the real poller (epoll/kqueue fd from strand_poller_t)
+ * so that I/O readiness also wakes the worker.
  * See ARCHITECTURE.md §4.2.
  * ---------------------------------------------------------------------------
  */
@@ -811,7 +883,6 @@ strand_scheduler_stop(strand_scheduler_t *sched)
  *
  * Used internally by tests and by strand_sched_current() to retrieve the
  * current worker's scheduler without requiring a fiber descriptor pointer.
- * See DEVELOPMENT.md Task 5.3.
  */
 _Thread_local strand_scheduler_t *strand_sched_current_tls = NULL;
 
@@ -826,10 +897,8 @@ strand_scheduler_run(strand_scheduler_t *sched)
         strand_sched_current_tls = sched;
 
         /*
-         * In Phase 3, no context switches to user fibers happen in this test,
-         * so no TSan rebinding is needed here.  Multi-worker TSan setup is
-         * deferred to Phase 5 (Task 5.3) where the worker-thread lifecycle
-         * is fully defined.
+         * Rebind the scheduler context's TSan fiber handle to the worker
+         * thread so TSan correctly tracks happens-before across fiber switches.
          */
 
         /* Worker mode establishes scheduler ownership for same-worker APIs. */
@@ -863,7 +932,7 @@ strand_scheduler_run(strand_scheduler_t *sched)
 		/*
 		 * Idle: compute timeout from the next timer deadline, then
 		 * block on the poller.  strand_scheduler_stop writes to the
-		 * wakeup fd (registered with the poller in Task 4.5), which
+		 * wakeup fd (registered with the poller), which
 		 * unblocks epoll_wait / kevent.  I/O readiness on any fiber
 		 * fd also unblocks the wait and delivers events.
 		 * See ARCHITECTURE.md §4.2.

@@ -147,7 +147,7 @@ offload_thread_worker(void *varg)
 
 /* ---------------------------------------------------------------------------
  * strand_offload_pool_init - create the global offload thread pool.
- * See ARCHITECTURE.md 6.5 and DEVELOPMENT.md Task 5.6.
+ * See ARCHITECTURE.md 6.5.
  * ---------------------------------------------------------------------------
  */
 strand_offload_pool_t *
@@ -211,7 +211,7 @@ strand_offload_pool_init(size_t thread_count)
 
 /* ---------------------------------------------------------------------------
  * strand_offload_pool_destroy - shut down pool and join all threads.
- * See ARCHITECTURE.md 6.5 and DEVELOPMENT.md Task 5.6.
+ * See ARCHITECTURE.md 6.5.
  * ---------------------------------------------------------------------------
  */
 void
@@ -238,7 +238,7 @@ strand_offload_pool_destroy(strand_offload_pool_t *pool)
 
 /* ---------------------------------------------------------------------------
  * strand_fiber_offload - park calling fiber and run fn on an offload thread.
- * See ARCHITECTURE.md 6.5, 6.6, 6.7 and DEVELOPMENT.md Tasks 5.7, 5.8.
+ * See ARCHITECTURE.md 6.5, 6.6, 6.7.
  *
  * Returns:
  *   STRAND_OK              - fn completed; result written to result_slot.

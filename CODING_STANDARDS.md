@@ -973,6 +973,4 @@ Before every commit:
 
 ---
 
-**Document Version**: 1.0
-**Last Updated**: 2026-03-28
 **See Also**: PROJECT.md, ARCHITECTURE.md, TECH_STACK.md, DEVELOPMENT.md

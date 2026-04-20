@@ -1,5 +1,5 @@
 /*
- * tests/test_layer5.c - Layer 5 (Phase 6) test suite.
+ * tests/test_layer5.c - Layer 5 test suite.
  *
  * Tasks 6.2, 6.3, 6.4, 6.5, 6.6, 6.7: strand_scope_open, strand_scope_spawn,
  * scope_child_finish, strand_scope_wait, scope_walk_cancel,
@@ -20,7 +20,7 @@
  *   test_scope_wait_timeout_fires
  *   test_scope_wait_timeout_scope_completed
  *
- * See DEVELOPMENT.md "Tests for Phase 6" and TESTING.md §5.
+ * See TESTING.md §5.
  */
 
 #include <stdatomic.h>
@@ -41,7 +41,7 @@
 /*
  * strand_test_clock_ns - mock monotonic clock used by the scheduler when
  * built with -DSTRAND_TEST_CLOCK.  Set directly in tests to control timer
- * expiry without real-time delays.  See DEVELOPMENT.md Task 3.7.
+ * expiry without real-time delays.  See strand_sched.c now_ns / STRAND_TEST_CLOCK.
  */
 extern uint64_t strand_test_clock_ns;
 
@@ -650,7 +650,7 @@ test_scope_first_error_wins(void)
 }
 
 /* =========================================================================
- * Tests for Task 6.4 (cancellation walk) and Task 6.7 (strand_scope_cancel)
+ * Tests for cancellation walk and strand_scope_cancel
  * =========================================================================
  */
 
@@ -1111,7 +1111,7 @@ test_reverse_spawn_order_cancellation(void)
 
 
 /* =========================================================================
- * Tests for Task 6.6: strand_scope_wait_timeout
+ * Tests for strand_scope_wait_timeout
  * =========================================================================
  *//* -------------------------------------------------------------------------
  * Test: timeout fires before scope completes.
@@ -1330,7 +1330,7 @@ test_scope_wait_timeout_scope_completed(void)
 }
 
 /* =========================================================================
- * Tests for Task 6.8 (strand_scope_abandon) and Task 6.9
+ * Tests for strand_scope_abandon and cross-worker scope cancel
  * (strand_fiber_spawn_detached)
  * =========================================================================
  */
@@ -1629,7 +1629,7 @@ test_spawn_detached_no_scope(void)
 }
 
 /* =========================================================================
- * Remaining tests required by DEVELOPMENT.md §"Tests for Phase 6"
+ * Additional scope tests
  * =========================================================================
  */
 

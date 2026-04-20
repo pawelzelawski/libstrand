@@ -84,10 +84,9 @@ fp_ctrl_set(uint64_t ctrl)
  *      control state it had when it was last suspended).
  *   8. Restore errno.
  *
- * Note: DEVELOPMENT.md §2.4 says step 7 restores from to->fp_ctrl.
- * This appears to be a specification typo: restoring from->fp_ctrl is the
- * correct behaviour. Restoring to->fp_ctrl would give fiber A the FP
- * control state that fiber B had when B last yielded, which is wrong.
+ * Note: restoring from->fp_ctrl (not to->fp_ctrl) is intentional.
+ * Restoring to->fp_ctrl would give fiber A the FP control state that
+ * fiber B had when B last yielded, which is wrong.
  *
  * TSan: must be called on the outgoing fiber (from) immediately before
  * strand_context_swap - cannot be called after.

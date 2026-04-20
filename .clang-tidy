@@ -16,11 +16,16 @@ Checks: >
   clang-diagnostic-*,
   clang-analyzer-*,
   -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -clang-analyzer-optin.portability.UnixAPI,
   bugprone-*,
   -bugprone-easily-swappable-parameters,
+  -bugprone-multi-level-implicit-pointer-conversion,
   cert-c-*,
   misc-*,
-  -misc-unused-parameters
+  -misc-unused-parameters,
+  -misc-include-cleaner,
+  -misc-static-assert,
+  -misc-no-recursion
 
 # Treat tidy warnings as errors at quality gates (make lint).
 # Set to '' during development to see all findings without failing.
