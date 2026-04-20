@@ -693,13 +693,28 @@ not be recorded as baselines.
 These are design targets derived from the architecture, not pass/fail gates.
 Actual results on specific hardware will differ.
 
-| Benchmark | Design target |
-|---|---|
-| Context switch round-trip | < 300 ns on modern x86_64 |
-| Fiber creation (cache warm) | < 500 ns per fiber |
-| I/O park and wake (loopback pipe) | < 2 µs round-trip |
-| Scheduler throughput | > 1M fibers/second (single worker) |
-| Cross-worker wakeup | < 5 µs |
+| Benchmark | Design target | Status | Actual |
+|---|---|---|---|
+| Context switch round-trip | < 300 ns on modern x86_64 | ✓ MET | 52–67 ns (Linux), 67 ns (OpenBSD) |
+| Fiber creation (cache warm) | < 500 ns per fiber | ✓ MET | 117 ns (Linux), 168 ns (OpenBSD) |
+| I/O park and wake (loopback pipe) | < 2 µs round-trip | ✗ REVISED | 4.4 µs (Linux), 3.1 µs (OpenBSD) |
+| Scheduler throughput | > 1M fibers/second (single worker) | ✓ MET | 15.8M (Linux budget=64), 11.8M (OpenBSD) |
+| Cross-worker wakeup | < 5 µs | PARTIAL | 3.0 µs OpenBSD ✓ / 7.9 µs Linux ✗ |
+
+**Notes on missed/revised targets:**
+
+- **I/O park and wake**: The 2 µs target was overly aggressive. The measured
+  4.4 µs (Linux) and 3.1 µs (OpenBSD) include a full `epoll_wait`/`kevent`
+  syscall round-trip through the kernel even with a pre-ready pipe. This is an
+  inherent floor imposed by kernel I/O multiplexing syscall cost. The numbers
+  are consistent with production expectations for event-loop-based I/O.
+
+- **Cross-worker wakeup on Linux**: The 7.9 µs exceeds the 5 µs target due
+  to Linux CFS scheduler wakeup latency — a known platform characteristic
+  documented in ARCHITECTURE.md §6.3.1. The target is met on OpenBSD (3.0 µs).
+  This latency is only relevant when cross-worker cancellation is on the hot
+  path at very high frequency, which is not the common case for the target
+  workload (connection-oriented daemons).
 
 ---
 

@@ -735,6 +735,38 @@ correctness failure.
 uses acquire semantics. This establishes the happens-before chain required for
 offload result visibility (see §6.6).
 
+### 6.3.1 Cross-Worker Wakeup Latency — Platform Characteristics
+
+The cross-worker cancel→resume path (inject queue enqueue + wakeup fd write +
+target worker wakes from poll + inject drain + fiber dispatch) has different
+latency characteristics on the two target platforms:
+
+- **OpenBSD (kqueue + pipe):** ~3 µs cross-worker wakeup. The OpenBSD
+  scheduler wakes a thread blocked in `kevent` with low latency; pipe write
+  is a simple kernel operation.
+
+- **Linux (epoll + eventfd):** ~7 µs on multi-core machines. The additional
+  latency comes from the CFS scheduler's wakeup path: after the eventfd write
+  makes the target worker runnable, CFS must schedule it onto a core. On
+  machines with many cores this includes IPI delivery and scheduler queue
+  insertion. This is a known structural characteristic of the Linux CFS
+  scheduler, not a defect in libstrand.
+
+**Practical impact:** Cross-worker wakeup latency is only relevant when
+cross-worker cancellation is on the hot path at very high frequency. For the
+target workload — connection-oriented protocol daemons — cross-worker cancel
+is an exceptional event (connection teardown, timeout-triggered cleanup), not
+a per-request operation. The ~7 µs latency is not a bottleneck in practice.
+
+**Potential future optimization:** A spin-before-block strategy — spinning on
+the inject queue for a configurable duration before entering `epoll_wait` —
+could reduce Linux cross-worker latency to ~100–300 ns (inject queue pop +
+dispatch latency) at the cost of CPU burn during idle periods. This
+optimization is not implemented in v0.1.0. If user feedback indicates
+cross-worker cancellation frequency is a real production bottleneck, this can
+be added as an opt-in configuration parameter (`spin_before_block_ns`) in a
+future version without architectural changes.
+
 ### 6.4 fiber_spawn Worker Selection
 
 **From a running fiber:** New fiber assigned to the same worker as the

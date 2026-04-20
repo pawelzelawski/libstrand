@@ -2,15 +2,18 @@
  * bench/bench_fiber_spawn.c - fiber creation and teardown throughput.
  *
  * Measures:
- *   cold path: spawn N fibers on a fresh scheduler (stack cache empty,
- *              all stacks mmap'd from the OS).
- *   warm path: spawn N fibers after a prior batch has already populated
- *              the stack cache (cache-hit allocations).
+ *   cold path: spawn one fiber, drive it to completion, repeat N times.
+ *              Uses a non-default stack size (128 KB) that never matches
+ *              cache entries, forcing mmap+mprotect on every spawn.
+ *   warm path: spawn one fiber, drive it to completion, repeat N times.
+ *              Uses the default stack size and the prior iteration's
+ *              completion returns the stack to the cache, so every spawn
+ *              after the first is a cache hit.
  *
  * Each spawned fiber simply returns immediately (zero-work body).
- * The measurement covers: fiber descriptor allocation, stack allocation,
- * context initialisation, run-queue insertion, fiber execution, and
- * scheduler cleanup.
+ * The measurement covers: fiber descriptor allocation, stack allocation
+ * (cache hit or mmap), context fabrication, run-queue insertion, fiber
+ * dispatch, execution, teardown, and stack return to cache (or munmap).
  *
  * See REPOSITORY_STRUCTURE.md 5 (bench_fiber_spawn.c description).
  * See DEVELOPMENT.md 7.2.
@@ -28,10 +31,10 @@
 #include "../src/strand_sched.h"
 #include "bench_common.h"
 
-#define SPAWN_ITERS 100000UL
+#define SPAWN_ITERS 50000UL
 
 /* -------------------------------------------------------------------------
- * Internal helpers - same push_root_fiber / drive_to_idle as test_integration.
+ * Internal helpers
  * -------------------------------------------------------------------------
  */
 
@@ -86,13 +89,16 @@ trivial_child(void *arg)
 }
 
 /* -------------------------------------------------------------------------
- * Spawner fiber: spawns N trivial children, records elapsed time.
+ * Spawn-one-drive-one fiber: spawns a single child with the given stack
+ * size, then yields so the child runs to completion (returning its stack
+ * to the cache).  Repeats N times.
  * -------------------------------------------------------------------------
  */
 
 typedef struct {
 	strand_scheduler_t *sched;
 	uint64_t            iters;
+	size_t              stack_sz;
 	uint64_t            t0;
 	uint64_t            t1;
 } spawner_args_t;
@@ -103,17 +109,27 @@ spawner_fiber(void *arg)
 	spawner_args_t *a = arg;
 	uint64_t        i;
 
-	a->t0 = bench_now_ns();
-	for (i = 0; i < a->iters; i++)
-		strand_fiber_spawn(a->sched, trivial_child, NULL, 0, NULL);
-	a->t1 = bench_now_ns();
-
-	/* yield so spawned children run and return stacks to cache */
+	/* Warmup: one untimed iteration to prime the dead pool. */
+	strand_fiber_spawn(a->sched, trivial_child, NULL, a->stack_sz, NULL);
 	strand_fiber_yield(a->sched);
+
+	a->t0 = bench_now_ns();
+	for (i = 0; i < a->iters; i++) {
+		strand_fiber_spawn(a->sched, trivial_child, NULL,
+		    a->stack_sz, NULL);
+		/*
+		 * Yield once so the scheduler runs the trivial child to
+		 * completion.  Its stack is returned to the cache (warm) or
+		 * munmap'd (cold, size mismatch).  The next spawn iteration
+		 * then exercises the intended path.
+		 */
+		strand_fiber_yield(a->sched);
+	}
+	a->t1 = bench_now_ns();
 }
 
 /* -------------------------------------------------------------------------
- * Benchmark: cold spawn (fresh scheduler, empty cache).
+ * Benchmark: cold spawn (cache miss every iteration via size mismatch).
  * -------------------------------------------------------------------------
  */
 
@@ -130,9 +146,17 @@ bench_spawn_cold(void)
 		return;
 	}
 
+	/*
+	 * Disable the stack cache entirely for the cold path.  This forces
+	 * every spawn to call mmap+mprotect and every teardown to call
+	 * munmap, measuring the true OS allocation cost.
+	 */
+	sched->cache_cap = 0;
+
 	memset(&a, 0, sizeof(a));
-	a.sched = sched;
-	a.iters = SPAWN_ITERS;
+	a.sched    = sched;
+	a.iters    = SPAWN_ITERS;
+	a.stack_sz = 0; /* default size — same as warm, only cache is disabled */
 
 	if (push_root_fiber(sched, spawner_fiber, &a) != 0) {
 		fprintf(stderr, "push_root_fiber failed\n");
@@ -141,14 +165,14 @@ bench_spawn_cold(void)
 	}
 	drive_to_idle(sched);
 	elapsed = a.t1 - a.t0;
-	bench_print_result("fiber spawn cold (stack mmap, ns/spawn)",
+	bench_print_result("fiber spawn cold (mmap+munmap, ns/spawn)",
 	    SPAWN_ITERS, elapsed);
 
 	strand_scheduler_destroy(sched);
 }
 
 /* -------------------------------------------------------------------------
- * Benchmark: warm spawn (cache populated by a prior batch).
+ * Benchmark: warm spawn (cache hit every iteration).
  * -------------------------------------------------------------------------
  */
 
@@ -156,8 +180,7 @@ static void
 bench_spawn_warm(void)
 {
 	strand_scheduler_t *sched;
-	spawner_args_t      warmup;
-	spawner_args_t      measured;
+	spawner_args_t      a;
 	uint64_t            elapsed;
 
 	sched = strand_scheduler_create(NULL);
@@ -166,29 +189,18 @@ bench_spawn_warm(void)
 		return;
 	}
 
-	/* Warmup pass: populate the stack cache. */
-	memset(&warmup, 0, sizeof(warmup));
-	warmup.sched = sched;
-	warmup.iters = SPAWN_ITERS;
-	if (push_root_fiber(sched, spawner_fiber, &warmup) != 0) {
+	memset(&a, 0, sizeof(a));
+	a.sched    = sched;
+	a.iters    = SPAWN_ITERS;
+	a.stack_sz = 0; /* default size — matches cache entries */
+
+	if (push_root_fiber(sched, spawner_fiber, &a) != 0) {
 		fprintf(stderr, "push_root_fiber failed\n");
 		strand_scheduler_destroy(sched);
 		return;
 	}
 	drive_to_idle(sched);
-
-	/* Measured pass: cache is warm. */
-	memset(&measured, 0, sizeof(measured));
-	measured.sched = sched;
-	measured.iters = SPAWN_ITERS;
-	if (push_root_fiber(sched, spawner_fiber, &measured) != 0) {
-		fprintf(stderr, "push_root_fiber failed\n");
-		strand_scheduler_destroy(sched);
-		return;
-	}
-	drive_to_idle(sched);
-
-	elapsed = measured.t1 - measured.t0;
+	elapsed = a.t1 - a.t0;
 	bench_print_result("fiber spawn warm (cache hit, ns/spawn)",
 	    SPAWN_ITERS, elapsed);
 

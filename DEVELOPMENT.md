@@ -1022,6 +1022,13 @@ complete. Library is ready for a v0.1.0 release tag.
   - Cross-worker wakeup latency
 - Record baseline numbers with full hardware context
 - Numbers are baselines, not pass/fail gates at this stage
+- **Note**: `bench_fiber_spawn` methodology was corrected from batch-spawn
+  (spawn 100k then run all) to spawn-one-run-one (spawn 1, drive to
+  completion, repeat). The batch methodology was flawed — it exhausted the
+  64-entry stack cache after 64 spawns, making warm and cold paths
+  indistinguishable. The corrected benchmark shows a 66–79× warm/cold
+  speedup, confirming the stack cache works as designed.
+- Baseline results recorded in `bench/BASELINES.md`.
 
 **7.3 - Debug watchdog**
 - Implement scheduler watchdog in debug builds (`STRAND_DEBUG=1`):
