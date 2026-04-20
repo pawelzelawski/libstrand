@@ -128,7 +128,7 @@ ASM_OBJ_TSAN != if [ -n "$(ASM_SRC)" ]; then echo "$(TSAN_DIR)/strand_context_as
 
 # --- Phony targets ----------------------------------------------------------
 
-.PHONY: all dev release test test-tsan valgrind bench lint format clean install
+.PHONY: all dev release test test-tsan valgrind bench tools lint format clean install
 
 all: dev
 
@@ -258,6 +258,19 @@ $(BENCH_DIR)/bench_multiworker: bench/bench_multiworker.c bench/bench_common.h $
 	@mkdir -p $(BENCH_DIR)
 	$(CC) $(CFLAGS_RELEASE) $(BENCH_INCLUDES) \
 	    bench/bench_multiworker.c $(LIB_RELEASE) $(LDFLAGS) \
+	    -o $@
+
+# --- Developer tools --------------------------------------------------------
+
+TOOLS_DIR   = $(BUILD_DIR)/tools
+INSPECT_BIN = $(TOOLS_DIR)/strand_inspect
+
+tools: $(INSPECT_BIN)
+
+$(INSPECT_BIN): tools/strand_inspect.c $(LIB_DEV)
+	@mkdir -p $(TOOLS_DIR)
+	$(CC) $(CFLAGS_DEV) $(INCLUDES) -I src/ \
+	    tools/strand_inspect.c $(LIB_DEV) $(LDFLAGS) \
 	    -o $@
 
 # clang-tidy + cppcheck

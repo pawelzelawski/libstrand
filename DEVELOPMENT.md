@@ -1038,7 +1038,7 @@ complete. Library is ready for a v0.1.0 release tag.
   - Watchdog does not preempt - warning only
 - Add test: spin loop fiber exceeding threshold; verify warning emitted
 
-**7.4 - strand_inspect tool**
+**7.4 - strand_inspect tool** ✅
 - Implement `tools/strand_inspect.c` per REPOSITORY_STRUCTURE.md §6:
   scheduler state dump - run queue depth, timer heap size, inject queue depth,
   fiber count by state, stack cache depth
