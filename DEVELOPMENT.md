@@ -2,9 +2,9 @@
 
 ## Status Overview
 
-**Last Updated**: 2026-04-19
+**Last Updated**: 2026-04-20
 **Current Phase**: Phase 7 - Hardening, Benchmarks, and Release
-**Next Task**: Phase 7.2 - Benchmark suite
+**Next Task**: Phase 7.3 - Debug watchdog
 
 ### Phase Summary
 
@@ -1010,7 +1010,7 @@ complete. Library is ready for a v0.1.0 release tag.
   - `strand_scheduler_stop` interrupts blocked worker within bounded time
 - All integration tests pass on Linux and OpenBSD - quality milestone M15
 
-**7.2 - Benchmark suite**
+**7.2 - Benchmark suite** ✓ DONE
 - Implement all benchmarks in `bench/` per REPOSITORY_STRUCTURE.md §5
 - Run on Linux x86_64 and ARM64, OpenBSD amd64:
   - Context switch round-trip latency
@@ -1055,7 +1055,7 @@ complete. Library is ready for a v0.1.0 release tag.
 ### Phase 7 Completion Criteria
 
 - [x] Integration test suite passes on Linux and OpenBSD - M15 confirmed
-- [ ] Benchmark baselines recorded on Linux x86_64 and ARM64, OpenBSD amd64
+- [x] Benchmark baselines recorded on Linux x86_64 and ARM64, OpenBSD amd64
 - [ ] `make lint` zero warnings on all platforms - M7, M8 confirmed
 - [ ] All unit and integration tests pass on all platforms - M2, M3 confirmed
 - [ ] Valgrind clean - M4 confirmed

@@ -191,8 +191,74 @@ valgrind: $(TEST_BIN_VG)
 	rm -f vgcore.*
 
 # Benchmarks - Phase 7
-bench:
-	@echo "No benchmarks yet - implement Phase 7"
+# Built under release flags (no sanitizers) in build/bench/.
+# Each benchmark is a standalone binary; they are run sequentially.
+BENCH_DIR  = $(BUILD_DIR)/bench
+BENCH_BINS = $(BENCH_DIR)/bench_context_switch \
+             $(BENCH_DIR)/bench_fiber_spawn    \
+             $(BENCH_DIR)/bench_io_roundtrip   \
+             $(BENCH_DIR)/bench_scheduler      \
+             $(BENCH_DIR)/bench_multiworker    \
+             $(BENCH_DIR)/bench_offload        \
+             $(BENCH_DIR)/bench_cross_worker
+BENCH_INCLUDES = $(INCLUDES) -I bench/
+bench: $(BENCH_BINS)
+	@echo "--- bench_context_switch ---"
+	$(BENCH_DIR)/bench_context_switch
+	@echo "--- bench_fiber_spawn ---"
+	$(BENCH_DIR)/bench_fiber_spawn
+	@echo "--- bench_io_roundtrip ---"
+	$(BENCH_DIR)/bench_io_roundtrip
+	@echo "--- bench_scheduler ---"
+	$(BENCH_DIR)/bench_scheduler
+	@echo "--- bench_multiworker ---"
+	$(BENCH_DIR)/bench_multiworker
+	@echo "--- bench_offload ---"
+	$(BENCH_DIR)/bench_offload
+	@echo "--- bench_cross_worker ---"
+	$(BENCH_DIR)/bench_cross_worker
+
+$(BENCH_DIR)/bench_context_switch: bench/bench_context_switch.c bench/bench_common.h $(LIB_RELEASE)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(BENCH_INCLUDES) -I src/ \
+	    bench/bench_context_switch.c $(LIB_RELEASE) $(LDFLAGS) \
+	    -o $@
+
+$(BENCH_DIR)/bench_fiber_spawn: bench/bench_fiber_spawn.c bench/bench_common.h $(LIB_RELEASE)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(BENCH_INCLUDES) -I src/ \
+	    bench/bench_fiber_spawn.c $(LIB_RELEASE) $(LDFLAGS) \
+	    -o $@
+
+$(BENCH_DIR)/bench_io_roundtrip: bench/bench_io_roundtrip.c bench/bench_common.h $(LIB_RELEASE)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(BENCH_INCLUDES) -I src/ \
+	    bench/bench_io_roundtrip.c $(LIB_RELEASE) $(LDFLAGS) \
+	    -o $@
+
+$(BENCH_DIR)/bench_scheduler: bench/bench_scheduler.c bench/bench_common.h $(LIB_RELEASE)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(BENCH_INCLUDES) -I src/ \
+	    bench/bench_scheduler.c $(LIB_RELEASE) $(LDFLAGS) \
+	    -o $@
+
+$(BENCH_DIR)/bench_offload: bench/bench_offload.c bench/bench_common.h $(LIB_RELEASE)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(BENCH_INCLUDES) -I src/ \
+	    bench/bench_offload.c $(LIB_RELEASE) $(LDFLAGS) \
+	    -o $@
+
+$(BENCH_DIR)/bench_cross_worker: bench/bench_cross_worker.c bench/bench_common.h $(LIB_RELEASE)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(BENCH_INCLUDES) -I src/ \
+	    bench/bench_cross_worker.c $(LIB_RELEASE) $(LDFLAGS) \
+	    -o $@
+
+$(BENCH_DIR)/bench_multiworker: bench/bench_multiworker.c bench/bench_common.h $(LIB_RELEASE)
+	@mkdir -p $(BENCH_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(BENCH_INCLUDES) \
+	    bench/bench_multiworker.c $(LIB_RELEASE) $(LDFLAGS) \
+	    -o $@
 
 # clang-tidy + cppcheck
 lint: $(LIB_DEV)

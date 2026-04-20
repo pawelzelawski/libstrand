@@ -561,6 +561,32 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	STRAND_TSAN_BIND_CURRENT(&sched->scheduler_ctx);
 
 	/*
+	 * Step 3 (moved first): drain wakeup fd BEFORE draining the inject
+	 * queue.  This ordering is required to prevent a missed-wakeup race:
+	 *
+	 *   Without this ordering, the following sequence causes a hang:
+	 *     1. Step 1 drains inject → empty (offload not yet complete).
+	 *     2. Offload thread pushes inject item AND writes wakeup_fd.
+	 *     3. Step 3 drains wakeup_fd → consumes the write.
+	 *     4. Step 5 sees empty run queue → advance returns SCHED_IDLE.
+	 *     5. poller_poll(-1) blocks forever: inject item is queued but
+	 *        its wakeup notification was already consumed in step 3.
+	 *
+	 *   With this ordering the race window closes:
+	 *     - If the offload writes between step 3 and step 1 → inject is
+	 *       drained in step 1 this cycle (correct, no poll needed).
+	 *     - If the offload writes after both step 3 and step 1 → wakeup_fd
+	 *       still has data when poller_poll(-1) is reached, so it returns
+	 *       and the next advance cycle drains the inject item (correct).
+	 *
+	 * SAFETY: bytes written here are control signals from
+	 * strand_scheduler_stop, cross-worker wakeups, and offload completions.
+	 * They are read and discarded; no fiber is woken as a direct result.
+	 * See ARCHITECTURE.md section 4.2 Step 3.
+	 */
+	wakeup_drain(sched);
+
+	/*
 	 * Step 1: drain injected cross-worker items (bounded MPSC ring buffer).
 	 * Handles INJECT_CANCEL items by calling strand_fiber_cancel.
 	 * Additional item types (INJECT_SPAWN, INJECT_OFFLOAD_COMPLETE) are
@@ -584,14 +610,6 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 		progress = 1;
 	}
 
-	/*
-	 * Step 3: drain wakeup fd.
-	 * SAFETY: bytes written here are control signals from
-	 * strand_scheduler_stop, not fiber waiter events.  They are read and
-	 * discarded; no fiber is woken as a result.  See ARCHITECTURE.md
-	 * section 4.2 Step 3.
-	 */
-	wakeup_drain(sched);
 
 	/*
 	 * Step 4: poll I/O with zero timeout (non-blocking).
