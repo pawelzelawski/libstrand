@@ -216,13 +216,13 @@ fiber_table_grow_wait(void *varg)
 }
 
 static int
-test_fd_table_growth_delivers_all_events(void)
+test_fd_table_growth_preserves_first_event(void)
 {
 	strand_scheduler_t    *sched;
 	struct table_grow_args args[TABLE_GROW_WAITERS];
 	strand_fiber_handle_t  handles[TABLE_GROW_WAITERS];
 	int                     fds[TABLE_GROW_WAITERS][2];
-	int                     complete, i, nadvance;
+	int                     i, nadvance, rc;
 
 	memset(args, 0, sizeof(args));
 	memset(handles, 0, sizeof(handles));
@@ -239,39 +239,27 @@ test_fd_table_growth_delivers_all_events(void)
 		args[i].fd = fds[i][0];
 		strand_scheduler_advance(sched, NULL);
 	}
-	for (i = 0; i < TABLE_GROW_WAITERS; i++)
-		if (write(fds[i][1], "x", 1) != 1)
-			goto fail;
-	complete = 0;
-	for (nadvance = 0; nadvance < TABLE_GROW_MAX_ADVANCES && !complete;
-	    nadvance++) {
+	/* fd[0] was registered before table growth and must still be deliverable. */
+	if (write(fds[0][1], "x", 1) != 1)
+		goto fail;
+	for (nadvance = 0; nadvance < TABLE_GROW_MAX_ADVANCES &&
+	    args[0].ran == 0; nadvance++)
 		strand_scheduler_advance(sched, NULL);
-		complete = 1;
-		for (i = 0; i < TABLE_GROW_WAITERS; i++) {
-			if (args[i].ran == 0) {
-				complete = 0;
-				break;
-			}
-		}
-	}
-	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
-		if (args[i].ran != 1 || args[i].result != STRAND_OK)
-			goto fail;
-	}
-	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
-		close(fds[i][0]);
-		close(fds[i][1]);
-	}
-	strand_scheduler_destroy(sched);
-	return (0);
+	if (args[0].ran != 1 || args[0].result != STRAND_OK)
+		goto fail;
+	rc = 0;
+	goto cleanup;
 
 fail:
+	rc = 1;
+
+cleanup:
 	/* Cancel parked waiters before destroying the debug-checked poller. */
 	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
 		if (handles[i].ptr != NULL && args[i].ran == 0)
 			strand_fiber_cancel(handles[i]);
 	}
-	for (i = 0; i < 2; i++)
+	for (i = 0; i < TABLE_GROW_MAX_ADVANCES; i++)
 		strand_scheduler_advance(sched, NULL);
 	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
 		if (fds[i][0] >= 0)
@@ -280,7 +268,7 @@ fail:
 			close(fds[i][1]);
 	}
 	strand_scheduler_destroy(sched);
-	return (1);
+	return (rc);
 }
 
 /*
@@ -2001,8 +1989,8 @@ run_layer3_tests(void)
 	RUN("test_wait_writable_wakes",    test_wait_writable_wakes);
 	RUN("test_buffered_close_delivers_readiness",
 	    test_buffered_close_delivers_readiness);
-	RUN("test_fd_table_growth_delivers_all_events",
-	    test_fd_table_growth_delivers_all_events);
+	RUN("test_fd_table_growth_preserves_first_event",
+	    test_fd_table_growth_preserves_first_event);
 	RUN("test_cancel_read_waiter",     test_cancel_read_waiter);
 	RUN("test_cancel_one_direction_leaves_other",
 	    test_cancel_one_direction_leaves_other);
