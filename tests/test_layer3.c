@@ -196,7 +196,8 @@ test_buffered_close_delivers_readiness(void)
 	    args.nread == 5 && memcmp(args.buf, "HELLO", 5) == 0) ? 0 : 1;
 }
 
-#define TABLE_GROW_WAITERS 100
+/* 49 waiters cross the 48-entry (75%) growth threshold for a 64-slot table. */
+#define TABLE_GROW_WAITERS 49
 #define TABLE_GROW_MAX_ADVANCES 32
 
 struct table_grow_args {
@@ -230,9 +231,17 @@ test_fd_table_growth_preserves_first_event(void)
 	sched = make_test_scheduler();
 	if (sched == NULL)
 		return (1);
+	make_test_pipe(&fds[0][0], &fds[0][1]);
+	if (fds[0][0] < 0)
+		goto fail;
 	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
-		make_test_pipe(&fds[i][0], &fds[i][1]);
-		if (fds[i][0] < 0 || t4_push_fiber(sched, fiber_table_grow_wait,
+		/* Distinct duplicated fds still occupy distinct fd-table entries. */
+		if (i > 0) {
+			fds[i][0] = dup(fds[0][0]);
+			if (fds[i][0] < 0)
+				goto fail;
+		}
+		if (t4_push_fiber(sched, fiber_table_grow_wait,
 		    &args[i], &handles[i]) != 0)
 			goto fail;
 		args[i].sched = sched;
