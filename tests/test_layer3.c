@@ -197,6 +197,7 @@ test_buffered_close_delivers_readiness(void)
 }
 
 #define TABLE_GROW_WAITERS 100
+#define TABLE_GROW_MAX_ADVANCES 32
 
 struct table_grow_args {
 	strand_scheduler_t *sched;
@@ -219,10 +220,12 @@ test_fd_table_growth_delivers_all_events(void)
 {
 	strand_scheduler_t    *sched;
 	struct table_grow_args args[TABLE_GROW_WAITERS];
+	strand_fiber_handle_t  handles[TABLE_GROW_WAITERS];
 	int                     fds[TABLE_GROW_WAITERS][2];
-	int                     i;
+	int                     complete, i, nadvance;
 
 	memset(args, 0, sizeof(args));
+	memset(handles, 0, sizeof(handles));
 	memset(fds, -1, sizeof(fds));
 	sched = make_test_scheduler();
 	if (sched == NULL)
@@ -230,7 +233,7 @@ test_fd_table_growth_delivers_all_events(void)
 	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
 		make_test_pipe(&fds[i][0], &fds[i][1]);
 		if (fds[i][0] < 0 || t4_push_fiber(sched, fiber_table_grow_wait,
-		    &args[i], NULL) != 0)
+		    &args[i], &handles[i]) != 0)
 			goto fail;
 		args[i].sched = sched;
 		args[i].fd = fds[i][0];
@@ -239,8 +242,18 @@ test_fd_table_growth_delivers_all_events(void)
 	for (i = 0; i < TABLE_GROW_WAITERS; i++)
 		if (write(fds[i][1], "x", 1) != 1)
 			goto fail;
-	for (i = 0; i < 4; i++)
+	complete = 0;
+	for (nadvance = 0; nadvance < TABLE_GROW_MAX_ADVANCES && !complete;
+	    nadvance++) {
 		strand_scheduler_advance(sched, NULL);
+		complete = 1;
+		for (i = 0; i < TABLE_GROW_WAITERS; i++) {
+			if (args[i].ran == 0) {
+				complete = 0;
+				break;
+			}
+		}
+	}
 	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
 		if (args[i].ran != 1 || args[i].result != STRAND_OK)
 			goto fail;
@@ -253,6 +266,13 @@ test_fd_table_growth_delivers_all_events(void)
 	return (0);
 
 fail:
+	/* Cancel parked waiters before destroying the debug-checked poller. */
+	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
+		if (handles[i].ptr != NULL && args[i].ran == 0)
+			strand_fiber_cancel(handles[i]);
+	}
+	for (i = 0; i < 2; i++)
+		strand_scheduler_advance(sched, NULL);
 	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
 		if (fds[i][0] >= 0)
 			close(fds[i][0]);
