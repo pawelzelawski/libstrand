@@ -550,11 +550,11 @@ tracked separately. Both are allowed simultaneously on the same fd.
 **Multiple waiters in the same direction:** Forbidden. Returns an error on
 violation.
 
-**Event identity:** Each fd registration has a stable per-registration token
-stored in `epoll_event.data.ptr` (Linux) or `kevent.udata` (OpenBSD). The
-token is invalidated when the wait completes or is cancelled. This token is
-how the event delivery code maps a returned event back to the correct waiter
-without ambiguity even when fds are reused.
+**Event identity:** Each fd registration has an fd-plus-generation token
+stored in `epoll_event.data.u64` (Linux) or `kevent.udata` (OpenBSD). Delivery
+resolves the token through the current fd table and validates its generation.
+This makes stale events harmless across table growth, cancellation, and fd
+number reuse; no kernel event retains a pointer into table storage.
 
 **Cancellation race - two-part rule:**
 
@@ -634,10 +634,11 @@ same-worker readiness-wins, which is consistent with the stated rule.
 ### 5.6 Linux: Error and Hangup Events
 
 `EPOLLERR` and `EPOLLHUP` are delivered by the kernel regardless of whether
-they appear in the registered interest mask. When a returned event has
-`EPOLLERR` or `EPOLLHUP` set, any fiber waiting on that fd in any direction
-must be woken with an error result. The fiber must not be left parked on an fd
-that has entered an error or hangup state.
+they appear in the registered interest mask. `EPOLLERR` wakes every waiter
+with an error result. For `EPOLLHUP`, a read waiter is woken successfully when
+`EPOLLIN` is also present, so the caller can drain bytes buffered before the
+close; a subsequent nonblocking read observes EOF. An empty read hangup and
+all write hangups wake with an error result, so no fiber remains parked.
 
 **Why these flags are not in the interest mask:** `EPOLLERR` and `EPOLLHUP`
 are delivered unconditionally by the kernel - adding them to the registration
@@ -657,10 +658,10 @@ without `EV_CLEAR`.
 - `EVFILT_READ` and `EVFILT_WRITE` are independent filters; read and write
   waiters on the same fd use separate kevent registrations
 
-**EV_EOF:** When a returned kevent has `EV_EOF` set in the flags field, the
-waiting fiber is woken with an EOF/error result. This applies to
-`EVFILT_READ` kevents on sockets that have been half-closed by the remote
-peer.
+**EV_EOF:** When an `EVFILT_READ` event has `EV_EOF` set but its `data` count
+is positive, the waiting fiber is woken successfully to drain those buffered
+bytes. With no buffered bytes, and for write-filter EOF events, the waiter is
+woken with an EOF/error result.
 
 ### 5.8 Cancellation of I/O Waiter
 

@@ -49,10 +49,10 @@ typedef enum {
  *                Reflects the union of active read and write waiter interests.
  * reg_state    - Linux EPOLLONESHOT registration state.
  *                Ignored on OpenBSD (EV_DISPATCH has no equivalent tracking).
- * arm_token    - per-registration generation counter; bumped on each arm.
- *                Linux: packed with fd into epoll_event.data.u64 and
- *                validated on delivery to discard stale events.
- *                OpenBSD: entry pointer carried in kevent.udata.
+ * arm_token    - Linux registration generation, packed with fd into
+ *                epoll_event.data.u64 and validated on delivery.
+ * read_token   - OpenBSD EVFILT_READ registration generation.
+ * write_token  - OpenBSD EVFILT_WRITE registration generation.
  *                See ARCHITECTURE.md §5.3.
  * dbg_gen      - debug-only generation counter; incremented when fd reuse
  *                is detected (fd closed and reopened with same number).
@@ -66,6 +66,8 @@ typedef struct strand_fd_entry {
 	uint32_t         event_mask;
 	fd_reg_state_t   reg_state;
 	uint32_t         arm_token;
+	uint32_t         read_token;
+	uint32_t         write_token;
 #ifdef STRAND_DEBUG
 	uint32_t         dbg_gen;
 #endif
@@ -78,6 +80,8 @@ typedef struct strand_fd_entry {
  * table      - open-addressed fd waiter hash table; linear probing.
  * table_cap  - table capacity; always a power of 2.
  * table_len  - number of live entries (tombstones are not counted).
+ * next_token - monotonically increasing registration generation.  Tokens
+ *              remain unique when an entry moves or an fd number is reused.
  *
  * The table grows (doubles) when load exceeds 75% (table_len * 4 >= table_cap * 3).
  * The hash function is: fd & (table_cap - 1).
@@ -90,6 +94,7 @@ struct strand_poller {
 	strand_fd_entry_t *table;
 	size_t             table_cap;
 	size_t             table_len;
+	uint32_t           next_token;
 };
 
 /* Default initial fd table capacity (power of 2). */

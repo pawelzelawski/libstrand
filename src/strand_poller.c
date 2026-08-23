@@ -17,6 +17,7 @@
 #include <sys/epoll.h>
 
 #define POLLER_WAKEUP_TOKEN UINT64_MAX
+#endif /* STRAND_LINUX */
 
 static uint64_t
 poller_make_token(int fd, uint32_t arm_token)
@@ -35,7 +36,15 @@ poller_token_arm(uint64_t token)
 {
 	return ((uint32_t)token);
 }
-#endif
+
+static uint32_t
+poller_next_token(strand_poller_t *p)
+{
+	p->next_token++;
+	if (p->next_token == 0)
+		p->next_token++;
+	return (p->next_token);
+}
 
 #ifdef STRAND_OPENBSD
 #include <sys/event.h>
@@ -287,6 +296,8 @@ fd_table_insert(strand_poller_t *p, int fd)
 			e->event_mask   = 0;
 			e->reg_state    = FD_REG_NOT_REGISTERED;
 			e->arm_token    = 0;
+			e->read_token   = 0;
+			e->write_token  = 0;
 #ifdef STRAND_DEBUG
 			e->dbg_gen = 0;
 #endif
@@ -333,6 +344,8 @@ fd_table_remove(strand_poller_t *p, int fd)
 	e->event_mask   = 0;
 	e->reg_state    = FD_REG_NOT_REGISTERED;
 	e->arm_token    = 0;
+	e->read_token   = 0;
+	e->write_token  = 0;
 #ifdef STRAND_DEBUG
 	e->dbg_gen = 0;
 #endif
@@ -345,14 +358,13 @@ fd_table_remove(strand_poller_t *p, int fd)
  * Linux: issues epoll_ctl ADD (NOT_REGISTERED) or MOD (otherwise) with
  *        new_mask (caller is responsible for including EPOLLET | EPOLLONESHOT
  *        and the correct EPOLLIN / EPOLLOUT combination).
- *        Stores entry pointer in ev.data.ptr as the per-registration token
- *        so that poller_deliver_event can find the entry without a hash lookup.
- *        Increments arm_token before the syscall; updates event_mask and
- *        reg_state on success.
+ *        Stores an fd/generation token in ev.data.u64, resolved through the
+ *        current table by poller_deliver_event.
  *
  * OpenBSD: issues kevent EV_ADD | EV_DISPATCH for the given filter
  *          (EVFILT_READ or EVFILT_WRITE).  new_mask is not used on OpenBSD.
- *          Stores entry pointer in kev.udata.
+ *          Stores an fd/generation token in kev.udata.  The token is resolved
+ *          through the current table, so table growth cannot invalidate it.
  *
  * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
  * See ARCHITECTURE.md §5.4 and §5.7.
@@ -371,17 +383,17 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 	ev.events   = new_mask;
 
 	/*
-	 * Increment arm_token before the syscall and encode (fd, arm_token)
+	 * Allocate a new token before the syscall and encode (fd, token)
 	 * into epoll user-data. poller_deliver_event validates this token so
 	 * stale events from older registrations are discarded safely.
 	 * See ARCHITECTURE.md §5.3.
 	 */
-	e->arm_token++;
-	ev.data.u64 = poller_make_token(fd, e->arm_token);
+	ev.data.u64 = poller_make_token(fd, poller_next_token(p));
 
 	if (epoll_ctl(p->pollfd, op, fd, &ev) == -1)
 		return (STRAND_ERR_IO);
 
+	e->arm_token  = poller_token_arm(ev.data.u64);
 	e->event_mask = new_mask;
 	e->reg_state  = FD_REG_ACTIVE;
 	return (STRAND_OK);
@@ -389,6 +401,7 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 
 #ifdef STRAND_OPENBSD
 	struct kevent kev;
+	uint32_t      token;
 
 	(void)new_mask; /* mask is implicit in the filter on OpenBSD */
 
@@ -397,12 +410,17 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 	 * After delivery, EV_DISPATCH leaves the filter disabled. Re-arm must
 	 * explicitly re-enable it; EV_ENABLE is harmless on first registration.
 	 */
+	token = poller_next_token(p);
 	EV_SET(&kev, (uintptr_t)fd, filter,
-	       EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, e);
-	e->arm_token++;
+	       EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0,
+	       (void *)(uintptr_t)poller_make_token(fd, token));
 
 	if (kevent(p->pollfd, &kev, 1, NULL, 0, NULL) == -1)
 		return (STRAND_ERR_IO);
+	if (filter == EVFILT_READ)
+		e->read_token = token;
+	else
+		e->write_token = token;
 
 	return (STRAND_OK);
 #endif
@@ -580,8 +598,9 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
  *
  * Linux path:
  *   - NULL data.ptr: wakeup fd sentinel; skip fiber delivery.
- *   - EPOLLERR / EPOLLHUP: wake all waiters on the fd with STRAND_ERR_IO.
- *   - EPOLLIN: wake read waiter with STRAND_OK.
+ *   - EPOLLERR wakes all waiters with STRAND_ERR_IO.
+ *   - EPOLLHUP wakes a read waiter with STRAND_OK if EPOLLIN also reports
+ *     buffered bytes; otherwise it wakes waiters with STRAND_ERR_IO.
  *   - EPOLLOUT: wake write waiter with STRAND_OK.
  *   - If one direction woke and the other still has a waiter: re-arm the
  *     remaining direction with MOD, then immediately call epoll_wait with
@@ -590,7 +609,8 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
  *
  * OpenBSD path:
  *   - NULL udata: wakeup fd sentinel; skip fiber delivery.
- *   - EV_EOF: wake the waiter for this filter with STRAND_ERR_IO.
+ *   - EV_EOF on a read filter wakes with STRAND_OK if kev.data reports
+ *     buffered bytes; otherwise it wakes with STRAND_ERR_IO.
  *   - Otherwise: wake the waiter for this filter with STRAND_OK.
  *   - No post-re-arm check needed (EV_DISPATCH is level-triggered).
  *
@@ -622,15 +642,13 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 	flags = ev->events;
 
 	/*
-	 * SAFETY: EPOLLERR and EPOLLHUP are delivered by the kernel
-	 * unconditionally, regardless of the registered interest mask.
-	 * Any fiber waiting on this fd in any direction must be woken
-	 * with an error result - leaving a fiber parked on an fd in an
-	 * error or hangup state would result in it parking forever.
-	 * These flags must be checked before EPOLLIN/EPOLLOUT.
+	 * SAFETY: EPOLLERR and EPOLLHUP are delivered unconditionally.
+	 * EPOLLERR is terminal for every waiter.  A read event which combines
+	 * EPOLLIN and EPOLLHUP still has buffered bytes to deliver, so wake that
+	 * reader successfully before treating any remaining waiters as hung up.
 	 * See ARCHITECTURE.md §5.6.
 	 */
-	if (flags & (EPOLLERR | EPOLLHUP)) {
+	if (flags & EPOLLERR) {
 		e->reg_state = FD_REG_DISABLED;
 		if (e->read_waiter != NULL) {
 			strand_fiber_t *f = e->read_waiter;
@@ -654,6 +672,24 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 		}
 		return;
 	}
+	if (flags & EPOLLHUP) {
+		e->reg_state = FD_REG_DISABLED;
+		if (e->read_waiter != NULL) {
+			strand_fiber_t *f = e->read_waiter;
+			e->read_waiter = NULL;
+			fiber_io_wake(sched, f,
+			    (flags & EPOLLIN) ? STRAND_OK : STRAND_ERR_IO);
+		}
+		if (e->write_waiter != NULL) {
+			strand_fiber_t *f = e->write_waiter;
+			e->write_waiter = NULL;
+			fiber_io_wake(sched, f, STRAND_ERR_IO);
+		}
+		(void)epoll_ctl(p->pollfd, EPOLL_CTL_DEL, fd, NULL);
+		e->reg_state = FD_REG_NOT_REGISTERED;
+		fd_table_remove(p, fd);
+		return;
+	}
 
 	/*
 	 * EPOLLONESHOT auto-disabled the registration when the event fired.
@@ -673,7 +709,6 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 		fiber_io_wake(sched, f, STRAND_OK);
 		woke_write = 1;
 	}
-
 	/*
 	 * If one direction woke and the other still has a waiter, re-arm the
 	 * remaining direction.  EPOLLET only fires on state transitions - if
@@ -746,35 +781,56 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 #ifdef STRAND_OPENBSD
 
 static void
+poller_delete_filter(strand_poller_t *p, int fd, int filter)
+{
+	struct kevent kev;
+
+	EV_SET(&kev, (uintptr_t)fd, filter, EV_DELETE, 0, 0, NULL);
+	(void)kevent(p->pollfd, &kev, 1, NULL, 0, NULL);
+}
+
+static void
 poller_deliver_event(strand_scheduler_t *sched, struct kevent *kev)
 {
 	strand_fd_entry_t *e;
 	strand_poller_t   *p = sched->poller;
 	int                fd;
 	int                result;
+	uint64_t           token;
 
 	/* NULL sentinel: wakeup fd event; no fiber to wake. */
 	if (kev->udata == NULL)
 		return;
 
-	e  = (strand_fd_entry_t *)kev->udata;
-	fd = e->fd;
+	token = (uint64_t)(uintptr_t)kev->udata;
+	fd = poller_token_fd(token);
+	e = fd_table_lookup(p, fd);
+	if (e == NULL)
+		return;
+	if (kev->filter == EVFILT_READ && e->read_token != poller_token_arm(token))
+		return;
+	if (kev->filter == EVFILT_WRITE && e->write_token != poller_token_arm(token))
+		return;
 
 	/*
-	 * EV_EOF: the remote peer closed the connection, or the write end of
-	 * a pipe was closed.  Wake the waiter for this filter with an error
-	 * result so it is not left parked on a half-closed fd.
+	 * EV_EOF signals a peer close or closed pipe end.  For reads, kev->data
+	 * reports bytes still buffered by the kernel; deliver that readiness first
+	 * and let the caller's next nonblocking read observe EOF.
 	 * See ARCHITECTURE.md §5.7.
 	 */
-	result = (kev->flags & EV_EOF) ? STRAND_ERR_IO : STRAND_OK;
+	result = ((kev->flags & EV_EOF) &&
+	    (kev->filter != EVFILT_READ || kev->data == 0)) ?
+	    STRAND_ERR_IO : STRAND_OK;
 
 	if (kev->filter == EVFILT_READ && e->read_waiter != NULL) {
 		strand_fiber_t *f = e->read_waiter;
 		e->read_waiter = NULL;
+		poller_delete_filter(p, fd, EVFILT_READ);
 		fiber_io_wake(sched, f, result);
 	} else if (kev->filter == EVFILT_WRITE && e->write_waiter != NULL) {
 		strand_fiber_t *f = e->write_waiter;
 		e->write_waiter = NULL;
+		poller_delete_filter(p, fd, EVFILT_WRITE);
 		fiber_io_wake(sched, f, result);
 	}
 
@@ -894,22 +950,8 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 #endif /* STRAND_LINUX */
 
 #ifdef STRAND_OPENBSD
-	{
-		struct kevent kev;
-		int cancel_filter = (dir == 0) ? EVFILT_READ : EVFILT_WRITE;
-
-		/*
-		 * Delete the filter for the cancelled direction.
-		 * EVFILT_READ and EVFILT_WRITE are independent; the other
-		 * direction's filter, if registered, remains active.
-		 * Errors are ignored - the filter may already be gone if the
-		 * fd was closed by the application.
-		 * See ARCHITECTURE.md §5.7 and §5.8.
-		 */
-		EV_SET(&kev, (uintptr_t)fd, cancel_filter, EV_DELETE,
-		       0, 0, NULL);
-		(void)kevent(p->pollfd, &kev, 1, NULL, 0, NULL);
-	}
+	poller_delete_filter(p, fd,
+	    (dir == 0) ? EVFILT_READ : EVFILT_WRITE);
 #endif /* STRAND_OPENBSD */
 
 	/* Remove the table entry when both waiters are gone. */
@@ -991,4 +1033,3 @@ strand_fiber_wait_writable(strand_scheduler_t *sched, int fd)
 {
 	return (fiber_wait_io(sched, fd, 1));
 }
-

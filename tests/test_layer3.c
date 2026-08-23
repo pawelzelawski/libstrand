@@ -55,6 +55,8 @@ make_test_scheduler(void)
 	return (strand_scheduler_create(&cfg));
 }
 
+static void make_test_pipe(int *, int *);
+
 /*
  * t4_push_fiber -- allocate and enqueue a fiber for Layer 3 tests.
  *
@@ -127,6 +129,138 @@ make_test_socketpair(int *sv)
 	(void)fcntl(sv[1], F_SETFD, FD_CLOEXEC);
 	(void)fcntl(sv[0], F_SETFL, O_NONBLOCK);
 	(void)fcntl(sv[1], F_SETFL, O_NONBLOCK);
+}
+
+/* =========================================================================
+ * Buffered close and fd-table growth regressions
+ * =========================================================================
+ */
+
+struct buffered_close_args {
+	strand_scheduler_t *sched;
+	int                 fd;
+	int                 result;
+	ssize_t             nread;
+	char                buf[6];
+	int                 ran;
+};
+
+static void
+fiber_buffered_close(void *varg)
+{
+	struct buffered_close_args *a = varg;
+
+	a->result = strand_fiber_wait_readable(a->sched, a->fd);
+	if (a->result == STRAND_OK)
+		a->nread = read(a->fd, a->buf, sizeof(a->buf) - 1);
+	a->ran = 1;
+}
+
+static int
+test_buffered_close_delivers_readiness(void)
+{
+	strand_scheduler_t       *sched;
+	struct buffered_close_args args;
+	int                        sv[2];
+
+	memset(&args, 0, sizeof(args));
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+	make_test_socketpair(sv);
+	if (sv[0] < 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	args.sched = sched;
+	args.fd = sv[0];
+	if (t4_push_fiber(sched, fiber_buffered_close, &args, NULL) != 0) {
+		close(sv[0]);
+		close(sv[1]);
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	strand_scheduler_advance(sched, NULL);
+	if (write(sv[1], "HELLO", 5) != 5 || shutdown(sv[1], SHUT_WR) != 0) {
+		close(sv[0]);
+		close(sv[1]);
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	strand_scheduler_advance(sched, NULL);
+
+	close(sv[0]);
+	close(sv[1]);
+	strand_scheduler_destroy(sched);
+	return (args.ran == 1 && args.result == STRAND_OK &&
+	    args.nread == 5 && memcmp(args.buf, "HELLO", 5) == 0) ? 0 : 1;
+}
+
+#define TABLE_GROW_WAITERS 100
+
+struct table_grow_args {
+	strand_scheduler_t *sched;
+	int                 fd;
+	int                 result;
+	int                 ran;
+};
+
+static void
+fiber_table_grow_wait(void *varg)
+{
+	struct table_grow_args *a = varg;
+
+	a->result = strand_fiber_wait_readable(a->sched, a->fd);
+	a->ran = 1;
+}
+
+static int
+test_fd_table_growth_delivers_all_events(void)
+{
+	strand_scheduler_t    *sched;
+	struct table_grow_args args[TABLE_GROW_WAITERS];
+	int                     fds[TABLE_GROW_WAITERS][2];
+	int                     i;
+
+	memset(args, 0, sizeof(args));
+	memset(fds, -1, sizeof(fds));
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
+		make_test_pipe(&fds[i][0], &fds[i][1]);
+		if (fds[i][0] < 0 || t4_push_fiber(sched, fiber_table_grow_wait,
+		    &args[i], NULL) != 0)
+			goto fail;
+		args[i].sched = sched;
+		args[i].fd = fds[i][0];
+		strand_scheduler_advance(sched, NULL);
+	}
+	for (i = 0; i < TABLE_GROW_WAITERS; i++)
+		if (write(fds[i][1], "x", 1) != 1)
+			goto fail;
+	for (i = 0; i < 4; i++)
+		strand_scheduler_advance(sched, NULL);
+	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
+		if (args[i].ran != 1 || args[i].result != STRAND_OK)
+			goto fail;
+	}
+	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
+		close(fds[i][0]);
+		close(fds[i][1]);
+	}
+	strand_scheduler_destroy(sched);
+	return (0);
+
+fail:
+	for (i = 0; i < TABLE_GROW_WAITERS; i++) {
+		if (fds[i][0] >= 0)
+			close(fds[i][0]);
+		if (fds[i][1] >= 0)
+			close(fds[i][1]);
+	}
+	strand_scheduler_destroy(sched);
+	return (1);
 }
 
 /*
@@ -1845,6 +1979,10 @@ run_layer3_tests(void)
 {
 	RUN("test_wait_readable_wakes",    test_wait_readable_wakes);
 	RUN("test_wait_writable_wakes",    test_wait_writable_wakes);
+	RUN("test_buffered_close_delivers_readiness",
+	    test_buffered_close_delivers_readiness);
+	RUN("test_fd_table_growth_delivers_all_events",
+	    test_fd_table_growth_delivers_all_events);
 	RUN("test_cancel_read_waiter",     test_cancel_read_waiter);
 	RUN("test_cancel_one_direction_leaves_other",
 	    test_cancel_one_direction_leaves_other);
@@ -1875,4 +2013,3 @@ run_layer3_tests(void)
 	RUN("test_ev_dispatch_openbsd",    test_ev_dispatch_openbsd);
 #endif
 }
-

@@ -28,6 +28,12 @@ ARCH != uname -m
 # Override on the command line: make CC=gcc
 CC = clang
 
+# OpenBSD's clang-tidy may not infer clang's resource headers (including
+# stdatomic.h) from the compile command.  Use the selected compiler's
+# resource directory explicitly for that analysis-only invocation.
+CLANG_TIDY_RESOURCE_DIR != if [ "$(OS)" = "OpenBSD" ]; then $(CC) -print-resource-dir; fi
+CLANG_TIDY_RESOURCE_ARG != if [ -n "$(CLANG_TIDY_RESOURCE_DIR)" ]; then echo "--extra-arg=-resource-dir=$(CLANG_TIDY_RESOURCE_DIR)"; fi
+
 # --- Compiler flags ---------------------------------------------------------
 
 CFLAGS_COMMON = -std=c11 -Wall -Wextra -Wpedantic			\
@@ -275,7 +281,7 @@ $(INSPECT_BIN): tools/strand_inspect.c $(LIB_DEV)
 
 # clang-tidy + cppcheck
 lint: $(LIB_DEV)
-	clang-tidy $(LIB_SRCS) -- $(CFLAGS_DEV) $(INCLUDES)
+	clang-tidy $(CLANG_TIDY_RESOURCE_ARG) $(LIB_SRCS) -- $(CFLAGS_DEV) $(INCLUDES)
 	@if command -v cppcheck >/dev/null 2>&1; then \
 		cppcheck --enable=all --error-exitcode=1 \
 		         --suppress=missingIncludeSystem \	         --suppress=unusedFunction \	         --suppress=constParameterPointer \	         --suppress=staticFunction \	         --suppress=normalCheckLevelMaxBranches \		         src/; \
