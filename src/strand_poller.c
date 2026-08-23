@@ -17,7 +17,6 @@
 #include <sys/epoll.h>
 
 #define POLLER_WAKEUP_TOKEN UINT64_MAX
-#endif /* STRAND_LINUX */
 
 static uint64_t
 poller_make_token(int fd, uint32_t arm_token)
@@ -36,6 +35,7 @@ poller_token_arm(uint64_t token)
 {
 	return ((uint32_t)token);
 }
+#endif /* STRAND_LINUX */
 
 static uint32_t
 poller_next_token(strand_poller_t *p)
@@ -296,8 +296,10 @@ fd_table_insert(strand_poller_t *p, int fd)
 			e->event_mask   = 0;
 			e->reg_state    = FD_REG_NOT_REGISTERED;
 			e->arm_token    = 0;
-			e->read_token   = 0;
-			e->write_token  = 0;
+#ifdef STRAND_OPENBSD
+			e->read_reg     = NULL;
+			e->write_reg    = NULL;
+#endif
 #ifdef STRAND_DEBUG
 			e->dbg_gen = 0;
 #endif
@@ -344,8 +346,10 @@ fd_table_remove(strand_poller_t *p, int fd)
 	e->event_mask   = 0;
 	e->reg_state    = FD_REG_NOT_REGISTERED;
 	e->arm_token    = 0;
-	e->read_token   = 0;
-	e->write_token  = 0;
+#ifdef STRAND_OPENBSD
+	e->read_reg     = NULL;
+	e->write_reg    = NULL;
+#endif
 #ifdef STRAND_DEBUG
 	e->dbg_gen = 0;
 #endif
@@ -363,8 +367,9 @@ fd_table_remove(strand_poller_t *p, int fd)
  *
  * OpenBSD: issues kevent EV_ADD | EV_DISPATCH for the given filter
  *          (EVFILT_READ or EVFILT_WRITE).  new_mask is not used on OpenBSD.
- *          Stores an fd/generation token in kev.udata.  The token is resolved
- *          through the current table, so table growth cannot invalidate it.
+ *          Stores a stable registration object in kev.udata.  The object is
+ *          deleted from kqueue before it is freed, so table growth cannot
+ *          invalidate a kernel-held reference.
  *
  * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
  * See ARCHITECTURE.md §5.4 and §5.7.
@@ -401,7 +406,7 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 
 #ifdef STRAND_OPENBSD
 	struct kevent kev;
-	uint32_t      token;
+	strand_fd_registration_t *reg;
 
 	(void)new_mask; /* mask is implicit in the filter on OpenBSD */
 
@@ -410,17 +415,23 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 	 * After delivery, EV_DISPATCH leaves the filter disabled. Re-arm must
 	 * explicitly re-enable it; EV_ENABLE is harmless on first registration.
 	 */
-	token = poller_next_token(p);
+	reg = calloc(1, sizeof(*reg));
+	if (reg == NULL)
+		return (STRAND_ERR_NOMEM);
+	reg->fd    = fd;
+	reg->token = poller_next_token(p);
 	EV_SET(&kev, (uintptr_t)fd, filter,
 	       EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0,
-	       (void *)(uintptr_t)poller_make_token(fd, token));
+	       reg);
 
-	if (kevent(p->pollfd, &kev, 1, NULL, 0, NULL) == -1)
+	if (kevent(p->pollfd, &kev, 1, NULL, 0, NULL) == -1) {
+		free(reg);
 		return (STRAND_ERR_IO);
+	}
 	if (filter == EVFILT_READ)
-		e->read_token = token;
+		e->read_reg = reg;
 	else
-		e->write_token = token;
+		e->write_reg = reg;
 
 	return (STRAND_OK);
 #endif
@@ -781,35 +792,44 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 #ifdef STRAND_OPENBSD
 
 static void
-poller_delete_filter(strand_poller_t *p, int fd, int filter)
+poller_delete_filter(strand_poller_t *p, strand_fd_entry_t *e, int fd,
+    int filter)
 {
 	struct kevent kev;
+	strand_fd_registration_t *reg;
+
+	reg = (filter == EVFILT_READ) ? e->read_reg : e->write_reg;
 
 	EV_SET(&kev, (uintptr_t)fd, filter, EV_DELETE, 0, 0, NULL);
 	(void)kevent(p->pollfd, &kev, 1, NULL, 0, NULL);
+	free(reg);
+	if (filter == EVFILT_READ)
+		e->read_reg = NULL;
+	else
+		e->write_reg = NULL;
 }
 
 static void
 poller_deliver_event(strand_scheduler_t *sched, struct kevent *kev)
 {
 	strand_fd_entry_t *e;
+	strand_fd_registration_t *reg;
 	strand_poller_t   *p = sched->poller;
 	int                fd;
 	int                result;
-	uint64_t           token;
 
 	/* NULL sentinel: wakeup fd event; no fiber to wake. */
 	if (kev->udata == NULL)
 		return;
 
-	token = (uint64_t)(uintptr_t)kev->udata;
-	fd = poller_token_fd(token);
+	reg = kev->udata;
+	fd = reg->fd;
 	e = fd_table_lookup(p, fd);
 	if (e == NULL)
 		return;
-	if (kev->filter == EVFILT_READ && e->read_token != poller_token_arm(token))
+	if (kev->filter == EVFILT_READ && e->read_reg != reg)
 		return;
-	if (kev->filter == EVFILT_WRITE && e->write_token != poller_token_arm(token))
+	if (kev->filter == EVFILT_WRITE && e->write_reg != reg)
 		return;
 
 	/*
@@ -825,12 +845,12 @@ poller_deliver_event(strand_scheduler_t *sched, struct kevent *kev)
 	if (kev->filter == EVFILT_READ && e->read_waiter != NULL) {
 		strand_fiber_t *f = e->read_waiter;
 		e->read_waiter = NULL;
-		poller_delete_filter(p, fd, EVFILT_READ);
+		poller_delete_filter(p, e, fd, EVFILT_READ);
 		fiber_io_wake(sched, f, result);
 	} else if (kev->filter == EVFILT_WRITE && e->write_waiter != NULL) {
 		strand_fiber_t *f = e->write_waiter;
 		e->write_waiter = NULL;
-		poller_delete_filter(p, fd, EVFILT_WRITE);
+		poller_delete_filter(p, e, fd, EVFILT_WRITE);
 		fiber_io_wake(sched, f, result);
 	}
 
@@ -950,7 +970,7 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 #endif /* STRAND_LINUX */
 
 #ifdef STRAND_OPENBSD
-	poller_delete_filter(p, fd,
+	poller_delete_filter(p, e, fd,
 	    (dir == 0) ? EVFILT_READ : EVFILT_WRITE);
 #endif /* STRAND_OPENBSD */
 

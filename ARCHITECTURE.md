@@ -550,11 +550,12 @@ tracked separately. Both are allowed simultaneously on the same fd.
 **Multiple waiters in the same direction:** Forbidden. Returns an error on
 violation.
 
-**Event identity:** Each fd registration has an fd-plus-generation token
-stored in `epoll_event.data.u64` (Linux) or `kevent.udata` (OpenBSD). Delivery
-resolves the token through the current fd table and validates its generation.
-This makes stale events harmless across table growth, cancellation, and fd
-number reuse; no kernel event retains a pointer into table storage.
+**Event identity:** Linux stores an fd-plus-generation token in
+`epoll_event.data.u64`, resolved through the current fd table on delivery.
+OpenBSD stores a separately allocated, stable registration object in
+`kevent.udata`; its filter is explicitly deleted before the object is freed.
+Both schemes make table growth, cancellation, and fd-number reuse safe: no
+kernel event retains a pointer into movable table storage.
 
 **Cancellation race - two-part rule:**
 

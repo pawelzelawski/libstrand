@@ -38,6 +38,14 @@ typedef enum {
 	FD_REG_DISABLED       = 2,
 } fd_reg_state_t;
 
+#ifdef STRAND_OPENBSD
+/* Stable ownership retained by a kqueue filter until EV_DELETE completes. */
+typedef struct strand_fd_registration {
+	int      fd;
+	uint32_t token;
+} strand_fd_registration_t;
+#endif
+
 /*
  * strand_fd_entry_t - one slot in the open-addressed fd waiter hash table.
  *
@@ -51,8 +59,8 @@ typedef enum {
  *                Ignored on OpenBSD (EV_DISPATCH has no equivalent tracking).
  * arm_token    - Linux registration generation, packed with fd into
  *                epoll_event.data.u64 and validated on delivery.
- * read_token   - OpenBSD EVFILT_READ registration generation.
- * write_token  - OpenBSD EVFILT_WRITE registration generation.
+ * read_reg     - OpenBSD stable EVFILT_READ registration object.
+ * write_reg    - OpenBSD stable EVFILT_WRITE registration object.
  *                See ARCHITECTURE.md §5.3.
  * dbg_gen      - debug-only generation counter; incremented when fd reuse
  *                is detected (fd closed and reopened with same number).
@@ -66,8 +74,10 @@ typedef struct strand_fd_entry {
 	uint32_t         event_mask;
 	fd_reg_state_t   reg_state;
 	uint32_t         arm_token;
-	uint32_t         read_token;
-	uint32_t         write_token;
+#ifdef STRAND_OPENBSD
+	strand_fd_registration_t *read_reg;
+	strand_fd_registration_t *write_reg;
+#endif
 #ifdef STRAND_DEBUG
 	uint32_t         dbg_gen;
 #endif
