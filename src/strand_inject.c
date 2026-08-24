@@ -11,14 +11,10 @@
  *   Consumer reads:   slot[pos & mask].sequence checked == pos + 1 (acquire)
  *   Consumer frees:   slot[pos & mask].sequence = pos + C  (release)
  *
- * Producer protocol (inject_queue_push_release):
- *   1. Atomically claim a ring position:
- *        pos = atomic_fetch_add(&q->head, 1, seq_cst)
- *   2. Compute slot = &q->slots[pos & mask].
- *   3. Spin until slot->sequence == pos (slot freed by consumer).
- *      Uses exponential backoff.  This is the "queue full" wait path.
- *   4. Write item into slot->item.
- *   5. ATOMIC: store slot->sequence = pos + 1, release - publishes item
+ * Producer protocol (inject_queue_try_push_release):
+ *   1. Claim a currently free ring position with compare_exchange.
+ *   2. Write item into the exclusively-owned slot.
+ *   3. ATOMIC: store slot->sequence = pos + 1, release - publishes item
  *      to the consumer.  Pairs with the acquire in pop.
  *
  * Consumer protocol (inject_queue_pop_acquire):
@@ -37,10 +33,9 @@
  *   visibility per ARCHITECTURE.md §6.7.
  *   See CODING_STANDARDS.md §4.2 for the documented exception rationale.
  *
- * Overflow behaviour:
- *   On full queue (step 3): spin with exponential backoff via sched_yield
- *   and nanosleep.  Silent drops are never permitted.  See
- *   ARCHITECTURE.md §6.3.
+ * Overflow behaviour: producers receive a failure instead of reserving a
+ * position and waiting behind a stopped consumer.  Callers either retry while
+ * the scheduler is alive or release their item and report STRAND_EAGAIN.
  *
  * Wakeup signal:
  *   The queue primitive only enqueues/dequeues items.  Wakeup writes are
@@ -56,10 +51,8 @@
 #include "strand_offload.h"
 #include "strand_scope.h"
 
-#include <sched.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 
 #ifdef STRAND_LINUX
@@ -88,32 +81,6 @@ next_pow2(size_t n)
 	return (p);
 }
 
-/*
- * backoff_spin -- yield CPU for an exponentially increasing delay.
- * iteration 0..7: sched_yield (cooperative)
- * iteration 8+:   nanosleep starting at 1ms, doubling, capped at 16ms.
- *
- * Called in the producer's "slot not yet freed" spin loop.
- */
-static void
-backoff_spin(unsigned int iteration)
-{
-	struct timespec ts;
-	unsigned long   ns;
-
-	if (iteration < 8) {
-		sched_yield();
-		return;
-	}
-	/* 1ms << (iteration - 8), capped at 16ms */
-	ns = 1000000UL << (iteration - 8);
-	if (ns > 16000000UL)
-		ns = 16000000UL;
-	ts.tv_sec  = 0;
-	ts.tv_nsec = (long)ns;
-	nanosleep(&ts, NULL);
-}
-
 /* -------------------------------------------------------------------------
  * Public API
  * -------------------------------------------------------------------------
@@ -138,6 +105,7 @@ inject_queue_init(strand_inject_queue_t *q, size_t capacity)
 	q->capacity = capacity;
 	q->mask     = capacity - 1;
 	atomic_init(&q->head, (size_t)0);
+	atomic_init(&q->closed, 0);
 	q->tail     = 0;
 	return (0);
 }
@@ -152,39 +120,34 @@ inject_queue_destroy(strand_inject_queue_t *q)
 }
 
 void
-inject_queue_push_release(strand_inject_queue_t *q,
+inject_queue_close(strand_inject_queue_t *q)
+{
+	atomic_store_explicit(&q->closed, 1, memory_order_release);
+}
+
+int
+inject_queue_try_push_release(strand_inject_queue_t *q,
     const inject_item_t *item)
 {
 	size_t          pos;
 	inject_slot_t  *slot;
-	unsigned int    backoff;
 
-	/*
-	 * Claim an exclusive ring position.  Multiple producers may call
-	 * fetch_add concurrently; each gets a unique pos.
-	 */
-	pos  = atomic_fetch_add_explicit(&q->head, (size_t)1,
-	    memory_order_seq_cst);
-	slot = &q->slots[pos & q->mask];
+	if (atomic_load_explicit(&q->closed, memory_order_acquire))
+		return (-1);
 
-	/*
-	 * Spin until the consumer has freed this slot (sequence == pos).
-	 * Initial state: slot[i].sequence == i, so the first producer at
-	 * pos == i sees the slot immediately.  On subsequent laps the
-	 * consumer sets sequence = pos (== old_tail + capacity).
-	 *
-	 * ATOMIC: acquire on load - ensures we do not observe a stale
-	 * sequence from a previous producer–consumer cycle.
-	 */
-	backoff = 0;
 	for (;;) {
 		size_t seq;
 
-		seq = atomic_load_explicit(&slot->sequence,
-		    memory_order_acquire);
-		if (seq == pos)
+		pos = atomic_load_explicit(&q->head, memory_order_relaxed);
+		slot = &q->slots[pos & q->mask];
+		seq = atomic_load_explicit(&slot->sequence, memory_order_acquire);
+		if (seq != pos)
+			return (-1);
+		if (atomic_compare_exchange_weak_explicit(&q->head, &pos,
+		    pos + 1, memory_order_relaxed, memory_order_relaxed))
 			break;
-		backoff_spin(backoff++);
+		if (atomic_load_explicit(&q->closed, memory_order_acquire))
+			return (-1);
 	}
 
 	/* Write item data into the exclusively-owned slot. */
@@ -197,6 +160,7 @@ inject_queue_push_release(strand_inject_queue_t *q,
 	 */
 	atomic_store_explicit(&slot->sequence, pos + 1,
 	    memory_order_release);
+	return (0);
 }
 
 int
@@ -309,6 +273,8 @@ inject_queue_discard_all(strand_inject_queue_t *q)
 			 * scheduler teardown does not leak it when stop_flag
 			 * races ahead of the worker processing the item.
 			 */
+			stack_free((char *)item.u.fiber->stack_base - page_size(),
+			    item.u.fiber->stack_size, item.u.fiber->valgrind_stack_id);
 			strand_fiber_tsan_destroy(item.u.fiber);
 			free(item.u.fiber);
 			break;

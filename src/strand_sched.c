@@ -28,6 +28,9 @@
 
 #include <limits.h>
 #include <pthread.h>
+#include <sched.h>
+
+#define SCHED_INJECT_CLOSED ((size_t)1 << (sizeof(size_t) * CHAR_BIT - 1))
 
 #include "strand_context.h"
 #include "strand_fiber.h"
@@ -35,6 +38,36 @@
 #include "strand_poller.h"
 
 _Thread_local strand_scheduler_t *strand_sched_current_tls = NULL;
+
+int
+scheduler_inject_acquire(strand_scheduler_t *sched)
+{
+	size_t value;
+
+	for (;;) {
+		value = atomic_load_explicit(&sched->inject_lifetime,
+		    memory_order_acquire);
+		if (value & SCHED_INJECT_CLOSED)
+			return (0);
+		if (atomic_compare_exchange_weak_explicit(&sched->inject_lifetime,
+		    &value, value + 1, memory_order_acquire, memory_order_relaxed))
+			return (1);
+	}
+}
+
+void
+scheduler_inject_release(strand_scheduler_t *sched)
+{
+	atomic_fetch_sub_explicit(&sched->inject_lifetime, 1,
+	    memory_order_release);
+}
+
+int
+scheduler_inject_accepting(const strand_scheduler_t *sched)
+{
+	return (!(atomic_load_explicit(&sched->inject_lifetime,
+	    memory_order_acquire) & SCHED_INJECT_CLOSED));
+}
 
 /* Initial capacity for the timer min-heap (grows by doubling). */
 #define TIMER_HEAP_INITIAL_CAP ((size_t)8)
@@ -263,7 +296,8 @@ strand_scheduler_create(const strand_sched_config_t *cfg)
 	}
 #endif
 	atomic_init(&sched->stop_flag, 0);
-	sched->owner_thread = pthread_self();
+	atomic_init(&sched->inject_lifetime, 0);
+	atomic_init(&sched->owner_thread, pthread_self());
 
 	/*
 	 * Bind TSan's current-thread fiber to scheduler_ctx so that context
@@ -291,6 +325,13 @@ strand_scheduler_destroy(strand_scheduler_t *sched)
 
 	if (sched == NULL)
 		return;
+
+	atomic_fetch_or_explicit(&sched->inject_lifetime, SCHED_INJECT_CLOSED,
+	    memory_order_release);
+	inject_queue_close(&sched->inject_queue);
+	while (atomic_load_explicit(&sched->inject_lifetime,
+	    memory_order_acquire) != SCHED_INJECT_CLOSED)
+		sched_yield();
 
 	/*
 	 * scheduler_ctx was bound via strand_fiber_tsan_bind_current, NOT
@@ -582,7 +623,8 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	strand_sched_current_tls = sched;
 
 	/* Same-worker bookkeeping: current caller owns scheduler access. */
-	sched->owner_thread = pthread_self();
+	atomic_store_explicit(&sched->owner_thread, pthread_self(),
+	    memory_order_release);
 
 	/*
 	 * Rebind scheduler_ctx's TSan fiber handle to the current thread.
@@ -848,6 +890,9 @@ strand_fiber_self_scheduler(void)
 void
 strand_scheduler_stop(strand_scheduler_t *sched)
 {
+	atomic_fetch_or_explicit(&sched->inject_lifetime, SCHED_INJECT_CLOSED,
+	    memory_order_release);
+	inject_queue_close(&sched->inject_queue);
 	/*
 	 * SAFETY: release ordering pairs with the acquire load in
 	 * strand_scheduler_run, ensuring the stop is visible before the
@@ -913,7 +958,8 @@ strand_scheduler_run(strand_scheduler_t *sched)
          */
 
         /* Worker mode establishes scheduler ownership for same-worker APIs. */
-        sched->owner_thread = pthread_self();
+		atomic_store_explicit(&sched->owner_thread, pthread_self(),
+		    memory_order_release);
 
 	/*
 	 * Rebind scheduler_ctx's TSan fiber handle to this worker thread.

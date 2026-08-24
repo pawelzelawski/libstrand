@@ -211,7 +211,8 @@ test_inject_push_pop_basic(void)
 	push_item.u.cancel_handle.ptr        = &dummy;
 	push_item.u.cancel_handle.generation = 42;
 
-	inject_queue_push_release(&q, &push_item);
+	if (inject_queue_try_push_release(&q, &push_item) != 0)
+		return (1);
 
 	memset(&pop_item, 0, sizeof(pop_item));
 	rc = inject_queue_pop_acquire(&q, &pop_item);
@@ -259,7 +260,10 @@ test_inject_fill_and_drain(void)
 		item.type                    = INJECT_CANCEL;
 		item.u.cancel_handle.ptr        = &dummies[i];
 		item.u.cancel_handle.generation = (uint64_t)i;
-		inject_queue_push_release(&q, &item);
+		if (inject_queue_try_push_release(&q, &item) != 0) {
+			inject_queue_destroy(&q);
+			return (1);
+		}
 	}
 
 	for (i = 0; i < cap; i++) {
@@ -307,7 +311,10 @@ test_inject_discard_all(void)
 	item.u.cancel_handle.generation = 0;
 
 	for (i = 0; i < 3; i++)
-		inject_queue_push_release(&q, &item);
+		if (inject_queue_try_push_release(&q, &item) != 0) {
+			inject_queue_destroy(&q);
+			return (1);
+		}
 
 	inject_queue_discard_all(&q);
 
@@ -417,7 +424,10 @@ test_inject_drain_delivers_cancel(void)
 	 */
 	item.type            = INJECT_CANCEL;
 	item.u.cancel_handle = handle;
-	inject_queue_push_release(&sched->inject_queue, &item);
+	if (inject_queue_try_push_release(&sched->inject_queue, &item) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
 
 	/*
 	 * Advance twice: first pass drains inject queue (Step 1) and delivers
@@ -433,14 +443,10 @@ test_inject_drain_delivers_cancel(void)
 }
 
 /* -------------------------------------------------------------------------
- * test_inject_queue_overflow_backoff
+ * test_inject_queue_full_returns
  *
- * Producer: pushes OVERFLOW_CAP + 1 items.  The first OVERFLOW_CAP fill
- * the queue; the last one blocks until the consumer frees a slot.
- * Consumer: sleeps 20 ms to let the producer block, then drains all items.
- *
- * Verification: after join, exactly OVERFLOW_CAP + 1 items were consumed.
- * Confirms no item is dropped and the exponential backoff path executes.
+ * A full queue must fail immediately rather than reserving a position and
+ * waiting forever when its scheduler has stopped.
  *
  * See DEVELOPMENT.md §"Tests for Phase 5" - test_inject_queue_overflow_backoff.
  * -------------------------------------------------------------------------
@@ -448,75 +454,30 @@ test_inject_drain_delivers_cancel(void)
 
 #define OVERFLOW_CAP 16
 
-typedef struct {
-	strand_inject_queue_t *q;
-	_Atomic int            items_consumed;
-} overflow_args_t;
-
-static void *
-overflow_producer(void *arg)
-{
-	overflow_args_t       *a = arg;
-	inject_item_t          item;
-	int                    i;
-
-	item.type                    = INJECT_CANCEL;
-	item.u.cancel_handle.ptr        = NULL;
-	item.u.cancel_handle.generation = 0;
-
-	for (i = 0; i < OVERFLOW_CAP + 1; i++) {
-		item.u.cancel_handle.generation = (uint64_t)i;
-		inject_queue_push_release(a->q, &item);
-	}
-	return (NULL);
-}
-
-static void *
-overflow_consumer(void *arg)
-{
-	overflow_args_t  *a = arg;
-	inject_item_t     item;
-	struct timespec   ts;
-	int               got;
-
-	/* Sleep to allow producer to fill queue and block on overflow. */
-	ts.tv_sec  = 0;
-	ts.tv_nsec = 20000000L; /* 20 ms */
-	nanosleep(&ts, NULL);
-
-	got = 0;
-	while (got < OVERFLOW_CAP + 1) {
-		if (inject_queue_pop_acquire(a->q, &item)) {
-			got++;
-			atomic_fetch_add(&a->items_consumed, 1);
-		}
-	}
-	return (NULL);
-}
-
 static int
-test_inject_queue_overflow_backoff(void)
+test_inject_queue_full_returns(void)
 {
-	strand_inject_queue_t  q;
-	overflow_args_t        args;
-	pthread_t              producer, consumer;
-	int                    total;
+	strand_inject_queue_t q;
+	inject_item_t         item;
+	int                   i;
 
 	if (inject_queue_init(&q, OVERFLOW_CAP) != 0)
 		return (1);
 
-	atomic_init(&args.items_consumed, 0);
-	args.q = &q;
-
-	pthread_create(&producer, NULL, overflow_producer, &args);
-	pthread_create(&consumer, NULL, overflow_consumer, &args);
-
-	pthread_join(producer, NULL);
-	pthread_join(consumer, NULL);
-
-	total = atomic_load(&args.items_consumed);
+	memset(&item, 0, sizeof(item));
+	item.type = INJECT_CANCEL;
+	for (i = 0; i < OVERFLOW_CAP; i++) {
+		if (inject_queue_try_push_release(&q, &item) != 0) {
+			inject_queue_destroy(&q);
+			return (1);
+		}
+	}
+	if (inject_queue_try_push_release(&q, &item) == 0) {
+		inject_queue_destroy(&q);
+		return (1);
+	}
 	inject_queue_destroy(&q);
-	return (total == OVERFLOW_CAP + 1) ? 0 : 1;
+	return (0);
 }
 
 /* -------------------------------------------------------------------------
@@ -1892,6 +1853,108 @@ test_offload_yield_retry_pattern(void)
 }
 
 /* -------------------------------------------------------------------------
+ * test_runtime_destroy_waits_for_offload
+ *
+ * A shutdown begun while an offload callback is running must retain the
+ * scheduler until that callback completes; the completion must not access a
+ * freed scheduler or leave runtime_destroy hung after it is released.
+ * -------------------------------------------------------------------------
+ */
+typedef struct {
+	strand_scheduler_t    *sched;
+	strand_offload_pool_t *pool;
+	_Atomic int            started;
+	_Atomic int            release;
+} shutdown_offload_args_t;
+
+typedef struct {
+	strand_runtime_t *rt;
+	_Atomic int       done;
+} destroy_runtime_args_t;
+
+static void
+shutdown_offload_fn(void *varg, void *result_slot)
+{
+	shutdown_offload_args_t *a = varg;
+
+	(void)result_slot;
+	atomic_store_explicit(&a->started, 1, memory_order_release);
+	while (!atomic_load_explicit(&a->release, memory_order_acquire))
+		test_sleep_1ms();
+}
+
+static void
+shutdown_offload_fiber(void *varg)
+{
+	shutdown_offload_args_t *a = varg;
+	int result;
+
+	(void)strand_fiber_offload(a->sched, a->pool, shutdown_offload_fn, a,
+	    &result);
+}
+
+static void *
+destroy_runtime_thread(void *varg)
+{
+	destroy_runtime_args_t *a = varg;
+
+	strand_runtime_destroy(a->rt);
+	atomic_store_explicit(&a->done, 1, memory_order_release);
+	return (NULL);
+}
+
+static int
+test_runtime_destroy_waits_for_offload(void)
+{
+	strand_runtime_t       *rt;
+	strand_worker_t        *w;
+	strand_offload_pool_t  *pool;
+	shutdown_offload_args_t offload_args;
+	destroy_runtime_args_t  destroy_args;
+	pthread_t                destroy_thread;
+	int                      rc;
+
+	rt = make_test_runtime();
+	if (rt == NULL)
+		return (1);
+	w = make_test_worker(rt);
+	pool = strand_offload_pool_init(1);
+	if (w == NULL || pool == NULL) {
+		strand_offload_pool_destroy(pool);
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+	memset(&offload_args, 0, sizeof(offload_args));
+	offload_args.sched = w->sched;
+	offload_args.pool = pool;
+	atomic_init(&offload_args.started, 0);
+	atomic_init(&offload_args.release, 0);
+	if (strand_runtime_spawn(rt, shutdown_offload_fiber, &offload_args, 0,
+	    w, NULL) != STRAND_OK ||
+	    !wait_atomic_at_least(&offload_args.started, 1, 60000, NULL)) {
+		atomic_store(&offload_args.release, 1);
+		strand_offload_pool_destroy(pool);
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+	destroy_args.rt = rt;
+	atomic_init(&destroy_args.done, 0);
+	if (pthread_create(&destroy_thread, NULL, destroy_runtime_thread,
+	    &destroy_args) != 0) {
+		atomic_store(&offload_args.release, 1);
+		strand_offload_pool_destroy(pool);
+		strand_runtime_destroy(rt);
+		return (1);
+	}
+	test_sleep_1ms();
+	atomic_store_explicit(&offload_args.release, 1, memory_order_release);
+	pthread_join(destroy_thread, NULL);
+	rc = atomic_load_explicit(&destroy_args.done, memory_order_acquire) ? 0 : 1;
+	strand_offload_pool_destroy(pool);
+	return (rc);
+}
+
+/* -------------------------------------------------------------------------
  * Suite runner
  * -------------------------------------------------------------------------
  */
@@ -2027,8 +2090,7 @@ run_layer4_tests(void)
 	RUN("test_inject_capacity_is_power_of_two",
 	    test_inject_capacity_is_power_of_two);
 	RUN("test_inject_drain_delivers_cancel", test_inject_drain_delivers_cancel);
-	RUN("test_inject_queue_overflow_backoff",
-	    test_inject_queue_overflow_backoff);
+	RUN("test_inject_queue_full_returns", test_inject_queue_full_returns);
 	RUN("test_runtime_init_destroy",
 	    test_runtime_init_destroy);
 	RUN("test_no_workers_registered_error",
@@ -2061,6 +2123,8 @@ run_layer4_tests(void)
             test_offload_arg_outlives_cancel);
         RUN("test_offload_yield_retry_pattern",
             test_offload_yield_retry_pattern);
+	RUN("test_runtime_destroy_waits_for_offload",
+	    test_runtime_destroy_waits_for_offload);
         RUN("test_worker_get_scheduler",
             test_worker_get_scheduler);
         RUN("test_fiber_self_scheduler_inside_fiber",
@@ -2068,4 +2132,3 @@ run_layer4_tests(void)
         RUN("test_fiber_self_scheduler_host_thread",
             test_fiber_self_scheduler_host_thread);
 }
-

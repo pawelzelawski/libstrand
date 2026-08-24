@@ -36,17 +36,20 @@ int inject_queue_init(strand_inject_queue_t *q, size_t capacity);
 void inject_queue_destroy(strand_inject_queue_t *q);
 
 /*
- * inject_queue_push_release -- enqueue one item with release memory ordering.
+ * inject_queue_try_push_release -- enqueue one item with release ordering.
  *
  * ATOMIC: release semantics on the slot sequence store - publishes the
  * item write to the consumer.  Pairs with the acquire in
  * inject_queue_pop_acquire.  See ARCHITECTURE.md §6.3 and §6.7.
  *
- * On full queue: spins with exponential backoff until space is available.
- * Never drops.
+ * Returns 0 on success, -1 if the queue is full or closed.  Producers must
+ * release any resources associated with an item that was not enqueued.
  */
-void inject_queue_push_release(strand_inject_queue_t *q,
+int inject_queue_try_push_release(strand_inject_queue_t *q,
     const inject_item_t *item);
+
+/* Close the queue to new producers.  Existing published items remain valid. */
+void inject_queue_close(strand_inject_queue_t *q);
 
 /*
  * inject_queue_pop_acquire -- dequeue one item with acquire memory ordering.

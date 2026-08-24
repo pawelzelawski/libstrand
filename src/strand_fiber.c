@@ -609,7 +609,8 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 
 	if (sched == NULL)
 		return (STRAND_ERR_WRONGCTX);
-	if (!pthread_equal(pthread_self(), sched->owner_thread)) {
+	if (!pthread_equal(pthread_self(), atomic_load_explicit(
+	    &sched->owner_thread, memory_order_acquire))) {
 		inject_item_t item;
 
 		/*
@@ -621,7 +622,13 @@ strand_fiber_cancel(strand_fiber_handle_t handle)
 		 */
 		item.type = INJECT_CANCEL;
 		item.u.cancel_handle = handle;
-		inject_queue_push_release(&sched->inject_queue, &item);
+		if (!scheduler_inject_acquire(sched))
+			return (STRAND_ERR_SHUTDOWN);
+		if (inject_queue_try_push_release(&sched->inject_queue, &item) != 0) {
+			scheduler_inject_release(sched);
+			return (STRAND_EAGAIN);
+		}
+		scheduler_inject_release(sched);
 		/* Wake the owner worker so Step 1 drains the item promptly. */
 #ifdef STRAND_LINUX
 		{
@@ -820,4 +827,3 @@ strand_fiber_local_get(strand_scheduler_t *sched)
 
 	return (sched->current_fiber->local_ptr);
 }
-

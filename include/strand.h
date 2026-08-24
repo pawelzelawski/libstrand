@@ -365,6 +365,7 @@ strand_scheduler_t *strand_worker_get_scheduler(strand_worker_t *w);
  * Returns STRAND_ERR_NO_WORKERS if no workers are registered.
  * Returns STRAND_ERR_WRONGCTX if worker does not belong to rt.
  * Returns STRAND_ERR_NOMEM    on allocation failure.
+ * Returns STRAND_EAGAIN       if the selected worker's inject queue is full.
  *
  * Callable from: host thread or running fiber.
  * See ARCHITECTURE.md §6.4.

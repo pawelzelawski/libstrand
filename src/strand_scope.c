@@ -472,7 +472,8 @@ strand_scope_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
         scope_lifecycle_t expected;
         inject_item_t      item;
 
-        if (!pthread_equal(pthread_self(), sched->owner_thread)) {
+	if (!pthread_equal(pthread_self(), atomic_load_explicit(
+	    &sched->owner_thread, memory_order_acquire))) {
                 /*
                  * SAFETY: cross-thread scope cancel is enqueue-only.  The owner
                  * worker applies the cancellation walk in Step 1 while draining
@@ -480,7 +481,13 @@ strand_scope_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
                  */
                 item.type = INJECT_SCOPE_CANCEL;
                 item.u.scope = scope;
-                inject_queue_push_release(&sched->inject_queue, &item);
+		if (!scheduler_inject_acquire(sched))
+			return (STRAND_ERR_SHUTDOWN);
+		if (inject_queue_try_push_release(&sched->inject_queue, &item) != 0) {
+			scheduler_inject_release(sched);
+			return (STRAND_EAGAIN);
+		}
+		scheduler_inject_release(sched);
 
 #ifdef STRAND_LINUX
                 {

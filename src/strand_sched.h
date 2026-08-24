@@ -67,4 +67,8 @@ int timer_heap_remove(strand_scheduler_t *sched, strand_fiber_t *f);
  */
 extern _Thread_local strand_scheduler_t *strand_sched_current_tls;
 
+int scheduler_inject_acquire(strand_scheduler_t *sched);
+void scheduler_inject_release(strand_scheduler_t *sched);
+int scheduler_inject_accepting(const strand_scheduler_t *sched);
+
 #endif /* STRAND_SCHED_H */

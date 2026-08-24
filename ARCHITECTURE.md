@@ -712,14 +712,21 @@ Workers must be registered with the runtime before host-thread
 thread before any workers are registered returns an error.
 
 **Shutdown sequence:**
-1. Call `strand_scheduler_stop` on all workers
-2. Wait for each `strand_scheduler_run` call to return on each worker thread
-3. Tear down the runtime only after all workers have returned
+1. Close worker injection, then call `strand_scheduler_stop` on all workers.
+2. Wait for each `strand_scheduler_run` call to return on each worker thread.
+3. Wait for offload completions that retained a worker scheduler, then tear
+   down that scheduler and the runtime.
 
 Once shutdown begins - after the first `strand_scheduler_stop` call - both
 host-thread and running-fiber `strand_fiber_spawn` return an error. The same
 atomic shutdown flag is checked on all spawn paths. Stopped workers are
 excluded from round-robin selection.
+
+Each host-thread spawn obtains a short runtime lifetime reference before it
+selects a worker and releases it after enqueueing or freeing its allocation.
+Runtime destruction first rejects new operations, then waits for these active
+calls before it stops and frees workers. An offload work item similarly retains
+its home scheduler until it either publishes completion or observes shutdown.
 
 Spawning during shutdown would create fibers that cannot complete cleanly as
 the runtime tears down. Returning an error on spawn is the correct behaviour.
@@ -733,12 +740,12 @@ signals) are drained in Step 1 of `strand_scheduler_advance`.
 **Capacity:** Configurable at runtime initialisation. Must be sized
 appropriately for expected peak cross-worker operation rate.
 
-**Overflow behaviour:** When an enqueue attempt finds the queue full, the
-calling thread blocks briefly using exponential backoff until space is
-available. Silent drops are never permitted - every injected item must
-eventually be processed. Full blocking is acceptable because inject queue
-overflow indicates extreme system load; a brief wait is preferable to
-correctness failure.
+**Overflow behaviour:** An ordinary enqueue attempt fails immediately when the
+queue is full or closed. Host spawning and cross-worker requests return
+`STRAND_EAGAIN` rather than waiting behind a stopped consumer. Offload
+completion retries only while its scheduler remains accepting injection; once
+shutdown closes the queue it releases the parked fiber and its scheduler
+lifetime reference instead of touching torn-down scheduler state.
 
 **Memory ordering:** Inject enqueue uses release semantics; inject dequeue
 uses acquire semantics. This establishes the happens-before chain required for
@@ -783,9 +790,9 @@ spawning fiber. Returns an error if shutdown has begun.
 
 **From the host thread:** Round-robin across registered workers, with explicit
 worker override. Stopped workers are excluded from round-robin. Returns an
-error if no workers are registered or if shutdown has begun. The worker list
-and round-robin counter are protected by a lightweight spinlock accessed only
-at spawn time from the host thread.
+error if no workers are registered, shutdown has begun, or the selected inject
+queue is full. The worker list and runtime lifetime state are protected by a
+mutex; the round-robin counter is atomic.
 
 ### 6.5 Blocking Syscall Offload
 

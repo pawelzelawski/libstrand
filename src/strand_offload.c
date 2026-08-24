@@ -10,11 +10,13 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <sched.h>
 
 #include "strand_offload.h"
 #include "strand_inject.h"
 #include "strand_sched.h"
 #include "strand_context.h"
+#include "strand_fiber.h"
 
 /* ---------------------------------------------------------------------------
  * offload_item_release - drop one reference; free when zero.
@@ -57,6 +59,7 @@ offload_thread_worker(void *varg)
 {
         strand_offload_pool_t  *pool = varg;
         strand_offload_item_t  *item;
+        strand_scheduler_t     *home_sched;
         offload_state_t         expected;
         inject_item_t           inj;
 
@@ -80,6 +83,7 @@ offload_thread_worker(void *varg)
                 pthread_mutex_unlock(&pool->mutex);
 
                 item->next = NULL;
+		home_sched = item->home_sched;
 
                 /* Run the blocking function. */
                 item->fn(item->arg, item->result_slot);
@@ -113,26 +117,51 @@ offload_thread_worker(void *varg)
                          *   fn writes result_slot -> CAS release -> inject release
                          *   -> drain acquire -> fiber reads result_slot.
                          */
-                        inj.type     = INJECT_OFFLOAD_COMPLETE;
+                        int delivered;
+
+                        inj.type      = INJECT_OFFLOAD_COMPLETE;
                         inj.u.offload = item;
-                        inject_queue_push_release(&item->home_sched->inject_queue,
-                                                  &inj);
+                        delivered = 0;
+                        for (;;) {
+                                if (inject_queue_try_push_release(
+                                    &home_sched->inject_queue, &inj) == 0) {
+                                        delivered = 1;
+                                        break;
+                                }
+                                if (!scheduler_inject_accepting(home_sched))
+                                        break;
+                                sched_yield();
+                        }
+                        if (!delivered) {
+                                strand_fiber_t *f = item->home_fiber.ptr;
+
+                                /* Shutdown owns this parked fiber; it cannot resume. */
+                                stack_free((char *)f->stack_base - page_size(),
+                                    f->stack_size, f->valgrind_stack_id);
+                                strand_fiber_tsan_destroy(f);
+                                free(f);
+                                offload_item_release(item);
+                        }
                         /*
                          * Wake the home worker so it processes the inject
                          * promptly rather than waiting for the next poll timeout.
                          */
 #ifdef STRAND_LINUX
+                        if (delivered) {
                         {
                                 uint64_t v = 1;
-                                (void)write(item->home_sched->wakeup_fd,
+                                (void)write(home_sched->wakeup_fd,
                                             &v, sizeof(v));
+                        }
                         }
 #endif
 #ifdef STRAND_OPENBSD
+                        if (delivered) {
                         {
                                 char v = 1;
-                                (void)write(item->home_sched->wakeup_pipe[1],
+                                (void)write(home_sched->wakeup_pipe[1],
                                             &v, sizeof(v));
+                        }
                         }
 #endif
                 }
@@ -140,6 +169,8 @@ offload_thread_worker(void *varg)
 
                 /* Release offload-thread-side refcount. */
                 offload_item_release(item);
+		/* Drop the scheduler lifetime reference acquired at submission. */
+		scheduler_inject_release(home_sched);
         }
 
         return (NULL);
@@ -292,6 +323,11 @@ strand_fiber_offload(strand_scheduler_t *sched,
         item = calloc(1, sizeof(*item));
         if (item == NULL)
                 return (STRAND_ERR_NOMEM);
+
+	if (!scheduler_inject_acquire(sched)) {
+		free(item);
+		return (STRAND_ERR_SHUTDOWN);
+	}
 
         item->fn          = fn;
         item->arg         = arg;

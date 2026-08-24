@@ -43,35 +43,46 @@
 #endif
 
 /* -------------------------------------------------------------------------
- * Spinlock helpers
+ * Runtime lifetime helpers
  * -------------------------------------------------------------------------
  */
 
 /*
- * runtime_lock - acquire the spinlock protecting workers[] and worker_count.
- *
- * Spin with sched_yield until the CAS succeeds.  The spinlock is only
- * taken from the host thread at worker_start and runtime_spawn time.
+ * runtime_lock - acquire the mutex protecting the worker registry.
  */
 void
 runtime_lock(strand_runtime_t *rt)
 {
-	int expected;
-
-	for (;;) {
-		expected = 0;
-		if (atomic_compare_exchange_weak_explicit(
-		    &rt->spinlock, &expected, 1,
-		    memory_order_acquire, memory_order_relaxed))
-			break;
-		sched_yield();
-	}
+	(void)pthread_mutex_lock(&rt->mutex);
 }
 
 void
 runtime_unlock(strand_runtime_t *rt)
 {
-	atomic_store_explicit(&rt->spinlock, 0, memory_order_release);
+	(void)pthread_mutex_unlock(&rt->mutex);
+}
+
+static int
+runtime_begin(strand_runtime_t *rt)
+{
+	runtime_lock(rt);
+	if (rt->shutdown_flag) {
+		runtime_unlock(rt);
+		return (0);
+	}
+	rt->active_ops++;
+	runtime_unlock(rt);
+	return (1);
+}
+
+static void
+runtime_end(strand_runtime_t *rt)
+{
+	runtime_lock(rt);
+	rt->active_ops--;
+	if (rt->active_ops == 0)
+		(void)pthread_cond_broadcast(&rt->idle_cond);
+	runtime_unlock(rt);
 }
 
 /* -------------------------------------------------------------------------
@@ -155,9 +166,20 @@ strand_runtime_init(const strand_runtime_config_t *cfg)
 
 	rt->workers_cap  = cap;
 	rt->worker_count = 0;
-	atomic_init(&rt->spinlock,      0);
 	atomic_init(&rt->rr_counter,    0u);
-	atomic_init(&rt->shutdown_flag, 0);
+	if (pthread_mutex_init(&rt->mutex, NULL) != 0) {
+		free(rt->workers);
+		free(rt);
+		return (NULL);
+	}
+	if (pthread_cond_init(&rt->idle_cond, NULL) != 0) {
+		pthread_mutex_destroy(&rt->mutex);
+		free(rt->workers);
+		free(rt);
+		return (NULL);
+	}
+	rt->shutdown_flag = 0;
+	rt->active_ops = 0;
 	return (rt);
 }
 
@@ -178,8 +200,12 @@ strand_runtime_destroy(strand_runtime_t *rt)
 	if (rt == NULL)
 		return;
 
-	/* Step 1: set shutdown flag so no new spawns can sneak in. */
-	atomic_store(&rt->shutdown_flag, 1);
+	/* Stop new operations and wait for in-progress spawns to release refs. */
+	runtime_lock(rt);
+	rt->shutdown_flag = 1;
+	while (rt->active_ops != 0)
+		(void)pthread_cond_wait(&rt->idle_cond, &rt->mutex);
+	runtime_unlock(rt);
 
 	/* Step 2: stop all workers. */
 	for (i = 0; i < rt->worker_count; i++)
@@ -198,6 +224,8 @@ strand_runtime_destroy(strand_runtime_t *rt)
 	}
 
 	free(rt->workers);
+	pthread_cond_destroy(&rt->idle_cond);
+	pthread_mutex_destroy(&rt->mutex);
 	free(rt);
 }
 
@@ -217,19 +245,21 @@ strand_worker_start(strand_runtime_t *rt, const strand_worker_config_t *cfg)
 	if (rt == NULL)
 		return (NULL);
 
-	/* Reject after shutdown has begun. */
-	if (atomic_load(&rt->shutdown_flag))
+	if (!runtime_begin(rt))
 		return (NULL);
 
 	w = calloc(1, sizeof(*w));
-	if (w == NULL)
+	if (w == NULL) {
+		runtime_end(rt);
 		return (NULL);
+	}
 
 	w->runtime = rt;
 	w->sched   = strand_scheduler_create(
 	    (cfg != NULL) ? cfg->sched_cfg : NULL);
 	if (w->sched == NULL) {
 		free(w);
+		runtime_end(rt);
 		return (NULL);
 	}
 
@@ -239,6 +269,7 @@ strand_worker_start(strand_runtime_t *rt, const strand_worker_config_t *cfg)
 		runtime_unlock(rt);
 		strand_scheduler_destroy(w->sched);
 		free(w);
+		runtime_end(rt);
 		return (NULL);
 	}
 	rt->workers[rt->worker_count++] = w;
@@ -253,6 +284,7 @@ strand_worker_start(strand_runtime_t *rt, const strand_worker_config_t *cfg)
 		runtime_unlock(rt);
 		strand_scheduler_destroy(w->sched);
 		free(w);
+		runtime_end(rt);
 		return (NULL);
 	}
 
@@ -272,6 +304,7 @@ strand_worker_start(strand_runtime_t *rt, const strand_worker_config_t *cfg)
 	}
 #endif
 
+	runtime_end(rt);
 	return (w);
 }
 
@@ -352,8 +385,7 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 	if (rt == NULL)
 		return (STRAND_ERR_NOMEM);
 
-	/* SAFETY: shutdown_flag checked before any allocation. */
-	if (atomic_load(&rt->shutdown_flag))
+	if (!runtime_begin(rt))
 		return (STRAND_ERR_SHUTDOWN);
 
 	if (stack_sz == 0)
@@ -376,10 +408,12 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 		}
 		if (!found) {
 			runtime_unlock(rt);
+			runtime_end(rt);
 			return (STRAND_ERR_WRONGCTX);
 		}
 		if (atomic_load(&worker->sched->stop_flag)) {
 			runtime_unlock(rt);
+			runtime_end(rt);
 			return (STRAND_ERR_SHUTDOWN);
 		}
 		runtime_unlock(rt);
@@ -388,12 +422,19 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 		runtime_lock(rt);
 		if (rt->worker_count == 0) {
 			runtime_unlock(rt);
+			runtime_end(rt);
 			return (STRAND_ERR_NO_WORKERS);
 		}
 		target = runtime_select_worker(rt);
 		runtime_unlock(rt);
-		if (target == NULL)
+		if (target == NULL) {
+			runtime_end(rt);
 			return (STRAND_ERR_SHUTDOWN);
+		}
+	}
+	if (!scheduler_inject_acquire(target->sched)) {
+		runtime_end(rt);
+		return (STRAND_ERR_SHUTDOWN);
 	}
 
 	/*
@@ -403,12 +444,17 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 	 * touch the target worker's per-scheduler dead_pool.
 	 */
 	f = fiber_alloc(NULL);
-	if (f == NULL)
+	if (f == NULL) {
+		scheduler_inject_release(target->sched);
+		runtime_end(rt);
 		return (STRAND_ERR_NOMEM);
+	}
 
 	stack_base = stack_alloc(stack_sz, &vg_id);
 	if (stack_base == NULL) {
 		fiber_free(NULL, f);
+		scheduler_inject_release(target->sched);
+		runtime_end(rt);
 		return (STRAND_ERR_NOMEM);
 	}
 
@@ -434,7 +480,15 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 	/* Build and push the inject item. */
 	item.type    = INJECT_SPAWN;
 	item.u.fiber = f;
-	inject_queue_push_release(&target->sched->inject_queue, &item);
+	if (inject_queue_try_push_release(&target->sched->inject_queue, &item) != 0) {
+		stack_free((char *)f->stack_base - page_size(), f->stack_size,
+		    f->valgrind_stack_id);
+		strand_fiber_tsan_destroy(f);
+		free(f);
+		scheduler_inject_release(target->sched);
+		runtime_end(rt);
+		return (STRAND_EAGAIN);
+	}
 
 	/* Wake the target worker so Step 1 runs promptly. */
 #ifdef STRAND_LINUX
@@ -454,5 +508,7 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 		out->ptr        = f;
 		out->generation = f->generation;
 	}
+	scheduler_inject_release(target->sched);
+	runtime_end(rt);
 	return (STRAND_OK);
 }

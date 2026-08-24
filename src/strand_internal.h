@@ -436,6 +436,7 @@ typedef struct strand_inject_queue {
 	size_t            mask;
 	_Atomic size_t    head;
 	size_t            tail;
+	_Atomic int       closed;
 } strand_inject_queue_t;
 
 /*
@@ -591,9 +592,11 @@ typedef struct strand_scheduler {
 	 */
 	uint64_t watchdog_threshold_ns;
 
-	/* Owner thread for same-worker operations.
-	 * Set at create and refreshed by scheduler entry points. */
-	pthread_t owner_thread;
+	/* Owner thread for same-worker operations. */
+	_Atomic pthread_t owner_thread;
+
+	/* Closed bit plus external inject producer references. */
+	_Atomic size_t inject_lifetime;
 } strand_scheduler_t;
 
 /*
@@ -642,13 +645,15 @@ typedef struct strand_runtime {
 	size_t              worker_count;
 	size_t              workers_cap;
 	/*
-	 * SAFETY: spinlock protects workers[] and worker_count.
-	 * Acquire before reading or modifying either; release after.
-	 * rr_counter and shutdown_flag are _Atomic and accessed lock-free.
+	 * mutex protects workers[], worker_count, shutdown_flag, and active_ops.
+	 * An active operation has acquired a temporary runtime lifetime reference;
+	 * destroy waits for all such operations before stopping workers.
 	 */
-	_Atomic int         spinlock;
+	pthread_mutex_t     mutex;
+	pthread_cond_t      idle_cond;
 	_Atomic uint32_t    rr_counter;
-	_Atomic int         shutdown_flag;
+	int                 shutdown_flag;
+	size_t              active_ops;
 } strand_runtime_t;
 
 #endif /* STRAND_INTERNAL_H */
