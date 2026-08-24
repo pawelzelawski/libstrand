@@ -259,6 +259,12 @@ Nonblocking. Performs exactly one pass through the scheduler work pipeline and
 returns. Never blocks the caller. Used when the programmer drives the scheduler
 from their own event loop.
 
+The calling thread exclusively owns the scheduler for the duration of an
+advance call. Concurrent `advance` or `run` calls on the same scheduler are
+unsupported. While a guest advance dispatches a fiber, that scheduler is the
+fiber's current scheduler identity; the prior thread-local identity is restored
+before `advance` returns.
+
 **Steps performed in order:**
 1. Drain inject queue - move injected fibers/events to local run queue (FIFO)
 2. Process expired timers - move fibers whose deadline has passed to run queue
@@ -281,6 +287,7 @@ Blocking. Runs `strand_scheduler_advance` in a loop. When the run queue is
 empty after all steps, blocks in `epoll_wait`/`kevent` with the next timer
 deadline as the timeout, or indefinitely if no pending timers. Never returns
 until `strand_scheduler_stop` is called and the stop flag is observed.
+The worker scheduler identity is cleared when this loop exits.
 
 **`strand_scheduler_stop(sched)`:**
 
@@ -1274,6 +1281,9 @@ spawned, the cache is checked first before calling `mmap`.
 
 **Default: 64 KB.** Per-spawn override is supported - the spawn API accepts
 an optional `size_t stack_size` parameter where `0` means use the default.
+Any positive requested size is valid: the initial context aligns its stack
+pointer down internally, preserving the x86_64 SysV and AArch64 ABI alignment
+rules without increasing the requested mapping.
 
 64 KB is the right default for the target workload. Protocol handling logic,
 I/O waiting, and distributed system coordination code does not have deep call

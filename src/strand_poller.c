@@ -9,8 +9,10 @@
 
 #include <assert.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifdef STRAND_LINUX
@@ -868,17 +870,29 @@ poller_deliver_event(strand_scheduler_t *sched, struct kevent *kev)
  * Each returned event is passed to poller_deliver_event, which wakes any
  * parked fiber and pushes it onto the scheduler run queue.
  *
- * timeout_ms: -1 = block indefinitely; 0 = non-blocking; >0 = bounded wait.
+ * timeout_ns: UINT64_MAX = block indefinitely; 0 = non-blocking; otherwise
+ * a bounded nanosecond wait.  Linux epoll accepts milliseconds, so positive
+ * values are rounded up there.  kqueue receives the exact timespec.
  * See ARCHITECTURE.md §5.5, §5.6, §5.7.
  * ---------------------------------------------------------------------------
  */
 void
-poller_poll(strand_scheduler_t *sched, int timeout_ms)
+poller_poll(strand_scheduler_t *sched, uint64_t timeout_ns)
 {
 #ifdef STRAND_LINUX
 	strand_poller_t    *p = sched->poller;
 	struct epoll_event evs[POLLER_MAX_EVENTS];
-	int                nfds, i;
+	int                nfds, i, timeout_ms;
+
+	if (timeout_ns == UINT64_MAX) {
+		timeout_ms = -1;
+	} else {
+		uint64_t timeout_ms_u;
+
+		timeout_ms_u = (timeout_ns + 999999ULL) / 1000000ULL;
+		timeout_ms = (timeout_ms_u > (uint64_t)INT_MAX) ? INT_MAX :
+		    (int)timeout_ms_u;
+	}
 
 	nfds = epoll_wait(p->pollfd, evs, POLLER_MAX_EVENTS, timeout_ms);
 	for (i = 0; i < nfds; i++)
@@ -891,11 +905,11 @@ poller_poll(strand_scheduler_t *sched, int timeout_ms)
 	struct timespec  ts, *tsp;
 	int              nfds, i;
 
-	if (timeout_ms < 0) {
+	if (timeout_ns == UINT64_MAX) {
 		tsp = NULL; /* block indefinitely */
 	} else {
-		ts.tv_sec  = timeout_ms / 1000;
-		ts.tv_nsec = (long)(timeout_ms % 1000) * 1000000L;
+		ts.tv_sec  = (time_t)(timeout_ns / 1000000000ULL);
+		ts.tv_nsec = (long)(timeout_ns % 1000000000ULL);
 		tsp = &ts;
 	}
 	nfds = kevent(p->pollfd, NULL, 0, evs, POLLER_MAX_EVENTS, tsp);

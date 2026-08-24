@@ -34,6 +34,8 @@
 #include "strand_inject.h"
 #include "strand_poller.h"
 
+_Thread_local strand_scheduler_t *strand_sched_current_tls = NULL;
+
 /* Initial capacity for the timer min-heap (grows by doubling). */
 #define TIMER_HEAP_INITIAL_CAP ((size_t)8)
 
@@ -569,6 +571,15 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	uint64_t t;
 	size_t ran;
 	strand_fiber_t *f;
+	strand_scheduler_t *previous_sched;
+
+	/*
+	 * Guest mode has no surrounding run loop to establish identity.  Keep it
+	 * valid while advance dispatches fibers, then restore the caller's TLS
+	 * state before returning.
+	 */
+	previous_sched = strand_sched_current_tls;
+	strand_sched_current_tls = sched;
 
 	/* Same-worker bookkeeping: current caller owns scheduler access. */
 	sched->owner_thread = pthread_self();
@@ -760,11 +771,13 @@ strand_scheduler_advance(strand_scheduler_t *sched, uint64_t *next_deadline_ns)
 	if (progress) {
 		if (next_deadline_ns != NULL)
 			*next_deadline_ns = timer_heap_peek_deadline(sched);
+		strand_sched_current_tls = previous_sched;
 		return (STRAND_SCHED_PROGRESS);
 	}
 
 	if (next_deadline_ns != NULL)
 		*next_deadline_ns = timer_heap_peek_deadline(sched);
+	strand_sched_current_tls = previous_sched;
 	return (STRAND_SCHED_IDLE);
 }
 
@@ -884,8 +897,6 @@ strand_scheduler_stop(strand_scheduler_t *sched)
  * Used internally by tests and by strand_sched_current() to retrieve the
  * current worker's scheduler without requiring a fiber descriptor pointer.
  */
-_Thread_local strand_scheduler_t *strand_sched_current_tls = NULL;
-
 void
 strand_scheduler_run(strand_scheduler_t *sched)
 {
@@ -914,17 +925,17 @@ strand_scheduler_run(strand_scheduler_t *sched)
 	for (;;) {
 		uint64_t next_ns;
 		sched_result_t rc;
-		int timeout_ms;
+		uint64_t timeout_ns;
 
 		if (atomic_load_explicit(&sched->stop_flag,
 		                         memory_order_acquire))
-			return;
+			break;
 
 		rc = strand_scheduler_advance(sched, &next_ns);
 
 		if (atomic_load_explicit(&sched->stop_flag,
 		                         memory_order_acquire))
-			return;
+			break;
 
 		if (rc != STRAND_SCHED_IDLE)
 			continue;
@@ -938,20 +949,17 @@ strand_scheduler_run(strand_scheduler_t *sched)
 		 * See ARCHITECTURE.md §4.2.
 		 */
 		if (next_ns == UINT64_MAX) {
-			timeout_ms = -1; /* block indefinitely until woken */
+			timeout_ns = UINT64_MAX;
 		} else {
 			uint64_t t_now = now_ns();
 			if (t_now >= next_ns) {
-				timeout_ms = 0;
+				timeout_ns = 0;
 			} else {
-				uint64_t diff_ms =
-				    (next_ns - t_now) / 1000000ULL;
-				timeout_ms = (diff_ms > (uint64_t)INT_MAX)
-				                 ? INT_MAX
-				                 : (int)diff_ms;
+				timeout_ns = next_ns - t_now;
 			}
 		}
 
-		poller_poll(sched, timeout_ms);
+		poller_poll(sched, timeout_ns);
 	}
+	strand_sched_current_tls = NULL;
 }

@@ -19,6 +19,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#if defined(__x86_64__) || defined(__amd64__)
+#include <xmmintrin.h>
+#endif
+
 #include "test_harness.h"
 #include "../src/strand_context.h"
 #include "../src/strand_fiber.h"
@@ -68,12 +72,13 @@ tear_down_sched_fiber(strand_fiber_t *sched)
  * Returns 0 on success, -1 on failure.
  */
 static int
-set_up_fiber(struct test_fiber *tf, strand_fiber_fn_t entry, void *arg)
+set_up_fiber_size(struct test_fiber *tf, strand_fiber_fn_t entry, void *arg,
+    size_t stack_size)
 {
 	char *stack_top;
 
 	memset(tf, 0, sizeof(*tf));
-	tf->stack_size = TEST_STACK_SIZE;
+	tf->stack_size = stack_size;
 	tf->stack_base = stack_alloc(tf->stack_size, &tf->vg_id);
 	if (tf->stack_base == NULL)
 		return (-1);
@@ -86,6 +91,12 @@ set_up_fiber(struct test_fiber *tf, strand_fiber_fn_t entry, void *arg)
 
 	strand_context_init(&tf->fiber.context, stack_top, entry, arg);
 	return (0);
+}
+
+static int
+set_up_fiber(struct test_fiber *tf, strand_fiber_fn_t entry, void *arg)
+{
+	return (set_up_fiber_size(tf, entry, arg, TEST_STACK_SIZE));
 }
 
 static void
@@ -390,6 +401,12 @@ fiber_05(void *arg)
 	(void)arg;
 
 #if defined(__x86_64__) || defined(__amd64__)
+	volatile __m128 lanes = _mm_set1_ps(1.0f);
+	float values[4] __attribute__((aligned(16)));
+
+	_mm_store_ps(values, lanes);
+	if (values[0] != 1.0f)
+		abort();
 	__asm__ volatile("movq %%rsp, %0" : "=r"(sp));
 #elif defined(__aarch64__) || defined(__arm64__)
 	__asm__ volatile("mov %0, sp" : "=r"(sp));
@@ -409,7 +426,8 @@ test_context_stack_alignment(void)
 	g_sched_05 = &sched;
 	g_sp_alignment_05 = 0;
 	set_up_sched_fiber(&sched);
-	if (set_up_fiber(&g_tf_05, fiber_05, NULL) != 0)
+	/* Deliberately non-aligned usable size exercises public stack_sz input. */
+	if (set_up_fiber_size(&g_tf_05, fiber_05, NULL, 65537) != 0)
 		return (tear_down_sched_fiber(&sched), 1);
 
 	strand_context_switch(&sched, &g_tf_05.fiber);

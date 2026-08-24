@@ -4,6 +4,7 @@
 #   make / make dev  - debug build with ASan/UBSan (Linux only)
 #   make release     - optimised build
 #   make test        - build and run test suite (wired in Task 1.2)
+#   make test-real-clock - real-clock timer regression profile
 #   make test-tsan   - TSan build, Clang only, Linux only
 #   make valgrind    - run tests under Valgrind, Linux only
 #   make bench       - build and run benchmarks (Phase 7)
@@ -77,6 +78,11 @@ CFLAGS_TSAN    = $(CFLAGS_COMMON) $(CFLAGS_OS)				\
 CFLAGS_VG      = $(CFLAGS_COMMON) $(CFLAGS_OS) -O1 -g -DSTRAND_DEBUG	\
                  -DSTRAND_TEST_CLOCK
 
+CFLAGS_REAL    = $(CFLAGS_COMMON) $(CFLAGS_OS)				\
+                 -O1 -g -Werror					\
+                 $(SANITIZERS)						\
+                 -DSTRAND_DEBUG
+
 CFLAGS_RELEASE = $(CFLAGS_COMMON) $(CFLAGS_OS) -O2 -DNDEBUG
 
 LDFLAGS = -lpthread
@@ -121,6 +127,9 @@ TEST_BIN_VG     = $(BUILD_TESTS_DIR)/run_tests_vg
 TSAN_DIR        = $(BUILD_DIR)/tsan
 LIB_TSAN        = $(TSAN_DIR)/libstrand.a
 TEST_BIN_TSAN   = $(BUILD_TESTS_DIR)/run_tests_tsan
+REAL_DIR        = $(BUILD_DIR)/real
+LIB_REAL        = $(REAL_DIR)/libstrand.a
+TEST_BIN_REAL   = $(BUILD_TESTS_DIR)/test_real_clock
 
 INCLUDES = -I include/
 
@@ -134,7 +143,7 @@ ASM_OBJ_TSAN != if [ -n "$(ASM_SRC)" ]; then echo "$(TSAN_DIR)/strand_context_as
 
 # --- Phony targets ----------------------------------------------------------
 
-.PHONY: all dev release test test-tsan valgrind bench tools lint format clean install
+.PHONY: all dev release test test-real-clock test-tsan valgrind bench tools lint format clean install
 
 all: dev
 
@@ -151,6 +160,26 @@ release: $(LIB_RELEASE)
 # 'valgrind' target which handles guard pages correctly.
 test: $(TEST_BIN)
 	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN)
+
+# Real-clock regression profile.  This deliberately omits STRAND_TEST_CLOCK
+# so sub-millisecond worker sleeps exercise the operating-system poll timeout.
+test-real-clock: $(TEST_BIN_REAL)
+	ASAN_OPTIONS=detect_leaks=0 $(TEST_BIN_REAL)
+
+$(TEST_BIN_REAL): tests/test_real_clock.c $(LIB_SRCS) $(ASM_SRC)
+	@mkdir -p $(REAL_DIR) $(BUILD_TESTS_DIR)
+	$(CC) $(CFLAGS_REAL) $(INCLUDES) -c src/strand_context.c -o $(REAL_DIR)/strand_context.o
+	$(CC) $(CFLAGS_REAL) $(INCLUDES) -c src/strand_fiber.c -o $(REAL_DIR)/strand_fiber.o
+	$(CC) $(CFLAGS_REAL) $(INCLUDES) -c src/strand_sched.c -o $(REAL_DIR)/strand_sched.o
+	$(CC) $(CFLAGS_REAL) $(INCLUDES) -c src/strand_poller.c -o $(REAL_DIR)/strand_poller.o
+	$(CC) $(CFLAGS_REAL) $(INCLUDES) -c src/strand_inject.c -o $(REAL_DIR)/strand_inject.o
+	$(CC) $(CFLAGS_REAL) $(INCLUDES) -c src/strand_runtime.c -o $(REAL_DIR)/strand_runtime.o
+	$(CC) $(CFLAGS_REAL) $(INCLUDES) -c src/strand_offload.c -o $(REAL_DIR)/strand_offload.o
+	$(CC) $(CFLAGS_REAL) $(INCLUDES) -c src/strand_scope.c -o $(REAL_DIR)/strand_scope.o
+	test -z "$(ASM_SRC)" || $(CC) $(CFLAGS_REAL) -c $(ASM_SRC) -o $(REAL_DIR)/strand_context_asm.o
+	ar rcs $(LIB_REAL) $(REAL_DIR)/strand_context.o $(REAL_DIR)/strand_fiber.o $(REAL_DIR)/strand_sched.o $(REAL_DIR)/strand_poller.o $(REAL_DIR)/strand_inject.o $(REAL_DIR)/strand_runtime.o $(REAL_DIR)/strand_offload.o $(REAL_DIR)/strand_scope.o
+	test -z "$(ASM_SRC)" || ar qs $(LIB_REAL) $(REAL_DIR)/strand_context_asm.o
+	$(CC) $(CFLAGS_REAL) $(INCLUDES) -I src/ tests/test_real_clock.c $(LIB_REAL) $(LDFLAGS) -o $@
 
 # TSan - Clang only, Linux only
 test-tsan:

@@ -195,15 +195,15 @@ void fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f,
  * then calls poller_deliver_event for every returned event.  Ready fibers
  * are pushed to sched's run queue by poller_deliver_event.
  *
- * timeout_ms:  -1 = block indefinitely until an event or wakeup;
- *               0 = return immediately (non-blocking);
- *              >0 = block for at most timeout_ms milliseconds.
+ * timeout_ns: UINT64_MAX = block indefinitely until an event or wakeup;
+ *             0 = return immediately (non-blocking);
+ *             otherwise, block for at most timeout_ns nanoseconds.
  *
  * Called from strand_scheduler_advance Step 4 (timeout=0) and from the
  * strand_scheduler_run idle wait (blocking timeout).
  * See ARCHITECTURE.md §5.5, §5.6, §5.7.
  */
-void poller_poll(struct strand_scheduler *sched, int timeout_ms);
+void poller_poll(struct strand_scheduler *sched, uint64_t timeout_ns);
 
 /*
  * poller_cancel_io - cancel a fiber parked on an I/O wait (same-worker path).

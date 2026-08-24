@@ -354,7 +354,9 @@ strand_scheduler_t *strand_worker_get_scheduler(strand_worker_t *w);
  * rt:       runtime handle.
  * fn:       fiber entry function.
  * arg:      argument passed to fn; ownership is the caller's.
- * stack_sz: usable stack bytes; 0 uses STRAND_DEFAULT_STACK_SIZE.
+ * stack_sz: usable stack bytes; 0 uses STRAND_DEFAULT_STACK_SIZE. Any
+ *           positive size is accepted; libstrand aligns initial execution
+ *           internally without increasing the requested usable mapping.
  * worker:   explicit target; NULL for automatic round-robin.
  * out:      if non-NULL, receives ABA-safe handle on success.
  *
@@ -425,7 +427,9 @@ void strand_scheduler_destroy(strand_scheduler_t *sched);
  * Returns STRAND_SCHED_PROGRESS if any work was done.
  * Returns STRAND_SCHED_IDLE otherwise.
  *
- * Callable from: host thread only.
+ * Callable from: host thread only. The caller exclusively owns sched for the
+ * duration of this call; concurrent advance or run calls on the same
+ * scheduler are not supported.
  * See ARCHITECTURE.md §4.2.
  */
 sched_result_t strand_scheduler_advance(strand_scheduler_t *sched,
@@ -502,6 +506,8 @@ int strand_scheduler_get_fd(const strand_scheduler_t *sched);
  * fn:       fiber entry function; called as fn(arg).
  * arg:      argument passed to fn; ownership is the caller's.
  * stack_sz: usable stack size in bytes; 0 uses STRAND_DEFAULT_STACK_SIZE.
+ *           Any positive size is accepted; libstrand aligns initial
+ *           execution internally without increasing the requested mapping.
  * out:      if non-NULL, receives ABA-safe handle on success.
  *
  * Returns STRAND_OK           on success.

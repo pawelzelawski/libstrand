@@ -285,6 +285,20 @@ make dev   # compiles with -fsanitize=address,undefined
 make test
 ```
 
+### 3.2.1 Real-clock timer regression
+
+The normal suite uses `STRAND_TEST_CLOCK` for deterministic timer ordering.
+Run the separate real-clock profile to exercise sub-millisecond idle waits
+without that mock clock:
+
+```sh
+make test-real-clock
+```
+
+It checks 100 us, 500 us, 1 ms, and 10 ms sleeps over repeated runs with a
+generous process-CPU ratio bound, detecting a zero-timeout busy-spin without
+depending on exact wakeup latency.
+
 ASan requires the fiber stack switching hooks to be in place or it reports
 false positives on every context switch. See TECH_STACK.md §7.2 for the
 `__sanitizer_start_switch_fiber` / `__sanitizer_finish_switch_fiber`

@@ -2151,6 +2151,91 @@ test_integration_guest_mode_host_loop(void)
 }
 
 /* =========================================================================
+ * Guest scheduler identity across all guest-mode suspension paths.
+ * =========================================================================
+ */
+
+typedef struct {
+	strand_scheduler_t *sched;
+	uint64_t            deadline;
+	int                 rd;
+	int                 phase;
+	int                 failed;
+} guest_identity_state_t;
+
+static void
+guest_identity_fiber(void *varg)
+{
+	guest_identity_state_t *s = varg;
+
+	if (strand_fiber_self_scheduler() != s->sched)
+		s->failed = 1;
+	s->phase = 1;
+	(void)strand_fiber_yield(s->sched);
+	if (strand_fiber_self_scheduler() != s->sched)
+		s->failed = 1;
+	s->phase = 2;
+	(void)strand_fiber_sleep_until(s->sched, s->deadline);
+	if (strand_fiber_self_scheduler() != s->sched)
+		s->failed = 1;
+	s->phase = 3;
+	(void)strand_fiber_wait_readable(s->sched, s->rd);
+	if (strand_fiber_self_scheduler() != s->sched)
+		s->failed = 1;
+	s->phase = 4;
+}
+
+static int
+test_integration_guest_self_scheduler(void)
+{
+	guest_identity_state_t state;
+	strand_scheduler_t    *sched;
+	int                    fds[2];
+	char                   byte = 'x';
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+	if (make_pipe_pair(fds) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	memset(&state, 0, sizeof(state));
+	state.sched = sched;
+	state.deadline = 2000;
+	state.rd = fds[0];
+	strand_test_clock_ns = 1000;
+	if (push_root_fiber(sched, guest_identity_fiber, &state) != 0) {
+		close(fds[0]);
+		close(fds[1]);
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	strand_scheduler_advance(sched, NULL);
+	if (state.phase != 2 || state.failed != 0)
+		goto fail;
+	strand_test_clock_ns = 2000;
+	strand_scheduler_advance(sched, NULL);
+	if (state.phase != 3 || state.failed != 0)
+		goto fail;
+	if (write(fds[1], &byte, sizeof(byte)) != (ssize_t)sizeof(byte))
+		goto fail;
+	strand_scheduler_advance(sched, NULL);
+	if (state.phase != 4 || state.failed != 0)
+		goto fail;
+	close(fds[0]);
+	close(fds[1]);
+	strand_scheduler_destroy(sched);
+	return (0);
+
+fail:
+	close(fds[0]);
+	close(fds[1]);
+	strand_scheduler_destroy(sched);
+	return (1);
+}
+
+/* =========================================================================
  * Test 7.11 - Scheduler Stop Interrupts Blocked Worker
  *
  * Verify that strand_scheduler_stop interrupts a worker blocked in
@@ -2365,5 +2450,7 @@ run_integration_tests(void)
         if (n == 0 || n == 13)
         RUN("test_integration_watchdog_warning",
             test_integration_watchdog_warning);
+        if (n == 0 || n == 14)
+        RUN("test_integration_guest_self_scheduler",
+            test_integration_guest_self_scheduler);
 }
-

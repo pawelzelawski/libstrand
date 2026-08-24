@@ -103,7 +103,8 @@ void strand_context_swap(strand_context_t *old, strand_context_t *new);
  * begins execution at entry(arg).
  *
  * stack_top must be the address one byte past the top of the usable stack
- * (i.e. the highest valid address + 1) and must be 16-byte aligned.
+ * (i.e. the highest valid address + 1).  It need not be 16-byte aligned;
+ * strand_context_init aligns the fabricated initial stack defensively.
  *
  * On x86_64: writes the address of an internal trampoline as the fabricated
  * return address at stack_top - 8; stores entry in rbx and arg in r12

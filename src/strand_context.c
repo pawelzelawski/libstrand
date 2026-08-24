@@ -150,12 +150,14 @@ strand_context_init(strand_context_t *ctx, void *stack_top,
 	 * stack_top - 8.  strand_context_swap's retq pops this value,
 	 * advancing rsp to stack_top before jumping to the trampoline.
 	 *
-	 * stack_top must be 16-byte aligned (caller's responsibility).
+	 * Round stack_top down to a 16-byte boundary.  Public spawn APIs accept
+	 * arbitrary usable stack sizes, so their usable top is not necessarily
+	 * aligned even though the mapping base is page-aligned.
 	 * After retq: rsp = stack_top (16-byte aligned).
 	 * After trampoline's `call *%rbx`: rsp = stack_top - 8
 	 * (rsp%16 == 8), satisfying the SysV AMD64 ABI on entry to entry().
 	 */
-	sp = (uint64_t *)stack_top;
+	sp = (uint64_t *)((uintptr_t)stack_top & ~(uintptr_t)15);
 	sp[-1] = (uint64_t)(uintptr_t)strand_fiber_trampoline;
 
 	/*
