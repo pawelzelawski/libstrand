@@ -904,6 +904,12 @@ specification and implementation phase.*
 
 ### 7.1 Structured Concurrency Scopes - Overview
 
+Scope cancellation records each child in a separately allocated membership
+node containing an ABA-safe fiber handle.  Membership therefore remains valid
+when a completed fiber descriptor is recycled before a later cancellation.
+An abandoned scope retains one owner reference and each live child retains one
+reference; only the final reference releases the runtime-owned control block.
+
 A scope is a lifetime container for a set of fibers. The invariant: the
 code that opens a scope cannot proceed past scope exit until all fibers
 spawned under that scope have completed. This eliminates the use-after-free
@@ -934,12 +940,12 @@ Fields:
   lifecycle_state    - atomic enum: ACTIVE | CANCELLING | DRAINING | COMPLETED
   owner_flag         - atomic enum: OWNER_CALLER | OWNER_RUNTIME
   live_child_count   - atomic integer; decremented when a child fiber finishes
-  walk_ref_count     - atomic integer; incremented when a cancellation walk
-                       begins, decremented when it ends; control block not freed
-                       until this is zero AND lifecycle is COMPLETED
+  walk_ref_count     - atomic integer; tracks an in-progress cancellation walk
+  ref_count          - atomic owner reference plus one reference per live child
   first_error        - atomic, CAS-set once by the first failing child
-  spawn_order_list   - intrusive linked list of strand_fiber_handle_t, in spawn
-                       order; used for reverse-order cancellation walk
+  spawn_order_list   - separately allocated linked list of ABA-safe child
+                       handles, in spawn order; used for reverse-order
+                       cancellation walk
   parent_fiber       - handle of fiber to notify at SCOPE_COMPLETED;
                        set to null by strand_scope_abandon
   cancellation_flag  - set when scope enters CANCELLING state
@@ -990,24 +996,22 @@ SCOPE_DRAINING
                         (live_child_count reaches zero while DRAINING)
 
 SCOPE_COMPLETED
-  -> freed              if OWNER_RUNTIME: runtime frees control block
+  -> freed              if OWNER_RUNTIME and the last reference is released
                         if OWNER_CALLER: caller may safely destroy it
 ```
 
 **Owner flag transition:**
 ```
-OWNER_CALLER -> OWNER_RUNTIME   strand_scope_abandon called - atomic store
+OWNER_CALLER -> OWNER_RUNTIME   strand_scope_abandon called - atomic CAS
 ```
 
-**Walk reference rule:** When a cancellation walk begins, the runtime
-increments `walk_ref_count`. The control block is not freed until both:
-(1) `live_child_count` is zero AND lifecycle is `SCOPE_COMPLETED`, AND
-(2) `walk_ref_count` is zero.
-
-When the walk completes, it decrements `walk_ref_count`. If both conditions
-are then satisfied, the runtime frees the block. This prevents use-after-free
-if the last child completes and triggers `OWNER_RUNTIME` free while the walk
-is still iterating the spawn-order list.
+**Lifetime rule:** A scope begins with one owner reference and adds one
+reference for each live child.  `strand_scope_abandon` atomically transfers
+ownership and releases the owner reference once; each child releases its
+reference only after its final completion work.  The transition to zero is the
+single runtime free claim.  Cancellation walks retain their existing walk
+synchronization, while their separately allocated stable-handle nodes remain
+valid until scope completion.
 
 ### 7.4 Scope Exit Variants
 

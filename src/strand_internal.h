@@ -136,27 +136,32 @@ typedef enum {
  *                 strand_scope_wait and strand_scope_wait_timeout require
  *                 this; strand_scope_abandon transitions away from it.
  * OWNER_RUNTIME - strand_scope_abandon was called; the runtime will free
- *                 the control block when live_child_count reaches zero and
- *                 lifecycle is SCOPE_COMPLETED and walk_ref_count is zero.
+ *                 the control block when its owner reference and all live
+ *                 child references have been released.
  */
 #define OWNER_CALLER  0
 #define OWNER_RUNTIME 1
 
+typedef struct strand_scope_child {
+	strand_fiber_handle_t handle;
+	struct strand_scope_child *next;
+} strand_scope_child_t;
+
 /*
  * strand_scope_t - structured concurrency scope control block.
- * See ARCHITECTURE.md 7.2 for field semantics and the walk reference rule.
+ * See ARCHITECTURE.md 7.2 for field semantics and the lifetime rule.
  *
  * Memory ownership:
  *   OWNER_CALLER  - caller-allocated; freed by the caller after scope_wait.
  *   OWNER_RUNTIME - heap-allocated or caller-allocated but abandoned;
- *                   freed by the runtime when all three free conditions
- *                   hold simultaneously (see ARCHITECTURE.md 7.3).
+ *                   freed by the runtime after the owner reference and all
+ *                   live child references have been released.
  *
  * Thread safety:
  *   All _Atomic fields may be accessed from any worker thread.
  *   spawn_list_head is written only at spawn time (single worker) and
- *   read only during the cancellation walk; the walk_ref_count protocol
- *   ensures no concurrent modification.
+ *   read only during cancellation walks.  Its nodes contain stable handles,
+ *   not recyclable fiber-descriptor links.
  *   cancellation_flag is set once under lifecycle CAS protection and
  *   thereafter read-only.
  */
@@ -191,11 +196,14 @@ typedef struct strand_scope {
         /*
          * CONCURRENT: incremented by scope_walk_cancel before traversing
          * the spawn-order list; decremented after the walk completes.
-         * The control block must not be freed while this is non-zero, even
-         * if SCOPE_COMPLETED and OWNER_RUNTIME.  seq_cst fetch_add / fetch_sub.
-         * See ARCHITECTURE.md 7.3 (walk reference rule).
+         * A child finish that initiated a walk retains a temporary hold until
+         * its completion path is done.  seq_cst fetch_add / fetch_sub.
+         * See ARCHITECTURE.md 7.3 (lifetime rule).
          */
         _Atomic int walk_ref_count;
+
+        /* One owner reference plus one reference for every live child. */
+        _Atomic int ref_count;
 
         /*
          * CONCURRENT: CAS-set exactly once by the first failing child fiber
@@ -206,16 +214,14 @@ typedef struct strand_scope {
         _Atomic int first_error;
 
         /*
-         * spawn_list_head - intrusive singly-linked list of spawned child
-         * fibers in spawn order, linked via strand_fiber_t.next at spawn
-         * time.  Used by scope_walk_cancel to cancel siblings in
-         * reverse-spawn order.
+         * spawn_list_head - singly-linked list of stable child handles in
+         * spawn order.  Used by scope_walk_cancel to cancel siblings in
+         * reverse-spawn order even after descriptor reuse.
          * Written only at spawn time (single worker thread).
-         * Read only during cancellation walk; walk_ref_count prevents
-         * concurrent structural modification.
-         * Not _Atomic: guarded by the walk reference rule.
+         * Read only during cancellation walk.  Nodes live until scope
+         * completion, so descriptor recycling cannot alter the walk.
          */
-        strand_fiber_t *spawn_list_head;
+        struct strand_scope_child *spawn_list_head;
 
 		/*
 		 * CONCURRENT: parent_fiber_ptr and parent_fiber_generation form the
@@ -299,14 +305,6 @@ typedef struct strand_fiber {
         strand_scope_t *scope; /* owning scope; NULL if detached */
         struct strand_fiber
             *next; /* intrusive link: run queue, dead pool */
-        /*
-         * scope_next - intrusive link for the scope's spawn-order list.
-         * Separate from next so the run queue and scope list can coexist.
-         * Set by strand_scope_spawn; traversed by scope_walk_cancel.
-         * Spawn list is prepended (newest at head): forward traversal =
-         * reverse spawn order for the cancellation walk (ARCHITECTURE.md 7.6).
-         */
-        struct strand_fiber *scope_next;
 	void *tsan_fiber; /* __tsan_create_fiber handle; NULL if no TSan */
 	unsigned long
 	    valgrind_stack_id; /* VALGRIND_STACK_REGISTER id; 0 if unused */

@@ -2311,6 +2311,152 @@ test_fiber_local_destructor_on_scope_exit(void)
  * -------------------------------------------------------------------------
  */
 
+typedef struct {
+	strand_scheduler_t *sched;
+	strand_scope_t scope;
+	_Atomic int cancelled;
+	int rc;
+} reuse_cancel_args_t;
+
+static int
+reuse_cancel_older(void *varg)
+{
+	reuse_cancel_args_t *a = varg;
+
+	if (strand_fiber_sleep_until(a->sched, UINT64_MAX) == STRAND_CANCELLED)
+		atomic_store(&a->cancelled, 1);
+	return (0);
+}
+
+static int
+reuse_cancel_done(void *varg)
+{
+	(void)varg;
+	return (0);
+}
+
+static void
+reuse_cancel_detached(void *varg)
+{
+	(void)varg;
+}
+
+static void
+reuse_cancel_parent(void *varg)
+{
+	reuse_cancel_args_t *a = varg;
+
+	if (strand_scope_open(a->sched, &a->scope) != STRAND_OK)
+		return;
+	if (strand_scope_spawn(a->sched, &a->scope, reuse_cancel_older, a,
+	    NULL) != STRAND_OK ||
+	    strand_scope_spawn(a->sched, &a->scope, reuse_cancel_done, a,
+	    NULL) != STRAND_OK)
+		return;
+	(void)strand_fiber_yield(a->sched);
+	(void)strand_fiber_spawn_detached(a->sched, reuse_cancel_detached, NULL,
+	    0, NULL);
+	(void)strand_scope_cancel(a->sched, &a->scope);
+	a->rc = strand_scope_wait(a->sched, &a->scope);
+}
+
+static int
+test_scope_cancel_survives_descriptor_reuse(void)
+{
+	reuse_cancel_args_t args;
+	strand_scheduler_t *sched;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+	memset(&args, 0, sizeof(args));
+	args.sched = sched;
+	args.rc = -999;
+	if (push_root_fiber(sched, reuse_cancel_parent, &args) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	drive_until_idle(sched);
+	strand_scheduler_destroy(sched);
+	return (atomic_load(&args.cancelled) && args.rc == STRAND_OK) ? 0 : 1;
+}
+
+typedef struct {
+	strand_scheduler_t *sched;
+	strand_scope_t *scope;
+	_Atomic int child_ready;
+	_Atomic int release_child;
+	_Atomic int child_done;
+	int spawn_rc;
+} abandon_race_args_t;
+
+static int
+abandon_race_child(void *varg)
+{
+	abandon_race_args_t *a = varg;
+
+	atomic_store_explicit(&a->child_ready, 1, memory_order_release);
+	while (!atomic_load_explicit(&a->release_child, memory_order_acquire))
+		strand_fiber_yield(a->sched);
+	atomic_store_explicit(&a->child_done, 1, memory_order_release);
+	return (0);
+}
+
+static void
+abandon_race_parent(void *varg)
+{
+	abandon_race_args_t *a = varg;
+
+	if (strand_scope_open(a->sched, a->scope) != STRAND_OK)
+		return;
+	a->spawn_rc = strand_scope_spawn(a->sched, a->scope,
+	    abandon_race_child, a, NULL);
+	(void)strand_fiber_yield(a->sched);
+}
+
+static void *
+abandon_race_host(void *varg)
+{
+	abandon_race_args_t *a = varg;
+
+	while (!atomic_load_explicit(&a->child_ready, memory_order_acquire))
+		sched_yield();
+	atomic_store_explicit(&a->release_child, 1, memory_order_release);
+	strand_scope_abandon(a->sched, a->scope);
+	return (NULL);
+}
+
+static int
+test_scope_abandon_races_last_child(void)
+{
+	abandon_race_args_t args;
+	strand_scheduler_t *sched;
+	pthread_t host;
+	int i;
+
+	for (i = 0; i < 100; i++) {
+		sched = make_test_scheduler();
+		if (sched == NULL)
+			return (1);
+		memset(&args, 0, sizeof(args));
+		args.sched = sched;
+		args.scope = malloc(sizeof(*args.scope));
+		if (args.scope == NULL)
+			return (1);
+		if (push_root_fiber(sched, abandon_race_parent, &args) != 0 ||
+		    pthread_create(&host, NULL, abandon_race_host, &args) != 0)
+			return (1);
+		drive_until_idle(sched);
+		(void)pthread_join(host, NULL);
+		drive_until_idle(sched);
+		strand_scheduler_destroy(sched);
+		if (args.spawn_rc != STRAND_OK ||
+		    !atomic_load_explicit(&args.child_done, memory_order_acquire))
+			return (1);
+	}
+	return (0);
+}
+
 void
 run_layer5_tests(void)
 {
@@ -2354,9 +2500,10 @@ run_layer5_tests(void)
             test_scope_owner_orthogonal_to_lifecycle);
         RUN("test_scope_abandon_stack_alloc_debug_assert",
             test_scope_abandon_stack_alloc_debug_assert);
-        RUN("test_fiber_local_destructor_on_scope_exit",
-            test_fiber_local_destructor_on_scope_exit);
+	RUN("test_fiber_local_destructor_on_scope_exit",
+	    test_fiber_local_destructor_on_scope_exit);
+	RUN("test_scope_cancel_survives_descriptor_reuse",
+	    test_scope_cancel_survives_descriptor_reuse);
+	RUN("test_scope_abandon_races_last_child",
+	    test_scope_abandon_races_last_child);
 }
-
-
-

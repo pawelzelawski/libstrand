@@ -21,6 +21,36 @@
 
 static void scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope);
 
+static __attribute__((noinline)) strand_fiber_t *
+scope_current_fiber(strand_scheduler_t *sched)
+{
+	if (strand_sched_current_tls != sched)
+		return (NULL);
+	return (sched->current_fiber);
+}
+
+static void
+scope_free_members(strand_scope_t *scope)
+{
+	strand_scope_child_t *child, *next;
+
+	for (child = scope->spawn_list_head; child != NULL; child = next) {
+		next = child->next;
+		free(child);
+	}
+	scope->spawn_list_head = NULL;
+}
+
+static void
+scope_put(strand_scope_t *scope)
+{
+	if (atomic_fetch_sub_explicit(&scope->ref_count, 1,
+	    memory_order_seq_cst) == 1) {
+		scope_free_members(scope);
+		free(scope);
+	}
+}
+
 #ifdef STRAND_TEST_CLOCK
 _Atomic int strand_test_scope_walk_hook_enable;
 _Atomic int strand_test_scope_walk_hook_entered;
@@ -34,14 +64,7 @@ scope_release_finish_hold(strand_scope_t *scope)
 
         prev_walk = atomic_fetch_sub_explicit(&scope->walk_ref_count, 1,
                                               memory_order_seq_cst);
-        if (prev_walk == 1 &&
-            atomic_load_explicit(&scope->live_child_count,
-                                 memory_order_seq_cst) == 0 &&
-            atomic_load_explicit(&scope->lifecycle,
-                                 memory_order_seq_cst) == SCOPE_COMPLETED &&
-            atomic_load_explicit(&scope->owner_flag,
-                                 memory_order_seq_cst) == OWNER_RUNTIME)
-                free(scope);
+	(void)prev_walk;
 }
 
 /* ---------------------------------------------------------------------------
@@ -94,7 +117,8 @@ strand_scope_open(strand_scheduler_t *sched, strand_scope_t *scope)
         atomic_store(&scope->lifecycle,       SCOPE_ACTIVE);
         atomic_store(&scope->owner_flag,      OWNER_CALLER);
         atomic_store(&scope->live_child_count, 0);
-        atomic_store(&scope->walk_ref_count,  0);
+	atomic_store(&scope->walk_ref_count,  0);
+	atomic_store(&scope->ref_count,       1);
         atomic_store(&scope->first_error,     0);
 
         scope->spawn_list_head     = NULL;
@@ -126,14 +150,20 @@ strand_scope_spawn(strand_scheduler_t *sched, strand_scope_t *scope,
                    strand_scope_fiber_fn_t fn, void *arg,
                    strand_fiber_handle_t *out)
 {
-        scope_trampoline_t  *ta;
+	scope_trampoline_t  *ta;
+	strand_scope_child_t *child;
         strand_fiber_handle_t handle;
         strand_fiber_t      *f;
         int                  rc;
 
-        ta = malloc(sizeof(*ta));
-        if (ta == NULL)
-                return (STRAND_ERR_NOMEM);
+	ta = malloc(sizeof(*ta));
+	if (ta == NULL)
+		return (STRAND_ERR_NOMEM);
+	child = malloc(sizeof(*child));
+	if (child == NULL) {
+		free(ta);
+		return (STRAND_ERR_NOMEM);
+	}
 
         ta->scope = scope;
         ta->fn    = fn;
@@ -146,9 +176,10 @@ strand_scope_spawn(strand_scheduler_t *sched, strand_scope_t *scope,
          * STRAND_DEFAULT_STACK_SIZE (0 → default) is used for scope fibers.
          */
         rc = strand_fiber_spawn(sched, scope_fiber_trampoline, ta, 0, &handle);
-        if (rc != STRAND_OK) {
-                free(ta);
-                return (rc);
+	if (rc != STRAND_OK) {
+		free(ta);
+		free(child);
+		return (rc);
         }
 
         f = handle.ptr;
@@ -162,14 +193,15 @@ strand_scope_spawn(strand_scheduler_t *sched, strand_scope_t *scope,
         f->scope = scope;
 
         /*
-         * Prepend to the spawn-order list via scope_next.  Forward traversal
-         * of the list = reverse spawn order, which is what the cancellation
-         * walk requires.  See ARCHITECTURE.md §7.6.
+         * Prepend a stable handle node.  Forward traversal is reverse spawn
+         * order, and descriptor recycling cannot affect this membership.
          */
-        f->scope_next          = scope->spawn_list_head;
-        scope->spawn_list_head = f;
+	child->handle = handle;
+	child->next = scope->spawn_list_head;
+	scope->spawn_list_head = child;
 
-        atomic_fetch_add(&scope->live_child_count, 1);
+	atomic_fetch_add(&scope->live_child_count, 1);
+	atomic_fetch_add(&scope->ref_count, 1);
 
         if (out != NULL)
                 *out = handle;
@@ -271,37 +303,22 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
                 scope_walk_cancel(sched, scope);
         }
 
-        if (prev_count != 1) {
-                if (walk_hold)
-                        scope_release_finish_hold(scope);
-                return; /* more children still running */
-        }
+	if (prev_count != 1) {
+		if (walk_hold)
+			scope_release_finish_hold(scope);
+		scope_put(scope);
+		return; /* more children still running */
+	}
 
-        /*
-         * OWNER_RUNTIME free path: scope was abandoned by the
-         * caller.  No parent to wake.  Free the control block if and only
-         * if the walk reference count is also zero - i.e. no cancellation
-         * walk is currently iterating the spawn list (walk reference rule,
-         * ARCHITECTURE.md 7.3).
-         *
-         * ATOMIC: seq_cst load of walk_ref_count is ordered after the
-         * seq_cst exchange of lifecycle above, so if a concurrent walk
-         * decremented walk_ref_count to zero before we read it, we see
-         * that zero here and free correctly.  If the walk decremented to
-         * zero after our load, the walk itself will see SCOPE_COMPLETED
-         * and handle the free in scope_walk_cancel.
-         */
-        if (atomic_load_explicit(&scope->owner_flag,
-                                 memory_order_seq_cst) == OWNER_RUNTIME) {
-                if (walk_hold) {
-                        scope_release_finish_hold(scope);
-                        return;
-                }
-                if (atomic_load_explicit(&scope->walk_ref_count,
-                                         memory_order_seq_cst) == 0)
-                        free(scope);
-                return;
-        }
+	/* An abandoned scope has no parent to wake. */
+	if (atomic_load_explicit(&scope->owner_flag,
+	                         memory_order_seq_cst) == OWNER_RUNTIME) {
+		if (walk_hold) {
+			scope_release_finish_hold(scope);
+		}
+		scope_put(scope);
+		return;
+	}
 
         (void)lifecycle;
 
@@ -323,8 +340,13 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
             &scope->parent_fiber_generation,
             memory_order_seq_cst);
 
-        if (fiber_handle_validate(parent_handle) != STRAND_OK)
-                return;
+	if (fiber_handle_validate(parent_handle) != STRAND_OK) {
+		if (walk_hold)
+			scope_release_finish_hold(scope);
+		scope_free_members(scope);
+		scope_put(scope);
+		return;
+	}
 
         parent = parent_handle.ptr;
 
@@ -358,8 +380,10 @@ scope_child_finish(strand_scheduler_t *sched, strand_scope_t *scope,
                 }
         }
 
-        if (walk_hold)
-                scope_release_finish_hold(scope);
+	if (walk_hold)
+		scope_release_finish_hold(scope);
+	scope_free_members(scope);
+	scope_put(scope);
 }
 
 /* ---------------------------------------------------------------------------
@@ -373,7 +397,8 @@ strand_scope_wait(strand_scheduler_t *sched, strand_scope_t *scope)
 {
         strand_fiber_t *f;
 
-        f = sched->current_fiber;
+	/* Do not read scheduler-owned current_fiber from a host thread. */
+	f = scope_current_fiber(sched);
         if (f == NULL)
                 return (STRAND_ERR_WRONGCTX);
 
@@ -517,7 +542,7 @@ strand_scope_wait_timeout(strand_scheduler_t *sched, strand_scope_t *scope,
 {
         strand_fiber_t *f;
 
-        f = sched->current_fiber;
+	f = scope_current_fiber(sched);
         if (f == NULL)
                 return (STRAND_ERR_WRONGCTX);
 
@@ -607,9 +632,9 @@ strand_scope_wait_timeout(strand_scheduler_t *sched, strand_scope_t *scope,
 void
 strand_scope_abandon(strand_scheduler_t *sched, strand_scope_t *scope)
 {
-        strand_fiber_t *f;
+	strand_fiber_t *f;
 
-        f = sched->current_fiber;
+	f = scope_current_fiber(sched);
 
 #ifdef STRAND_DEBUG
         /*
@@ -652,24 +677,16 @@ strand_scope_abandon(strand_scheduler_t *sched, strand_scope_t *scope)
          * loads owner_flag with seq_cst, sees OWNER_RUNTIME immediately
          * after this point.
          */
-        atomic_store_explicit(&scope->owner_flag, OWNER_RUNTIME,
-                              memory_order_seq_cst);
+	{
+		int expected_owner = OWNER_CALLER;
+		if (!atomic_compare_exchange_strong_explicit(&scope->owner_flag,
+		    &expected_owner, OWNER_RUNTIME, memory_order_seq_cst,
+		    memory_order_seq_cst))
+			return;
+	}
 
-        /*
-         * If all children have already finished (live_child_count == 0)
-         * and no walk is in progress (walk_ref_count == 0), free now.
-         * This covers the race where all children finished before we
-         * stored OWNER_RUNTIME, so scope_child_finish could not have freed.
-         *
-         * ATOMIC: seq_cst loads ordered after the seq_cst store of
-         * owner_flag above.
-         */
-        if (atomic_load_explicit(&scope->live_child_count,
-                                 memory_order_seq_cst) == 0 &&
-            atomic_load_explicit(&scope->walk_ref_count,
-                                 memory_order_seq_cst) == 0) {
-                free(scope);
-        }
+	/* Release the caller's owner reference exactly once. */
+	scope_put(scope);
 
         (void)f; /* used only in STRAND_DEBUG block above */
 }
@@ -681,34 +698,25 @@ strand_scope_abandon(strand_scheduler_t *sched, strand_scope_t *scope)
  * or when the caller explicitly calls strand_scope_cancel.
  *
  * The walk:
- *   1. Increments walk_ref_count to hold a reference for the duration of
- *      the walk, preventing OWNER_RUNTIME free while iterating the list.
- *   2. Walks spawn_list_head via scope_next (forward = reverse spawn order).
+ *   1. Increments walk_ref_count while it iterates the stable membership list.
+ *   2. Walks spawn_list_head (forward = reverse spawn order).
  *   3. Calls strand_fiber_cancel on each child handle.  Stale handles
  *      (child already finished) return STRAND_HANDLE_STALE - idempotent,
  *      continue walking.
  *   4. Transitions lifecycle SCOPE_CANCELLING -> SCOPE_DRAINING.
- *   5. Decrements walk_ref_count.  If both conditions for OWNER_RUNTIME
- *      free are met (SCOPE_COMPLETED and walk_ref_count == 0), frees the
- *      control block.
+ *   5. Decrements walk_ref_count.
  *
- * See ARCHITECTURE.md §7.3 (walk reference rule) and §7.6.
+ * See ARCHITECTURE.md §7.3 (lifetime rule) and §7.6.
  * ---------------------------------------------------------------------------
  */
 static void
 scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
 {
-        strand_fiber_t       *f;
-        strand_fiber_handle_t handle;
+	strand_fiber_handle_t handle;
         scope_lifecycle_t     expected_lc;
         int                   prev_walk;
 
-        /*
-         * Hold walk reference so OWNER_RUNTIME free cannot race with our
-         * traversal of the spawn list.
-         * ATOMIC: seq_cst increment matches seq_cst decrement below and
-         * the seq_cst store in scope_child_finish (ARCHITECTURE.md 7.3).
-         */
+        /* Retain the existing cancellation-walk synchronization. */
         atomic_fetch_add_explicit(&scope->walk_ref_count, 1,
                                   memory_order_seq_cst);
 
@@ -727,9 +735,9 @@ scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
          * Walk forward through spawn_list_head (forward order = reverse
          * spawn order, because spawns are prepended).  See strand_scope_spawn.
          */
-        for (f = scope->spawn_list_head; f != NULL; f = f->scope_next) {
-                handle.ptr        = f;
-                handle.generation = f->generation;
+	for (const strand_scope_child_t *child = scope->spawn_list_head;
+	    child != NULL; child = child->next) {
+		handle = child->handle;
                 /*
                  * strand_fiber_cancel is idempotent for stale handles and
                  * for fibers already in FIBER_FINISHED.  Ignore the return
@@ -749,35 +757,11 @@ scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope)
             &scope->lifecycle, &expected_lc, SCOPE_DRAINING,
             memory_order_seq_cst, memory_order_seq_cst);
 
-        /*
-         * Release walk reference.
-         * ATOMIC: seq_cst decrement synchronises with the seq_cst load of
-         * walk_ref_count that checks the free condition below.
-         */
+        /* Release the cancellation-walk synchronization hold. */
         prev_walk = atomic_fetch_sub_explicit(&scope->walk_ref_count, 1,
                                               memory_order_seq_cst);
 
-        /*
-         * OWNER_RUNTIME free check: free the control block if all of the
-         * following hold:
-         *   - We were the last walk (prev_walk == 1, so new count is 0).
-         *   - live_child_count == 0 (all children have finished).
-         *   - lifecycle == SCOPE_COMPLETED.
-         *   - OWNER_RUNTIME (no caller is waiting).
-         *
-         * This is the only free site for OWNER_RUNTIME scopes where the
-         * last walk completes after the last child (scope_child_finish covers the
-         * complementary case where the last child completes after the walk).
-         */
-        if (prev_walk == 1 &&
-            atomic_load_explicit(&scope->live_child_count,
-                                 memory_order_seq_cst) == 0 &&
-            atomic_load_explicit(&scope->lifecycle,
-                                 memory_order_seq_cst) == SCOPE_COMPLETED &&
-            atomic_load_explicit(&scope->owner_flag,
-                                 memory_order_seq_cst) == OWNER_RUNTIME) {
-                free(scope);
-        }
+	(void)prev_walk;
 
         (void)sched; /* sched reserved for future cross-worker enqueue path */
 }
