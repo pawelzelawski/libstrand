@@ -357,16 +357,17 @@ and for backtraces in crash reports. This flag is never relaxed.
 ### 5.4 Build Targets
 
 ```makefile
-make              # Release build - libstrand.a
+make              # Debug build - same as make dev
 make dev          # Development build - libstrand.a with ASan/UBSan
 make release      # Explicit release build
-make shared       # Shared library - libstrand.so
+make test-release # Build and run the suite with release flags
 make test         # Build and run unit and integration tests (dev flags)
+make test-real-clock # Exercise real-clock timer waits (dev flags)
 make test-tsan    # Build and run tests under ThreadSanitizer (Clang only)
 make bench        # Build and run performance benchmarks (release flags)
 make valgrind     # Run tests under Valgrind (Linux only)
 make lint         # Run clang-tidy and cppcheck
-make format       # Run clang-format over all C and assembly sources
+make format       # Run clang-format over C sources and headers
 make clean        # Remove all build artifacts
 make install      # Install libstrand.a and strand.h to $(PREFIX)
 ```
@@ -478,7 +479,9 @@ unconditionally when the header is present - detected at build time via
 check.
 
 All tests must pass Valgrind clean. Run on Linux before every commit.
-Valgrind is not available on OpenBSD - use the ASan build there.
+Valgrind is not available on OpenBSD.  Use its functional, release-profile,
+real-clock, and static-analysis gates with `MALLOC_OPTIONS=CFGJ`; this is not
+a replacement for a sanitizer.
 
 ### 7.2 AddressSanitizer + UndefinedBehaviorSanitizer
 
@@ -486,7 +489,9 @@ Valgrind is not available on OpenBSD - use the ASan build there.
 
 **Compiler flags**: `-fsanitize=address,undefined` (included in `make dev`)
 
-Available on both Linux and OpenBSD with Clang.
+Available in the supported Linux build.  OpenBSD's Clang toolchain does not
+support the required AddressSanitizer flags, so `make dev` intentionally omits
+ASan/UBSan there.
 
 libstrand integrates the ASan fiber stack switching hooks so that ASan
 correctly tracks the active stack across context switches:
@@ -554,14 +559,17 @@ APIs. The `make test-tsan` target fails gracefully when built with GCC.
 
 **Purpose**: Static analysis.
 
-**Installation**: `apt install clang-tidy` (Linux) - included with Clang on
-OpenBSD.
+**Installation**: `apt install clang-tidy` (Linux) / `pkg_add clang-tools`
+(OpenBSD).
 
 ```sh
 make lint
 # or directly:
 clang-tidy src/*.c -- $(CFLAGS_DEV) -I include/
 ```
+
+`make lint` requires both clang-tidy and cppcheck and treats every
+clang-tidy warning as an error.
 
 ### 7.5 cppcheck
 
@@ -591,7 +599,9 @@ clang-format -i src/*.c src/*.h include/strand.h
 Assembly files (`.S`) are not processed by clang-format. Assembly
 formatting conventions are described in CODING_STANDARDS.md §2.
 
-CI rejects commits that are not clang-format clean.
+CI builds and tests debug, real-clock, and release profiles on every target.
+Formatting is checked before hand-off with `clang-format --dry-run --Werror`
+on changed C sources and headers.
 
 ---
 

@@ -32,6 +32,7 @@
 #include "../src/strand_context.h"
 #include "../src/strand_fiber.h"
 #include "../src/strand_internal.h"
+#include "../src/strand_poller.h"
 #include "../src/strand_sched.h"
 
 /* -------------------------------------------------------------------------
@@ -161,7 +162,8 @@ test_buffered_close_delivers_readiness(void)
 {
 	strand_scheduler_t       *sched;
 	struct buffered_close_args args;
-	int                        sv[2];
+	strand_fiber_handle_t    handle;
+	int                        i, sv[2];
 
 	memset(&args, 0, sizeof(args));
 	sched = make_test_scheduler();
@@ -174,23 +176,56 @@ test_buffered_close_delivers_readiness(void)
 	}
 	args.sched = sched;
 	args.fd = sv[0];
-	if (t4_push_fiber(sched, fiber_buffered_close, &args, NULL) != 0) {
+	if (t4_push_fiber(sched, fiber_buffered_close, &args, &handle) != 0) {
 		close(sv[0]);
 		close(sv[1]);
 		strand_scheduler_destroy(sched);
 		return (1);
 	}
-	strand_scheduler_advance(sched, NULL);
-	if (write(sv[1], "HELLO", 5) != 5 || shutdown(sv[1], SHUT_WR) != 0) {
+	/* Establish the read registration before making the peer ready. */
+	for (i = 0; i < 64; i++) {
+		strand_scheduler_advance(sched, NULL);
+		if (atomic_load_explicit(&handle.ptr->state,
+		    memory_order_acquire) == FIBER_PARKED_IO_READ)
+			break;
+	}
+	if (atomic_load_explicit(&handle.ptr->state,
+	    memory_order_acquire) != FIBER_PARKED_IO_READ) {
+		strand_fiber_cancel(handle);
+		for (i = 0; i < 64; i++)
+			strand_scheduler_advance(sched, NULL);
 		close(sv[0]);
 		close(sv[1]);
 		strand_scheduler_destroy(sched);
 		return (1);
 	}
-	strand_scheduler_advance(sched, NULL);
-
-	close(sv[0]);
+	if (write(sv[1], "HELLO", 5) != 5) {
+		strand_fiber_cancel(handle);
+		for (i = 0; i < 64; i++)
+			strand_scheduler_advance(sched, NULL);
+		close(sv[0]);
+		close(sv[1]);
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	/* Closing after the write preserves buffered input while delivering HUP. */
 	close(sv[1]);
+	sv[1] = -1;
+	/* Wait for the registered kernel event before resuming the fiber. */
+	poller_poll(sched, 100000000ULL);
+	/*
+	 * Readiness delivery appends the fiber to the run queue.  Drain the
+	 * bounded guest loop before closing descriptors or destroying it.
+	 */
+	for (i = 0; i < 64 && !args.ran; i++)
+		strand_scheduler_advance(sched, NULL);
+	if (!args.ran) {
+		/* Leave the scheduler quiescent even when the regression fails. */
+		strand_fiber_cancel(handle);
+		for (i = 0; i < 64; i++)
+			strand_scheduler_advance(sched, NULL);
+	}
+	close(sv[0]);
 	strand_scheduler_destroy(sched);
 	return (args.ran == 1 && args.result == STRAND_OK &&
 	    args.nread == 5 && memcmp(args.buf, "HELLO", 5) == 0) ? 0 : 1;

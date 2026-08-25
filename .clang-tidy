@@ -10,7 +10,9 @@
 #   cert-c-*            — CERT C coding standard subset
 #   misc-*              — miscellaneous checks
 #
-# Disabled checks are called out individually with a reason.
+# Disabled checks are called out individually with a reason.  The
+# test-clock and scope-walk hook variables intentionally have external linkage
+# so test objects can control them.
 
 Checks: >
   clang-diagnostic-*,
@@ -25,11 +27,11 @@ Checks: >
   -misc-unused-parameters,
   -misc-include-cleaner,
   -misc-static-assert,
-  -misc-no-recursion
+  -misc-no-recursion,
+  -misc-use-internal-linkage
 
-# Treat tidy warnings as errors at quality gates (make lint).
-# Set to '' during development to see all findings without failing.
-WarningsAsErrors: ''
+# Treat every tidy warning as an error at quality gates.
+WarningsAsErrors: '*'
 
 # Only report findings in project headers, not system headers.
 HeaderFilterRegex: '(include|src)/.*\.h$'

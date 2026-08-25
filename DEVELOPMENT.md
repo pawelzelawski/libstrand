@@ -25,7 +25,7 @@
 | M2 | All unit tests pass on Linux | DONE |
 | M3 | All unit tests pass on OpenBSD | DONE |
 | M4 | Valgrind clean on Linux | DONE |
-| M5 | ASan/UBSan clean on both platforms | DONE |
+| M5 | ASan/UBSan clean on Linux; unsupported by the OpenBSD toolchain | DONE |
 | M6 | TSan clean on Linux (Clang only) | DONE |
 | M7 | clang-format clean | DONE |
 | M8 | clang-tidy zero warnings | DONE |
@@ -1046,7 +1046,7 @@ complete. Library is ready for a v1.0.0 release tag.
 - `make lint` → zero clang-tidy and cppcheck warnings on all platforms
 - `make test` → all tests pass
 - `make valgrind` → clean on Linux
-- Full ASan/UBSan run on both platforms
+- Full ASan/UBSan run on Linux; OpenBSD functional gates with allocator hardening
 - Full TSan run on Linux
 - All quality milestone status cells updated
 
@@ -1065,7 +1065,7 @@ complete. Library is ready for a v1.0.0 release tag.
 - [x] `make lint` zero warnings on all platforms - M7, M8 confirmed
 - [x] All unit and integration tests pass on all platforms - M2, M3 confirmed
 - [x] Valgrind clean - M4 confirmed
-- [x] ASan/UBSan clean on all platforms - M5 confirmed
+- [x] ASan/UBSan clean on Linux; OpenBSD sanitizer support is unavailable
 - [x] TSan clean on Linux - M6 confirmed
 - [x] All quality milestone status cells updated to DONE
 - [x] README.md complete and integration example compiles and runs

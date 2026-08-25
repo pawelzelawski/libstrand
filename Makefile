@@ -3,6 +3,7 @@
 # Targets:
 #   make / make dev  - debug build with ASan/UBSan (Linux only)
 #   make release     - optimised build
+#   make test-release - build and run the suite with release flags
 #   make test        - build and run test suite (wired in Task 1.2)
 #   make test-real-clock - real-clock timer regression profile
 #   make test-tsan   - TSan build, Clang only, Linux only
@@ -85,6 +86,7 @@ CFLAGS_REAL    = $(CFLAGS_COMMON) $(CFLAGS_OS)				\
                  -DSTRAND_DEBUG
 
 CFLAGS_RELEASE = $(CFLAGS_COMMON) $(CFLAGS_OS) -O2 -DNDEBUG
+CFLAGS_TEST    = $(CFLAGS_DEV)
 
 LDFLAGS = -lpthread
 
@@ -144,7 +146,7 @@ ASM_OBJ_TSAN != if [ -n "$(ASM_SRC)" ]; then echo "$(TSAN_DIR)/strand_context_as
 
 # --- Phony targets ----------------------------------------------------------
 
-.PHONY: all dev release test test-real-clock test-tsan valgrind examples bench tools lint format clean install
+.PHONY: all dev release test test-release test-real-clock test-tsan valgrind examples bench tools lint format clean install
 
 all: dev
 
@@ -153,6 +155,15 @@ dev: $(LIB_DEV) $(TEST_BIN)
 
 # Release - optimised static library
 release: $(LIB_RELEASE)
+
+# Release-profile regression suite.  The deterministic-clock and scope-walk
+# hooks are test instrumentation; the library and tests otherwise use the
+# shipped optimisation and NDEBUG flags.  Use a separate build tree so this
+# does not contaminate an embedder's release artefact.
+test-release:
+	$(MAKE) BUILD_DIR=$(BUILD_DIR)/release-test \
+	    CFLAGS_DEV='$(CFLAGS_RELEASE) -DSTRAND_TEST_CLOCK' \
+	    CFLAGS_TEST='$(CFLAGS_RELEASE) -DSTRAND_TEST_CLOCK -U NDEBUG' test
 
 # Public examples compile with only the installed-header include path.
 EXAMPLES_DIR = $(BUILD_DIR)/examples
@@ -322,13 +333,19 @@ $(INSPECT_BIN): tools/strand_inspect.c $(LIB_DEV)
 
 # clang-tidy + cppcheck
 lint: $(LIB_DEV)
-	clang-tidy $(CLANG_TIDY_RESOURCE_ARG) $(LIB_SRCS) -- $(CFLAGS_DEV) $(INCLUDES)
-	@if command -v cppcheck >/dev/null 2>&1; then \
-		cppcheck --enable=all --error-exitcode=1 \
-		         --suppress=missingIncludeSystem \	         --suppress=unusedFunction \	         --suppress=constParameterPointer \	         --suppress=staticFunction \	         --suppress=normalCheckLevelMaxBranches \		         src/; \
-	else \
-		echo "cppcheck not found; skipping cppcheck step"; \
-	fi
+	@command -v clang-tidy >/dev/null 2>&1 || \
+	    { echo "clang-tidy is required for make lint"; exit 1; }
+	clang-tidy $(CLANG_TIDY_RESOURCE_ARG) --warnings-as-errors='*' \
+	    $(LIB_SRCS) -- $(CFLAGS_DEV) $(INCLUDES)
+	@command -v cppcheck >/dev/null 2>&1 || \
+	    { echo "cppcheck is required for make lint"; exit 1; }
+	cppcheck --enable=all --error-exitcode=1 \
+	         --suppress=missingIncludeSystem \
+	         --suppress=unusedFunction \
+	         --suppress=constParameterPointer \
+	         --suppress=staticFunction \
+	         --suppress=normalCheckLevelMaxBranches \
+	         src/
 
 format:
 	clang-format -i $(LIB_SRCS) src/*.h include/strand.h
@@ -393,7 +410,7 @@ $(LIB_RELEASE): $(LIB_SRCS) $(ASM_SRC)
 
 $(TEST_BIN): $(LIB_DEV) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c tests/test_harness.h
 	@mkdir -p $(BUILD_TESTS_DIR)
-	$(CC) $(CFLAGS_DEV) $(INCLUDES) -I tests/ -I src/               \
+	$(CC) $(CFLAGS_TEST) $(INCLUDES) -I tests/ -I src/              \
 	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c $(LIB_DEV) $(LDFLAGS) \
 	    -o $(TEST_BIN)
 

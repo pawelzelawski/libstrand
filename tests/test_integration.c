@@ -2433,6 +2433,8 @@ test_integration_stop_interrupts_worker(void)
  * =========================================================================
  */
 
+#ifdef STRAND_DEBUG
+
 /*
  * Fiber that busy-spins briefly to trigger the debug watchdog.
  */
@@ -2517,8 +2519,10 @@ test_integration_watchdog_warning(void)
         if (strstr(buf, "strand: watchdog:") == NULL)
                 return (1);
 
-        return (0);
+	return (0);
 }
+
+#endif /* STRAND_DEBUG */
 
 /* =========================================================================
  * Suite entry point
@@ -2567,9 +2571,11 @@ run_integration_tests(void)
         if (n == 0 || n == 12)
         RUN("test_integration_stop_interrupts_worker",
             test_integration_stop_interrupts_worker);
-        if (n == 0 || n == 13)
-        RUN("test_integration_watchdog_warning",
-            test_integration_watchdog_warning);
+#ifdef STRAND_DEBUG
+	if (n == 0 || n == 13)
+		RUN("test_integration_watchdog_warning",
+		    test_integration_watchdog_warning);
+#endif
 	if (n == 0 || n == 14)
 		RUN("test_integration_guest_self_scheduler",
 		    test_integration_guest_self_scheduler);

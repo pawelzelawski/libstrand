@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update -qq && sudo apt-get install -y clang clang-tidy valgrind
+        run: sudo apt-get update -qq && sudo apt-get install -y clang clang-tidy cppcheck valgrind
 
       - name: Build (dev)
         run: make dev
@@ -36,11 +36,20 @@ jobs:
       - name: Test (ASan/UBSan)
         run: make test
 
+      - name: Test (real clock)
+        run: make test-real-clock
+
+      - name: Test (release)
+        run: make test-release
+
       - name: Test (TSan)
         run: make test-tsan
 
       - name: Test (Valgrind)
         run: make valgrind
+
+      - name: Build examples
+        run: make examples
 
   build-and-test-openbsd-amd64:
     name: OpenBSD amd64
@@ -55,8 +64,10 @@ jobs:
           usesh: true
           release: "7.9"
           run: |
+            pkg_add -I clang-tools cppcheck
             make dev
-            make test || {
+            MALLOC_OPTIONS=CFGJ make lint
+            MALLOC_OPTIONS=CFGJ make test || {
               echo "make test failed; collecting backtrace from build/tests/run_tests"
               if ! command -v gdb >/dev/null 2>&1; then
                 pkg_add -I gdb || doas pkg_add -I gdb || true
@@ -81,6 +92,9 @@ jobs:
               fi
               exit 1
             }
+            MALLOC_OPTIONS=CFGJ make test-real-clock
+            MALLOC_OPTIONS=CFGJ make test-release
+            MALLOC_OPTIONS=CFGJ make examples
 
   build-and-test-openbsd-arm64:
     name: OpenBSD arm64
@@ -96,8 +110,10 @@ jobs:
           arch: aarch64
           release: "7.9"
           run: |
+            pkg_add -I clang-tools cppcheck
             make dev
-            make test || {
+            MALLOC_OPTIONS=CFGJ make lint
+            MALLOC_OPTIONS=CFGJ make test || {
               echo "make test failed; collecting backtrace from build/tests/run_tests"
               if ! command -v gdb >/dev/null 2>&1; then
                 pkg_add -I gdb || doas pkg_add -I gdb || true
@@ -122,3 +138,6 @@ jobs:
               fi
               exit 1
             }
+            MALLOC_OPTIONS=CFGJ make test-real-clock
+            MALLOC_OPTIONS=CFGJ make test-release
+            MALLOC_OPTIONS=CFGJ make examples

@@ -91,10 +91,10 @@ fd_hash(int fd, size_t cap)
 static int
 fd_table_grow(strand_poller_t *p)
 {
-	size_t             new_cap, i, slot;
+	size_t new_cap, i, slot;
 	strand_fd_entry_t *new_table;
 
-	new_cap   = p->table_cap * 2;
+	new_cap = p->table_cap * 2;
 	new_table = calloc(new_cap, sizeof(*new_table));
 	if (new_table == NULL)
 		return STRAND_ERR_NOMEM;
@@ -115,7 +115,7 @@ fd_table_grow(strand_poller_t *p)
 	}
 
 	free(p->table);
-	p->table     = new_table;
+	p->table = new_table;
 	p->table_cap = new_cap;
 	return STRAND_OK;
 }
@@ -138,14 +138,18 @@ fd_table_grow(strand_poller_t *p)
 strand_poller_t *
 poller_create(size_t initial_cap)
 {
-	strand_poller_t   *p;
-	size_t             cap, i;
+	strand_poller_t *p;
+	size_t cap, i;
+#ifdef STRAND_OPENBSD
+	int fd_flags;
+#endif
 
 	p = calloc(1, sizeof(*p));
 	if (p == NULL)
 		return NULL;
 
-	cap = (initial_cap == 0) ? FD_TABLE_INITIAL_CAP : next_pow2(initial_cap);
+	cap =
+	    (initial_cap == 0) ? FD_TABLE_INITIAL_CAP : next_pow2(initial_cap);
 
 	p->table = calloc(cap, sizeof(*p->table));
 	if (p->table == NULL) {
@@ -159,7 +163,7 @@ poller_create(size_t initial_cap)
 
 	p->table_cap = cap;
 	p->table_len = 0;
-	p->pollfd    = -1;
+	p->pollfd = -1;
 
 #ifdef STRAND_LINUX
 	/*
@@ -177,6 +181,14 @@ poller_create(size_t initial_cap)
 #ifdef STRAND_OPENBSD
 	p->pollfd = kqueue();
 	if (p->pollfd == -1) {
+		free(p->table);
+		free(p);
+		return NULL;
+	}
+	fd_flags = fcntl(p->pollfd, F_GETFD);
+	if (fd_flags == -1 ||
+	    fcntl(p->pollfd, F_SETFD, fd_flags | FD_CLOEXEC) == -1) {
+		(void)close(p->pollfd);
 		free(p->table);
 		free(p);
 		return NULL;
@@ -202,7 +214,7 @@ poller_destroy(strand_poller_t *p)
 
 #ifdef STRAND_DEBUG
 	{
-		size_t             i;
+		size_t i;
 		strand_fd_entry_t *e;
 
 		for (i = 0; i < p->table_cap; i++) {
@@ -240,11 +252,12 @@ poller_destroy(strand_poller_t *p)
 strand_fd_entry_t *
 fd_table_lookup(strand_poller_t *p, int fd)
 {
-	size_t             slot, i;
+	size_t slot, i;
 
 	slot = fd_hash(fd, p->table_cap);
 	for (i = 0; i < p->table_cap; i++) {
-		strand_fd_entry_t *e = &p->table[(slot + i) & (p->table_cap - 1)];
+		strand_fd_entry_t *e =
+		    &p->table[(slot + i) & (p->table_cap - 1)];
 		if (e->fd == FD_ENTRY_EMPTY)
 			return NULL;
 		if (e->fd == fd)
@@ -270,7 +283,7 @@ fd_table_lookup(strand_poller_t *p, int fd)
 strand_fd_entry_t *
 fd_table_insert(strand_poller_t *p, int fd)
 {
-	size_t             slot, i;
+	size_t slot, i;
 	strand_fd_entry_t *e, *tombstone;
 
 	/* Grow before inserting if load would exceed 75%. */
@@ -280,7 +293,7 @@ fd_table_insert(strand_poller_t *p, int fd)
 	}
 
 	tombstone = NULL;
-	slot      = fd_hash(fd, p->table_cap);
+	slot = fd_hash(fd, p->table_cap);
 
 	for (i = 0; i < p->table_cap; i++) {
 		e = &p->table[(slot + i) & (p->table_cap - 1)];
@@ -292,15 +305,15 @@ fd_table_insert(strand_poller_t *p, int fd)
 			 */
 			if (tombstone != NULL)
 				e = tombstone;
-			e->fd           = fd;
-			e->read_waiter  = NULL;
+			e->fd = fd;
+			e->read_waiter = NULL;
 			e->write_waiter = NULL;
-			e->event_mask   = 0;
-			e->reg_state    = FD_REG_NOT_REGISTERED;
-			e->arm_token    = 0;
+			e->event_mask = 0;
+			e->reg_state = FD_REG_NOT_REGISTERED;
+			e->arm_token = 0;
 #ifdef STRAND_OPENBSD
-			e->read_reg     = NULL;
-			e->write_reg    = NULL;
+			e->read_reg = NULL;
+			e->write_reg = NULL;
 #endif
 #ifdef STRAND_DEBUG
 			e->dbg_gen = 0;
@@ -342,15 +355,15 @@ fd_table_remove(strand_poller_t *p, int fd)
 	STRAND_DEBUG_ASSERT(e->read_waiter == NULL);
 	STRAND_DEBUG_ASSERT(e->write_waiter == NULL);
 
-	e->fd           = FD_ENTRY_TOMBSTONE;
-	e->read_waiter  = NULL;
+	e->fd = FD_ENTRY_TOMBSTONE;
+	e->read_waiter = NULL;
 	e->write_waiter = NULL;
-	e->event_mask   = 0;
-	e->reg_state    = FD_REG_NOT_REGISTERED;
-	e->arm_token    = 0;
+	e->event_mask = 0;
+	e->reg_state = FD_REG_NOT_REGISTERED;
+	e->arm_token = 0;
 #ifdef STRAND_OPENBSD
-	e->read_reg     = NULL;
-	e->write_reg    = NULL;
+	e->read_reg = NULL;
+	e->write_reg = NULL;
 #endif
 #ifdef STRAND_DEBUG
 	e->dbg_gen = 0;
@@ -378,16 +391,16 @@ fd_table_remove(strand_poller_t *p, int fd)
  * ---------------------------------------------------------------------------
  */
 int
-poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
-              int filter, strand_fd_entry_t *e)
+poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask, int filter,
+              strand_fd_entry_t *e)
 {
 #ifdef STRAND_LINUX
 	struct epoll_event ev;
-	int                op;
+	int op;
 
 	op = (e->reg_state == FD_REG_NOT_REGISTERED) ? EPOLL_CTL_ADD
-	                                              : EPOLL_CTL_MOD;
-	ev.events   = new_mask;
+	                                             : EPOLL_CTL_MOD;
+	ev.events = new_mask;
 
 	/*
 	 * Allocate a new token before the syscall and encode (fd, token)
@@ -400,9 +413,9 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 	if (epoll_ctl(p->pollfd, op, fd, &ev) == -1)
 		return (STRAND_ERR_IO);
 
-	e->arm_token  = poller_token_arm(ev.data.u64);
+	e->arm_token = poller_token_arm(ev.data.u64);
 	e->event_mask = new_mask;
-	e->reg_state  = FD_REG_ACTIVE;
+	e->reg_state = FD_REG_ACTIVE;
 	return (STRAND_OK);
 #endif
 
@@ -420,11 +433,10 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 	reg = calloc(1, sizeof(*reg));
 	if (reg == NULL)
 		return (STRAND_ERR_NOMEM);
-	reg->fd    = fd;
+	reg->fd = fd;
 	reg->token = poller_next_token(p);
-	EV_SET(&kev, (uintptr_t)fd, filter,
-	       EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0,
-	       reg);
+	EV_SET(&kev, (uintptr_t)fd, filter, EV_ADD | EV_ENABLE | EV_DISPATCH, 0,
+	       0, reg);
 
 	if (kevent(p->pollfd, &kev, 1, NULL, 0, NULL) == -1) {
 		free(reg);
@@ -438,7 +450,8 @@ poller_arm_fd(strand_poller_t *p, int fd, uint32_t new_mask,
 	return (STRAND_OK);
 #endif
 
-	/* Defensive fallback for static analyzers / unsupported build configs. */
+	/* Defensive fallback for static analyzers / unsupported build configs.
+	 */
 	(void)p;
 	(void)fd;
 	(void)new_mask;
@@ -487,9 +500,9 @@ fiber_io_wake(struct strand_scheduler *sched, strand_fiber_t *f, int result)
 static int
 fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 {
-	strand_fiber_t    *f;
+	strand_fiber_t *f;
 	strand_fd_entry_t *e;
-	int                inserted, rc = 0;
+	int inserted, rc = 0;
 
 	STRAND_DEBUG_ASSERT(sched != NULL);
 	STRAND_DEBUG_ASSERT(sched->current_fiber != NULL);
@@ -514,7 +527,8 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 #ifdef STRAND_DEBUG
 	{
 		int fl = fcntl(fd, F_GETFL);
-		STRAND_DEBUG_ASSERT(fl != -1 && (fl & O_NONBLOCK) &&
+		STRAND_DEBUG_ASSERT(
+		    fl != -1 && (fl & O_NONBLOCK) &&
 		    "fd passed to strand_fiber_wait without O_NONBLOCK");
 	}
 #endif
@@ -542,21 +556,25 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 	 * Compute event mask (Linux) or filter (OpenBSD) and arm the fd.
 	 *
 	 * Linux: mask reflects all active directions after this registration.
-	 *   Both EPOLLIN and EPOLLOUT may be set if both directions have waiters.
-	 *   EPOLLET | EPOLLONESHOT are always set.  See ARCHITECTURE.md §5.4.
+	 *   Both EPOLLIN and EPOLLOUT may be set if both directions have
+	 * waiters. EPOLLET | EPOLLONESHOT are always set.  See ARCHITECTURE.md
+	 * §5.4.
 	 *
 	 * OpenBSD: EVFILT_READ and EVFILT_WRITE are independent filters.
-	 *   Each direction uses a separate kevent call.  See ARCHITECTURE.md §5.7.
+	 *   Each direction uses a separate kevent call.  See ARCHITECTURE.md
+	 * §5.7.
 	 */
 #ifdef STRAND_LINUX
 	{
 		uint32_t new_mask;
 
 		new_mask = EPOLLET | EPOLLONESHOT;
-		/* Add EPOLLIN if registering read or if write waiter already active. */
+		/* Add EPOLLIN if registering read or if write waiter already
+		 * active. */
 		if (dir == 0 || e->read_waiter != NULL)
 			new_mask |= EPOLLIN;
-		/* Add EPOLLOUT if registering write or if read waiter already active. */
+		/* Add EPOLLOUT if registering write or if read waiter already
+		 * active. */
 		if (dir == 1 || e->write_waiter != NULL)
 			new_mask |= EPOLLOUT;
 		rc = poller_arm_fd(sched->poller, fd, new_mask, 0, e);
@@ -575,7 +593,8 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 		 * Arm failed.  If we just inserted this entry and it has no
 		 * other waiters, remove it to keep the table clean.
 		 */
-		if (inserted && e->read_waiter == NULL && e->write_waiter == NULL)
+		if (inserted && e->read_waiter == NULL &&
+		    e->write_waiter == NULL)
 			fd_table_remove(sched->poller, fd);
 		return (rc);
 	}
@@ -594,8 +613,9 @@ fiber_wait_io(strand_scheduler_t *sched, int fd, int dir)
 	 * Relaxed ordering: visibility is provided by the context switch below.
 	 */
 	atomic_store_explicit(&f->state,
-	    (dir == 0) ? FIBER_PARKED_IO_READ : FIBER_PARKED_IO_WRITE,
-	    memory_order_relaxed);
+	                      (dir == 0) ? FIBER_PARKED_IO_READ
+	                                 : FIBER_PARKED_IO_WRITE,
+	                      memory_order_relaxed);
 
 	/* Switch back to the scheduler.  Resumes here when the fd fires,
 	 * the fiber is cancelled, or the fd enters an error state. */
@@ -637,16 +657,16 @@ static void
 poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 {
 	strand_fd_entry_t *e;
-	strand_poller_t   *p = sched->poller;
-	uint32_t           flags;
-	int                fd;
-	int                woke_read = 0, woke_write = 0;
+	strand_poller_t *p = sched->poller;
+	uint32_t flags;
+	int fd;
+	int woke_read = 0, woke_write = 0;
 
 	if (ev->data.u64 == POLLER_WAKEUP_TOKEN)
 		return;
 
 	fd = poller_token_fd(ev->data.u64);
-	e  = fd_table_lookup(p, fd);
+	e = fd_table_lookup(p, fd);
 	if (e == NULL)
 		return;
 	if (e->arm_token != poller_token_arm(ev->data.u64))
@@ -657,9 +677,9 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 	/*
 	 * SAFETY: EPOLLERR and EPOLLHUP are delivered unconditionally.
 	 * EPOLLERR is terminal for every waiter.  A read event which combines
-	 * EPOLLIN and EPOLLHUP still has buffered bytes to deliver, so wake that
-	 * reader successfully before treating any remaining waiters as hung up.
-	 * See ARCHITECTURE.md §5.6.
+	 * EPOLLIN and EPOLLHUP still has buffered bytes to deliver, so wake
+	 * that reader successfully before treating any remaining waiters as
+	 * hung up. See ARCHITECTURE.md §5.6.
 	 */
 	if (flags & EPOLLERR) {
 		e->reg_state = FD_REG_DISABLED;
@@ -691,7 +711,8 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 			strand_fiber_t *f = e->read_waiter;
 			e->read_waiter = NULL;
 			fiber_io_wake(sched, f,
-			    (flags & EPOLLIN) ? STRAND_OK : STRAND_ERR_IO);
+			              (flags & EPOLLIN) ? STRAND_OK
+			                                : STRAND_ERR_IO);
 		}
 		if (e->write_waiter != NULL) {
 			strand_fiber_t *f = e->write_waiter;
@@ -733,8 +754,10 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 	if ((woke_read || woke_write) &&
 	    (e->read_waiter != NULL || e->write_waiter != NULL)) {
 		uint32_t new_mask = EPOLLET | EPOLLONESHOT;
-		if (e->read_waiter  != NULL) new_mask |= EPOLLIN;
-		if (e->write_waiter != NULL) new_mask |= EPOLLOUT;
+		if (e->read_waiter != NULL)
+			new_mask |= EPOLLIN;
+		if (e->write_waiter != NULL)
+			new_mask |= EPOLLOUT;
 
 		if (poller_arm_fd(p, fd, new_mask, 0, e) == STRAND_OK) {
 			struct epoll_event check_evs[POLLER_MAX_EVENTS];
@@ -748,8 +771,8 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 			 * ALL events returned by this zero-timeout poll must be
 			 * processed - EPOLLONESHOT has consumed them from the
 			 * kernel queue and they will not reappear in any
-			 * subsequent poll, regardless of which fd they belong to.
-			 * See ARCHITECTURE.md §5.5.
+			 * subsequent poll, regardless of which fd they belong
+			 * to. See ARCHITECTURE.md §5.5.
 			 */
 			nfds = epoll_wait(p->pollfd, check_evs,
 			                  POLLER_MAX_EVENTS, 0);
@@ -795,7 +818,7 @@ poller_deliver_event(strand_scheduler_t *sched, struct epoll_event *ev)
 
 static void
 poller_delete_filter(strand_poller_t *p, strand_fd_entry_t *e, int fd,
-    int filter)
+                     int filter)
 {
 	struct kevent kev;
 	strand_fd_registration_t *reg;
@@ -816,9 +839,9 @@ poller_deliver_event(strand_scheduler_t *sched, struct kevent *kev)
 {
 	strand_fd_entry_t *e;
 	strand_fd_registration_t *reg;
-	strand_poller_t   *p = sched->poller;
-	int                fd;
-	int                result;
+	strand_poller_t *p = sched->poller;
+	int fd;
+	int result;
 
 	/* NULL sentinel: wakeup fd event; no fiber to wake. */
 	if (kev->udata == NULL)
@@ -836,13 +859,14 @@ poller_deliver_event(strand_scheduler_t *sched, struct kevent *kev)
 
 	/*
 	 * EV_EOF signals a peer close or closed pipe end.  For reads, kev->data
-	 * reports bytes still buffered by the kernel; deliver that readiness first
-	 * and let the caller's next nonblocking read observe EOF.
-	 * See ARCHITECTURE.md §5.7.
+	 * reports bytes still buffered by the kernel; deliver that readiness
+	 * first and let the caller's next nonblocking read observe EOF. See
+	 * ARCHITECTURE.md §5.7.
 	 */
 	result = ((kev->flags & EV_EOF) &&
-	    (kev->filter != EVFILT_READ || kev->data == 0)) ?
-	    STRAND_ERR_IO : STRAND_OK;
+	          (kev->filter != EVFILT_READ || kev->data == 0))
+	             ? STRAND_ERR_IO
+	             : STRAND_OK;
 
 	if (kev->filter == EVFILT_READ && e->read_waiter != NULL) {
 		strand_fiber_t *f = e->read_waiter;
@@ -880,9 +904,9 @@ void
 poller_poll(strand_scheduler_t *sched, uint64_t timeout_ns)
 {
 #ifdef STRAND_LINUX
-	strand_poller_t    *p = sched->poller;
+	strand_poller_t *p = sched->poller;
 	struct epoll_event evs[POLLER_MAX_EVENTS];
-	int                nfds, i, timeout_ms;
+	int nfds, i, timeout_ms;
 
 	if (timeout_ns == UINT64_MAX) {
 		timeout_ms = -1;
@@ -890,8 +914,9 @@ poller_poll(strand_scheduler_t *sched, uint64_t timeout_ns)
 		uint64_t timeout_ms_u;
 
 		timeout_ms_u = (timeout_ns + 999999ULL) / 1000000ULL;
-		timeout_ms = (timeout_ms_u > (uint64_t)INT_MAX) ? INT_MAX :
-		    (int)timeout_ms_u;
+		timeout_ms = (timeout_ms_u > (uint64_t)INT_MAX)
+		                 ? INT_MAX
+		                 : (int)timeout_ms_u;
 	}
 
 	nfds = epoll_wait(p->pollfd, evs, POLLER_MAX_EVENTS, timeout_ms);
@@ -901,14 +926,14 @@ poller_poll(strand_scheduler_t *sched, uint64_t timeout_ns)
 
 #ifdef STRAND_OPENBSD
 	strand_poller_t *p = sched->poller;
-	struct kevent    evs[POLLER_MAX_EVENTS];
-	struct timespec  ts, *tsp;
-	int              nfds, i;
+	struct kevent evs[POLLER_MAX_EVENTS];
+	struct timespec ts, *tsp;
+	int nfds, i;
 
 	if (timeout_ns == UINT64_MAX) {
 		tsp = NULL; /* block indefinitely */
 	} else {
-		ts.tv_sec  = (time_t)(timeout_ns / 1000000000ULL);
+		ts.tv_sec = (time_t)(timeout_ns / 1000000000ULL);
 		ts.tv_nsec = (long)(timeout_ns % 1000000000ULL);
 		tsp = &ts;
 	}
@@ -929,11 +954,11 @@ poller_poll(strand_scheduler_t *sched, uint64_t timeout_ns)
 void
 poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 {
-	strand_poller_t   *p   = sched->poller;
-	int                fd  = f->parked_fd;
-	fiber_state_t      st  = atomic_load_explicit(&f->state,
-	                             memory_order_relaxed);
-	int                dir = (st == FIBER_PARKED_IO_READ) ? 0 : 1;
+	strand_poller_t *p = sched->poller;
+	int fd = f->parked_fd;
+	fiber_state_t st =
+	    atomic_load_explicit(&f->state, memory_order_relaxed);
+	int dir = (st == FIBER_PARKED_IO_READ) ? 0 : 1;
 	strand_fd_entry_t *e;
 
 	e = fd_table_lookup(p, fd);
@@ -946,7 +971,8 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 	 */
 	STRAND_DEBUG_ASSERT(e != NULL);
 	if (e == NULL) {
-		/* Release build: wake with error rather than leaving f parked. */
+		/* Release build: wake with error rather than leaving f parked.
+		 */
 		fiber_io_wake(sched, f, STRAND_ERR_IO);
 		return;
 	}
@@ -966,8 +992,10 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 		 * genuine edge.  See ARCHITECTURE.md §5.8.
 		 */
 		uint32_t new_mask = EPOLLET | EPOLLONESHOT;
-		if (e->read_waiter  != NULL) new_mask |= EPOLLIN;
-		if (e->write_waiter != NULL) new_mask |= EPOLLOUT;
+		if (e->read_waiter != NULL)
+			new_mask |= EPOLLIN;
+		if (e->write_waiter != NULL)
+			new_mask |= EPOLLOUT;
 		if (e->reg_state != FD_REG_NOT_REGISTERED)
 			(void)poller_arm_fd(p, fd, new_mask, 0, e);
 	} else {
@@ -984,8 +1012,7 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
 #endif /* STRAND_LINUX */
 
 #ifdef STRAND_OPENBSD
-	poller_delete_filter(p, e, fd,
-	    (dir == 0) ? EVFILT_READ : EVFILT_WRITE);
+	poller_delete_filter(p, e, fd, (dir == 0) ? EVFILT_READ : EVFILT_WRITE);
 #endif /* STRAND_OPENBSD */
 
 	/* Remove the table entry when both waiters are gone. */
@@ -1003,8 +1030,8 @@ poller_cancel_io(struct strand_scheduler *sched, strand_fiber_t *f)
  *
  * The event is registered WITHOUT EPOLLONESHOT / EV_DISPATCH (persistent)
  * so that successive stop signals all unblock the wait.
-	 * data.u64 = POLLER_WAKEUP_TOKEN (Linux) / udata = NULL (OpenBSD) serves
-	 * as the delivery sentinel.
+ * data.u64 = POLLER_WAKEUP_TOKEN (Linux) / udata = NULL (OpenBSD) serves
+ * as the delivery sentinel.
  *
  * Returns STRAND_OK on success or STRAND_ERR_IO on syscall failure.
  * See ARCHITECTURE.md §5.
@@ -1016,7 +1043,7 @@ poller_register_wakeup_fd(strand_poller_t *p, int fd)
 #ifdef STRAND_LINUX
 	struct epoll_event ev;
 
-	ev.events   = EPOLLIN;
+	ev.events = EPOLLIN;
 	ev.data.u64 = POLLER_WAKEUP_TOKEN;
 	if (epoll_ctl(p->pollfd, EPOLL_CTL_ADD, fd, &ev) == -1)
 		return (STRAND_ERR_IO);
@@ -1037,7 +1064,8 @@ poller_register_wakeup_fd(strand_poller_t *p, int fd)
 	return (STRAND_OK);
 #endif
 
-	/* Defensive fallback for static analyzers / unsupported build configs. */
+	/* Defensive fallback for static analyzers / unsupported build configs.
+	 */
 	(void)p;
 	(void)fd;
 	return (STRAND_ERR_IO);

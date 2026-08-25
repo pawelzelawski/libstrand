@@ -44,6 +44,9 @@ tests/
 This verifies that exported symbols are correct - tests do not link directly
 against source files.
 
+`make test-release` builds and runs the same suite with the release library
+and `-O2 -DNDEBUG`, ensuring the configuration shipped to embedders is tested.
+
 ### 2.2 Per-Layer Test Scope
 
 Every layer has a dedicated test file. The scope of each file is strictly
@@ -276,9 +279,9 @@ All tests must pass Valgrind clean before the phase is considered complete.
 No suppression file is needed - libstrand has no external library dependencies
 that would require suppressions.
 
-### 3.2 AddressSanitizer and UndefinedBehaviorSanitizer
+### 3.2 AddressSanitizer and UndefinedBehaviorSanitizer (Linux)
 
-Run on both platforms after every phase:
+Run on Linux after every phase:
 
 ```sh
 make dev   # compiles with -fsanitize=address,undefined
@@ -426,7 +429,19 @@ the current platform.
 ### 5.3 OpenBSD-Specific Concerns
 
 **No Valgrind on OpenBSD.** ASan/UBSan (`make dev`) is the memory safety gate
-there.
+is not available in the supported OpenBSD build.  `make dev` remains the
+debug assertion build there, without sanitizer flags.  Run the functional
+test, real-clock, release-profile, and lint gates with OpenBSD allocator
+hardening enabled:
+
+```sh
+MALLOC_OPTIONS=CFGJ make test
+MALLOC_OPTIONS=CFGJ make test-real-clock
+MALLOC_OPTIONS=CFGJ make test-release
+MALLOC_OPTIONS=CFGJ make lint
+```
+
+This is useful heap-corruption pressure, not a substitute for ASan/UBSan.
 
 **No CPU affinity.** The `test_worker_affinity` test (if any) must be guarded
 `#ifdef STRAND_LINUX`.
