@@ -2035,8 +2035,9 @@ test_integration_guest_mode_host_loop(void)
         state.deadline = 5000; /* fires when test clock >= 5000 */
         atomic_init(&state.fired, 0);
 
-        /* Plant a root fiber that waits on the timer. */
-        if (push_root_fiber(sched, guest_timer_fn, &state) != 0) {
+        /* Bootstrap the guest fiber through the public API. */
+        if (strand_scheduler_spawn(sched, guest_timer_fn, &state, 0,
+            NULL) != STRAND_OK) {
                 close(kick_fds[0]); close(kick_fds[1]);
                 strand_scheduler_destroy(sched);
                 return (1);
@@ -2205,7 +2206,8 @@ test_integration_guest_self_scheduler(void)
 	state.deadline = 2000;
 	state.rd = fds[0];
 	strand_test_clock_ns = 1000;
-	if (push_root_fiber(sched, guest_identity_fiber, &state) != 0) {
+	if (strand_scheduler_spawn(sched, guest_identity_fiber, &state, 0,
+	    NULL) != STRAND_OK) {
 		close(fds[0]);
 		close(fds[1]);
 		strand_scheduler_destroy(sched);
@@ -2229,6 +2231,124 @@ test_integration_guest_self_scheduler(void)
 	return (0);
 
 fail:
+	close(fds[0]);
+	close(fds[1]);
+	strand_scheduler_destroy(sched);
+	return (1);
+}
+
+/* =========================================================================
+ * Public guest bootstrap and budget drain.
+ * =========================================================================
+ */
+
+typedef struct {
+	strand_scheduler_t *sched;
+	uint64_t            deadline;
+	int                 rd;
+	int                 simple_runs;
+	int                 io_ran;
+	int                 timer_ran;
+} guest_bootstrap_state_t;
+
+static void
+guest_bootstrap_simple(void *varg)
+{
+	guest_bootstrap_state_t *s = varg;
+
+	s->simple_runs++;
+}
+
+static void
+guest_bootstrap_io(void *varg)
+{
+	guest_bootstrap_state_t *s = varg;
+	char                     byte;
+
+	if (strand_fiber_wait_readable(s->sched, s->rd) != STRAND_OK)
+		return;
+	if (read(s->rd, &byte, sizeof(byte)) == (ssize_t)sizeof(byte))
+		s->io_ran = 1;
+}
+
+static void
+guest_bootstrap_timer(void *varg)
+{
+	guest_bootstrap_state_t *s = varg;
+
+	if (strand_fiber_sleep_until(s->sched, s->deadline) == STRAND_OK)
+		s->timer_ran = 1;
+}
+
+static int
+test_integration_public_guest_bootstrap(void)
+{
+	strand_sched_config_t   cfg = { .budget = 2 };
+	guest_bootstrap_state_t state;
+	strand_scheduler_t     *sched;
+	strand_fiber_handle_t   io_handle = {0};
+	strand_fiber_handle_t   timer_handle = {0};
+	int                     fds[2];
+	int                     i;
+	char                    byte = 'x';
+
+	sched = strand_scheduler_create(&cfg);
+	if (sched == NULL)
+		return (1);
+	if (make_pipe_pair(fds) != 0) {
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
+	memset(&state, 0, sizeof(state));
+	state.sched = sched;
+	state.deadline = 2000;
+	state.rd = fds[0];
+	strand_test_clock_ns = 1000;
+	for (i = 0; i < 5; i++) {
+		if (strand_scheduler_spawn(sched, guest_bootstrap_simple, &state,
+		    0, NULL) != STRAND_OK)
+			goto fail;
+	}
+	if (strand_scheduler_spawn(sched, guest_bootstrap_io, &state, 0,
+	    &io_handle) != STRAND_OK ||
+	    strand_scheduler_spawn(sched, guest_bootstrap_timer, &state, 0,
+	    &timer_handle) != STRAND_OK)
+		goto fail;
+
+	/* A single pass runs only two fibers; draining reaches every runnable one. */
+	for (i = 0; i < 16 && strand_scheduler_advance(sched, NULL) ==
+	    STRAND_SCHED_PROGRESS; i++)
+		;
+	if (i == 16 || state.simple_runs != 5 || state.io_ran != 0 ||
+	    state.timer_ran != 0)
+		goto fail;
+	if (write(fds[1], &byte, sizeof(byte)) != (ssize_t)sizeof(byte))
+		goto fail;
+	for (i = 0; i < 16 && state.io_ran == 0; i++)
+		(void)strand_scheduler_advance(sched, NULL);
+	if (i == 16 || state.io_ran != 1 || state.timer_ran != 0)
+		goto fail;
+	strand_test_clock_ns = state.deadline;
+	for (i = 0; i < 16 && state.timer_ran == 0; i++)
+		(void)strand_scheduler_advance(sched, NULL);
+	if (i == 16 || state.timer_ran != 1)
+		goto fail;
+	for (i = 0; i < 16 && strand_scheduler_advance(sched, NULL) ==
+	    STRAND_SCHED_PROGRESS; i++)
+		;
+	if (i == 16)
+		goto fail;
+	close(fds[0]);
+	close(fds[1]);
+	strand_scheduler_destroy(sched);
+	return (0);
+
+fail:
+	(void)strand_fiber_cancel(io_handle);
+	(void)strand_fiber_cancel(timer_handle);
+	for (i = 0; i < 16 && strand_scheduler_advance(sched, NULL) ==
+	    STRAND_SCHED_PROGRESS; i++)
+		;
 	close(fds[0]);
 	close(fds[1]);
 	strand_scheduler_destroy(sched);
@@ -2450,7 +2570,10 @@ run_integration_tests(void)
         if (n == 0 || n == 13)
         RUN("test_integration_watchdog_warning",
             test_integration_watchdog_warning);
-        if (n == 0 || n == 14)
-        RUN("test_integration_guest_self_scheduler",
-            test_integration_guest_self_scheduler);
+	if (n == 0 || n == 14)
+		RUN("test_integration_guest_self_scheduler",
+		    test_integration_guest_self_scheduler);
+	if (n == 0 || n == 15)
+		RUN("test_integration_public_guest_bootstrap",
+		    test_integration_public_guest_bootstrap);
 }

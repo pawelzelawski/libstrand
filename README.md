@@ -39,20 +39,23 @@ thread spawns fibers and shuts down when done.
 
 ```c
 #include <strand.h>
+#include <fcntl.h>
+#include <stdlib.h>
 #include <unistd.h>
 
-/*
- * Per-connection fiber: parks on I/O, echoes data back.
- * Each connection runs in its own fiber on the assigned worker.
- */
+struct connection {
+    int fd;
+};
+
 static void echo_fiber(void *arg) {
-    int fd = *(int *)arg;
+    struct connection *conn = arg;
+    int fd = conn->fd;
     strand_scheduler_t *sched = strand_fiber_self_scheduler();
     char buf[256];
     ssize_t n;
 
+    free(conn);       /* this fiber owns the heap-allocated argument */
     for (;;) {
-        /* Park until data arrives - releases the worker. */
         if (strand_fiber_wait_readable(sched, fd) != STRAND_OK)
             break;
         n = read(fd, buf, sizeof(buf));
@@ -66,28 +69,48 @@ static void echo_fiber(void *arg) {
     close(fd);
 }
 
-int main(void) {
-    strand_runtime_t *rt = strand_runtime_init(NULL);
-    strand_worker_start(rt, NULL);   /* one worker thread */
+static int set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL);
 
-    /* For each accepted connection, spawn a fiber: */
-    int conn_fd = accepted_fd;
-    strand_runtime_spawn(rt, echo_fiber, &conn_fd, 0, NULL, NULL);
+    return flags == -1 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1
+        ? -1 : 0;
+}
 
-    /* ... run until shutdown ... */
-    strand_runtime_destroy(rt);      /* stops workers, joins, frees */
-    return 0;
+/* Call after accept(). rt must outlive every spawned connection fiber. */
+static int spawn_connection(strand_runtime_t *rt, int fd) {
+    struct connection *conn = malloc(sizeof(*conn));
+    int rc;
+
+    if (conn == NULL || set_nonblocking(fd) != 0) {
+        free(conn);
+        close(fd);
+        return -1;
+    }
+    conn->fd = fd;
+    rc = strand_runtime_spawn(rt, echo_fiber, conn, 0, NULL, NULL);
+    if (rc != STRAND_OK) {
+        free(conn);
+        close(fd);
+    }
+    return rc;
 }
 ```
 
+Set every fd passed to `strand_fiber_wait_readable()` or
+`strand_fiber_wait_writable()` to `O_NONBLOCK`. A fiber argument must remain
+valid until its entry function takes ownership; do not pass the address of a
+short-lived stack variable to an asynchronous spawn.
+
 ## Guest Mode (Host Loop Integration)
 
-For embedders who already own an event loop: get the scheduler fd with
-`strand_worker_get_scheduler()` + `strand_scheduler_get_fd()`, register
-it with your epoll/kqueue instance, and call `strand_scheduler_advance()`
-when it fires.  An unconditional trailing advance after every poll return
-is required for correct timer expiry.  See ARCHITECTURE.md §4.3 for the
-full host loop pattern.
+For embedders who already own an event loop, create a guest scheduler with
+`strand_scheduler_create()`, bootstrap roots with `strand_scheduler_spawn()`,
+and register `strand_scheduler_get_fd()` with the host epoll/kqueue instance.
+After every host poll return, call `strand_scheduler_advance()` repeatedly
+until it returns `STRAND_SCHED_IDLE` before blocking again. This handles timer
+expiry and ensures that a budget-limited pass cannot leave runnable fibers
+stranded behind the host poll. See `examples/guest_mode.c` and
+ARCHITECTURE.md §4.3.
 
 ## Performance
 

@@ -337,42 +337,15 @@ fiber_free(strand_fiber_t **dead_pool, strand_fiber_t *f)
 	}
 }
 
-/* ---------------------------------------------------------------------------
- * strand_fiber_spawn - spawn a new fiber on a scheduler.
- *
- * Within-worker spawn path.  Host-thread spawning uses the inject queue
- * (see strand_runtime.c).
- *
- * Returns STRAND_OK on success; *out receives the handle.
- * Returns STRAND_ERR_SHUTDOWN if the scheduler has been stopped.
- * Returns STRAND_ERR_WRONGCTX if called from the host thread
- *   (sched->current_fiber is NULL - i.e. control is not inside a fiber).
- * Returns STRAND_ERR_NOMEM on allocation failure.
- * See ARCHITECTURE.md §4.5 and §4.6.
- * ---------------------------------------------------------------------------
- */
-int
-strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
-                   size_t stack_sz, strand_fiber_handle_t *out)
+static int
+fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
+    size_t stack_sz, strand_fiber_handle_t *out)
 {
 	strand_fiber_t *f;
 	void *base;
 	unsigned long vg_id;
 	char *stack_top;
 	size_t sz;
-
-	if (atomic_load_explicit(&sched->stop_flag, memory_order_acquire))
-		return (STRAND_ERR_SHUTDOWN);
-
-	/*
-	 * Only same-worker (within-fiber) spawning is supported here.
-	 * current_fiber is NULL when the caller is the host thread / scheduler
-	 * context.  Host-thread spawning uses the inject queue.
-	 * Reading current_fiber without a lock is safe in the
-	 * single-worker model.
-	 */
-	if (sched->current_fiber == NULL)
-		return (STRAND_ERR_WRONGCTX);
 
 	sz = (stack_sz != 0) ? stack_sz : STRAND_DEFAULT_STACK_SIZE;
 
@@ -408,7 +381,37 @@ strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 		out->generation = f->generation;
 	}
 
-        return (STRAND_OK);
+	return (STRAND_OK);
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_scheduler_spawn - bootstrap a guest scheduler from its host thread.
+ * ---------------------------------------------------------------------------
+ */
+int
+strand_scheduler_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn,
+    void *arg, size_t stack_sz, strand_fiber_handle_t *out)
+{
+	if (atomic_load_explicit(&sched->stop_flag, memory_order_acquire))
+		return (STRAND_ERR_SHUTDOWN);
+	if (sched->current_fiber != NULL)
+		return (STRAND_ERR_WRONGCTX);
+	return (fiber_spawn(sched, fn, arg, stack_sz, out));
+}
+
+/* ---------------------------------------------------------------------------
+ * strand_fiber_spawn - spawn a new fiber on the current worker.
+ * ---------------------------------------------------------------------------
+ */
+int
+strand_fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
+    size_t stack_sz, strand_fiber_handle_t *out)
+{
+	if (atomic_load_explicit(&sched->stop_flag, memory_order_acquire))
+		return (STRAND_ERR_SHUTDOWN);
+	if (sched->current_fiber == NULL)
+		return (STRAND_ERR_WRONGCTX);
+	return (fiber_spawn(sched, fn, arg, stack_sz, out));
 }
 
 /* ---------------------------------------------------------------------------

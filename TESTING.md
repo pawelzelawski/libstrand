@@ -91,8 +91,8 @@ static void
 run_until_idle(strand_scheduler_t *sched, int max_ticks)
 {
     for (int i = 0; i < max_ticks; i++) {
-        int rc = strand_scheduler_advance(sched);
-        if (rc == SCHED_IDLE)
+        sched_result_t rc = strand_scheduler_advance(sched, NULL);
+        if (rc == STRAND_SCHED_IDLE)
             break;
     }
 }
@@ -138,10 +138,10 @@ test_wait_readable_wakes(void)
     make_test_pipe(&rd, &wr);
 
     int flag = 0;
-    strand_fiber_spawn(sched, fiber_wait_read_fn, &(test_args){rd, &flag}, 0, NULL);
-    strand_scheduler_advance(sched);    /* fiber parks on rd */
+    strand_scheduler_spawn(sched, fiber_wait_read_fn, &(test_args){rd, &flag}, 0, NULL);
+    strand_scheduler_advance(sched, NULL);    /* fiber parks on rd */
     write(wr, "x", 1);                 /* trigger readiness */
-    strand_scheduler_advance(sched);    /* fiber wakes, sets flag */
+    strand_scheduler_advance(sched, NULL);    /* fiber wakes, sets flag */
 
     assert(flag == 1);
     close(rd); close(wr);
@@ -647,11 +647,11 @@ ARCHITECTURE.md §5.5.
 ### 7.10 Guest Mode Host Loop
 
 Drive a libstrand scheduler from an external event loop using
-`strand_scheduler_advance`. Verify the host loop integration pattern from
+`strand_scheduler_spawn` and `strand_scheduler_advance`. Verify the host loop integration pattern from
 ARCHITECTURE.md §4.3:
-- The unconditional trailing `strand_scheduler_advance` call correctly
-  processes timer expiry even when no scheduler fd event fired
-- The host loop does not block when the scheduler has work
+- Draining `strand_scheduler_advance` until `STRAND_SCHED_IDLE` processes
+  timer expiry even when no scheduler fd event fired
+- A budget-limited pass cannot leave runnable fibers behind a host poll
 
 ### 7.11 Scheduler Stop Interrupts Blocked Worker
 

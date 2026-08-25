@@ -7,6 +7,7 @@
 #   make test-real-clock - real-clock timer regression profile
 #   make test-tsan   - TSan build, Clang only, Linux only
 #   make valgrind    - run tests under Valgrind, Linux only
+#   make examples    - build public API examples
 #   make bench       - build and run benchmarks (Phase 7)
 #   make lint        - clang-tidy + cppcheck
 #   make format      - clang-format -i on all sources
@@ -143,7 +144,7 @@ ASM_OBJ_TSAN != if [ -n "$(ASM_SRC)" ]; then echo "$(TSAN_DIR)/strand_context_as
 
 # --- Phony targets ----------------------------------------------------------
 
-.PHONY: all dev release test test-real-clock test-tsan valgrind bench tools lint format clean install
+.PHONY: all dev release test test-real-clock test-tsan valgrind examples bench tools lint format clean install
 
 all: dev
 
@@ -152,6 +153,17 @@ dev: $(LIB_DEV) $(TEST_BIN)
 
 # Release - optimised static library
 release: $(LIB_RELEASE)
+
+# Public examples compile with only the installed-header include path.
+EXAMPLES_DIR = $(BUILD_DIR)/examples
+EXAMPLE_BINS = $(EXAMPLES_DIR)/guest_mode
+
+examples: $(EXAMPLE_BINS)
+
+$(EXAMPLES_DIR)/guest_mode: examples/guest_mode.c $(LIB_RELEASE)
+	@mkdir -p $(EXAMPLES_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(INCLUDES) examples/guest_mode.c \
+	    $(LIB_RELEASE) $(LDFLAGS) -o $@
 
 # Test suite - ASan/UBSan build
 # LSAN (LeakSanitizer) is disabled here: its tracer process uses ptrace to

@@ -17,7 +17,8 @@
  *
  *   Guest mode - the embedder drives the scheduler from their own event
  *   loop via strand_scheduler_advance().  Key functions:
- *     strand_scheduler_create, strand_scheduler_advance,
+ *     strand_scheduler_create, strand_scheduler_spawn,
+ *     strand_scheduler_advance,
  *     strand_scheduler_get_fd, strand_scheduler_next_deadline.
  *
  *   Worker mode - the library owns a thread that blocks in
@@ -29,20 +30,19 @@
  * HOST LOOP INTEGRATION (guest mode):
  *
  *   while (running) {
+ *       while (strand_scheduler_advance(sched, NULL) ==
+ *           STRAND_SCHED_PROGRESS)
+ *           ;
  *       uint64_t deadline = strand_scheduler_next_deadline(sched);
- *       int timeout_ms    = deadline_to_ms(deadline);
- *
+ *       int timeout_ms = deadline_to_ms(deadline);
  *       int nfds = epoll_wait(host_epoll, events, max, timeout_ms);
  *
- *       for (int i = 0; i < nfds; i++) {
- *           if (events[i].data.fd == strand_scheduler_get_fd(sched))
- *               strand_scheduler_advance(sched, NULL);
- *           else
- *               handle_app_event(&events[i]);
- *       }
- *       // Always call advance after epoll_wait for timer expiry.
- *       strand_scheduler_advance(sched, NULL);
+ *       for (int i = 0; i < nfds; i++)
+ *           handle_app_event(&events[i]);
  *   }
+ *
+ *   Drain until idle before every blocking host wait.  A single advance can
+ *   exhaust its budget while runnable fibers remain.
  *
  * THREADING RULES (summary):
  *
@@ -53,7 +53,8 @@
  *     strand_scope_open, strand_scope_spawn, strand_scope_wait,
  *     strand_scope_wait_timeout.
  *
- *   Host-thread-only: strand_scheduler_advance, strand_scheduler_run,
+ *   Host-thread-only: strand_scheduler_spawn, strand_scheduler_advance,
+ *     strand_scheduler_run,
  *     strand_scheduler_next_deadline, strand_scheduler_get_fd,
  *     strand_runtime_init, strand_runtime_destroy,
  *     strand_worker_join, strand_worker_get_scheduler.
@@ -61,8 +62,8 @@
  *   Any thread: strand_scheduler_stop, strand_fiber_cancel,
  *     strand_scope_cancel, strand_scope_abandon.
  *
- *   Fiber or host thread: strand_fiber_spawn, strand_fiber_spawn_detached,
- *     strand_runtime_spawn.
+ *   Fiber-only: strand_fiber_spawn, strand_fiber_spawn_detached.
+ *   Fiber or host thread: strand_runtime_spawn.
  *
  * FLOATING-POINT LIMITATION:
  *
@@ -86,7 +87,7 @@
  */
 
 #define STRAND_VERSION_MAJOR 1
-#define STRAND_VERSION_MINOR 0
+#define STRAND_VERSION_MINOR 1
 #define STRAND_VERSION_PATCH 0
 
 /* ===========================================================================
@@ -117,9 +118,9 @@ typedef struct strand_fiber strand_fiber_t;
  * The generation counter prevents use-after-recycle bugs when a fiber
  * descriptor is reused from the dead pool.
  *
- * Handles are created only by strand_fiber_spawn, strand_fiber_spawn_detached,
- * strand_scope_spawn, and strand_runtime_spawn.  Manual construction is not
- * part of the API.
+ * Handles are created only by strand_scheduler_spawn, strand_fiber_spawn,
+ * strand_fiber_spawn_detached, strand_scope_spawn, and strand_runtime_spawn.
+ * Manual construction is not part of the API.
  *
  * See ARCHITECTURE.md §4.6.
  */
@@ -131,9 +132,10 @@ typedef struct strand_fiber_handle {
 /*
  * strand_fiber_fn_t - fiber entry function.
  *
- * Called with the argument passed to strand_fiber_spawn.  Returns void;
+ * Called with the argument passed to a fiber spawn function.  Returns void;
  * errors are not propagated to a scope.  Used for fibers spawned via
- * strand_fiber_spawn and strand_fiber_spawn_detached.
+ * strand_scheduler_spawn, strand_fiber_spawn, and
+ * strand_fiber_spawn_detached.
  */
 typedef void (*strand_fiber_fn_t)(void *arg);
 
@@ -405,6 +407,33 @@ typedef enum {
 strand_scheduler_t *strand_scheduler_create(const strand_sched_config_t *cfg);
 
 /*
+ * strand_scheduler_spawn - bootstrap a fiber in guest mode.
+ *
+ * Adds a top-level fiber to a scheduler created by
+ * strand_scheduler_create.  The fiber is run by subsequent calls to
+ * strand_scheduler_advance.  It is not scope-tracked.
+ *
+ * sched:    guest scheduler handle.
+ * fn:       fiber entry function.
+ * arg:      argument passed to fn; ownership remains with the caller until
+ *           fn takes or releases it.
+ * stack_sz: usable stack size in bytes; 0 uses STRAND_DEFAULT_STACK_SIZE.
+ * out:      if non-NULL, receives an ABA-safe handle on success.
+ *
+ * Returns STRAND_OK           on success.
+ * Returns STRAND_ERR_SHUTDOWN if the scheduler has been stopped.
+ * Returns STRAND_ERR_WRONGCTX if called from a running fiber.
+ * Returns STRAND_ERR_NOMEM    on allocation failure.
+ *
+ * Callable from: host thread only.  The caller exclusively owns sched for
+ * the duration of this call; concurrent spawn, advance, or run calls on the
+ * same scheduler are not supported.
+ * See ARCHITECTURE.md §4.2, §4.3.
+ */
+int strand_scheduler_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn,
+    void *arg, size_t stack_sz, strand_fiber_handle_t *out);
+
+/*
  * strand_scheduler_destroy - tear down and free a scheduler.
  *
  * All fibers must have finished before calling this.
@@ -501,7 +530,8 @@ int strand_scheduler_get_fd(const strand_scheduler_t *sched);
  * strand_fiber_spawn - spawn a new fiber on the current worker.
  *
  * The new fiber is assigned to the same worker as the calling fiber.
- * Host-thread spawning uses strand_runtime_spawn instead.
+ * Host-thread spawning in worker mode uses strand_runtime_spawn.  Guest-mode
+ * host threads use strand_scheduler_spawn.
  *
  * sched:    scheduler handle.
  * fn:       fiber entry function; called as fn(arg).
@@ -918,7 +948,7 @@ void *strand_fiber_local_get(strand_scheduler_t *sched);
  * Host thread only:
  *   strand_runtime_init, strand_runtime_destroy, strand_worker_start,
  *   strand_worker_join, strand_worker_get_scheduler,
- *   strand_scheduler_create, strand_scheduler_destroy,
+ *   strand_scheduler_create, strand_scheduler_spawn, strand_scheduler_destroy,
  *   strand_scheduler_advance, strand_scheduler_run,
  *   strand_scheduler_next_deadline, strand_scheduler_get_fd,
  *   strand_offload_pool_init, strand_offload_pool_destroy.

@@ -253,7 +253,7 @@ explicit and caller-owned - there is no global scheduler state.
 
 ### 4.2 Scheduler Operating Modes
 
-**`strand_scheduler_advance(sched)` - guest mode:**
+**`strand_scheduler_advance(sched, next_deadline_ns)` - guest mode:**
 
 Nonblocking. Performs exactly one pass through the scheduler work pipeline and
 returns. Never blocks the caller. Used when the programmer drives the scheduler
@@ -308,6 +308,12 @@ timeout.
 Returns the file descriptor the host loop must monitor for scheduler activity.
 The host loop adds this fd to its own epoll/kqueue instance.
 
+**`strand_scheduler_spawn(sched, fn, arg, stack_sz, out)`:**
+
+Guest-mode host-thread bootstrap. Adds an unscoped top-level fiber to the
+scheduler's run queue. It is valid only while the host exclusively owns the
+scheduler; concurrent spawn, advance, and run calls are unsupported.
+
 ### 4.3 Host Loop Integration Pattern
 
 The correct pattern for integrating a libstrand scheduler into an existing
@@ -315,34 +321,32 @@ event loop:
 
 ```c
 while (running) {
+    while (strand_scheduler_advance(sched, NULL) == STRAND_SCHED_PROGRESS)
+        ;
     uint64_t deadline = strand_scheduler_next_deadline(sched);
     int timeout_ms    = deadline_to_ms(deadline);  /* caller computes */
+    int nfds;
 
-    epoll_wait(host_epoll, events, max_events, timeout_ms);
+    nfds = epoll_wait(host_epoll, events, max_events, timeout_ms);
 
     for (int i = 0; i < nfds; i++) {
         if (events[i].data.fd == strand_scheduler_get_fd(sched)) {
-            strand_scheduler_advance(sched);
+            continue;
         } else {
             /* handle host application events */
         }
     }
 
-    /*
-     * Always call strand_scheduler_advance after every epoll_wait return,
-     * regardless of which fds fired. Timer expiry requires processing even
-     * when no I/O event arrived. The double call when the scheduler fd also
-     * fired is intentional and harmless - it processes timers and injected
-     * work more eagerly.
-     */
-    strand_scheduler_advance(sched);
+    /* Drain after every host poll return, including timer-only wakeups. */
+    while (strand_scheduler_advance(sched, NULL) == STRAND_SCHED_PROGRESS)
+        ;
 }
 ```
 
-The unconditional trailing call is required. A timer deadline may expire
-during the `epoll_wait` that is woken by an unrelated application fd. Without
-the trailing call, timer-fired fibers would not be run until the next
-iteration.
+Drain until idle before every blocking host wait. A timer deadline may expire
+during an `epoll_wait` woken by an unrelated application fd, and one advance
+may exhaust the configured budget while runnable fibers remain. A single
+trailing advance is therefore insufficient.
 
 ### 4.4 Fairness and Budget
 
@@ -708,8 +712,8 @@ pinned model is implemented but advisory there.
 ### 6.2 Worker Registration and Shutdown
 
 Workers must be registered with the runtime before host-thread
-`strand_fiber_spawn` is called. Calling `strand_fiber_spawn` from the host
-thread before any workers are registered returns an error.
+`strand_runtime_spawn` is called. Calling `strand_runtime_spawn` before any
+workers are registered returns an error.
 
 **Shutdown sequence:**
 1. Close worker injection, then call `strand_scheduler_stop` on all workers.
@@ -717,10 +721,10 @@ thread before any workers are registered returns an error.
 3. Wait for offload completions that retained a worker scheduler, then tear
    down that scheduler and the runtime.
 
-Once shutdown begins - after the first `strand_scheduler_stop` call - both
-host-thread and running-fiber `strand_fiber_spawn` return an error. The same
-atomic shutdown flag is checked on all spawn paths. Stopped workers are
-excluded from round-robin selection.
+Once shutdown begins - after the first `strand_scheduler_stop` call -
+`strand_runtime_spawn` returns an error. The same atomic shutdown flag is
+checked on all worker-mode spawn paths. Stopped workers are excluded from
+round-robin selection.
 
 Each host-thread spawn obtains a short runtime lifetime reference before it
 selects a worker and releases it after enqueueing or freeing its allocation.
@@ -1244,8 +1248,8 @@ and fiber run time are planned. Specifics deferred.
 
 | Operation | Running fiber | Host thread | Other worker thread | Signal handler | Offload thread |
 |---|---|---|---|---|---|
-| `strand_fiber_spawn` | Yes (same worker) | Yes (round-robin; error if no workers or shutdown) | No | No | No |
-| `strand_fiber_spawn_detached` | Yes | Yes (round-robin; error if no workers or shutdown) | No | No | No |
+| `strand_fiber_spawn` | Yes (same worker) | No | No | No | No |
+| `strand_fiber_spawn_detached` | Yes | No | No | No | No |
 | `strand_fiber_cancel` | Yes | Yes | Yes (enqueue-only †) | No | No |
 | `strand_fiber_wait_readable` | Yes | No | No | No | No |
 | `strand_fiber_wait_writable` | Yes | No | No | No | No |
@@ -1260,6 +1264,8 @@ and fiber run time are planned. Specifics deferred.
 | `strand_scope_wait_timeout` | Yes | No | No | No | No |
 | `strand_scope_cancel` | Yes | Yes | Yes (enqueue-only †) | No | No |
 | `strand_scope_abandon` | Yes | Yes | No | No | No |
+| `strand_runtime_spawn` | Yes | Yes | No | No | No |
+| `strand_scheduler_spawn` | No | Yes | No | No | No |
 | `strand_scheduler_advance` | No | Yes | No | No | No |
 | `strand_scheduler_run` | No | Yes (one call per worker thread) | No | No | No |
 | `strand_scheduler_stop` | No | Yes | Yes | No | No |
