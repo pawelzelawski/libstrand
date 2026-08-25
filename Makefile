@@ -37,6 +37,11 @@ CC = clang
 CLANG_TIDY_RESOURCE_DIR != if [ "$(OS)" = "OpenBSD" ]; then $(CC) -print-resource-dir; fi
 CLANG_TIDY_RESOURCE_ARG != if [ -n "$(CLANG_TIDY_RESOURCE_DIR)" ]; then echo "--extra-arg=-resource-dir=$(CLANG_TIDY_RESOURCE_DIR)"; fi
 
+# Cppcheck 2.18 added the staticFunction and normal-check branch-limit
+# diagnostics used here.  Older cppcheck releases reject unknown suppression
+# IDs as fatal unmatched suppressions, so add both only on 2.18 or newer.
+CPPCHECK_NEW_SUPPRESSIONS != cppcheck --version 2>/dev/null | awk 'NR == 1 { split($$2, v, "."); if (v[1] > 2 || (v[1] == 2 && v[2] >= 18)) print "--suppress=staticFunction --suppress=normalCheckLevelMaxBranches"; }'
+
 # --- Compiler flags ---------------------------------------------------------
 
 CFLAGS_COMMON = -std=c11 -Wall -Wextra -Wpedantic			\
@@ -343,8 +348,7 @@ lint: $(LIB_DEV)
 	         --suppress=missingIncludeSystem \
 	         --suppress=unusedFunction \
 	         --suppress=constParameterPointer \
-	         --suppress=staticFunction \
-	         --suppress=normalCheckLevelMaxBranches \
+	         $(CPPCHECK_NEW_SUPPRESSIONS) \
 	         src/
 
 format:
