@@ -559,8 +559,8 @@ APIs. The `make test-tsan` target fails gracefully when built with GCC.
 
 **Purpose**: Static analysis.
 
-**Installation**: `apt install clang-tidy` (Linux) / `pkg_add clang-tools`
-(OpenBSD).
+**Installation**: `apt install clang-tidy` (Linux) /
+`pkg_add clang-tools-extra` (OpenBSD 7.9).
 
 ```sh
 make lint

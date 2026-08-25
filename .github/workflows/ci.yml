@@ -64,7 +64,7 @@ jobs:
           usesh: true
           release: "7.9"
           run: |
-            pkg_add -I clang-tools cppcheck
+            pkg_add -I clang-tools-extra cppcheck
             make dev
             MALLOC_OPTIONS=CFGJ make lint
             MALLOC_OPTIONS=CFGJ make test || {
@@ -110,7 +110,7 @@ jobs:
           arch: aarch64
           release: "7.9"
           run: |
-            pkg_add -I clang-tools cppcheck
+            pkg_add -I clang-tools-extra cppcheck
             make dev
             MALLOC_OPTIONS=CFGJ make lint
             MALLOC_OPTIONS=CFGJ make test || {

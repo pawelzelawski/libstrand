@@ -158,7 +158,7 @@ strand_runtime_init(const strand_runtime_config_t *cfg)
 	if (rt == NULL)
 		return (NULL);
 
-	rt->workers = calloc(cap, sizeof(*rt->workers));
+	rt->workers = calloc(cap, sizeof(strand_worker_t *));
 	if (rt->workers == NULL) {
 		free(rt);
 		return (NULL);

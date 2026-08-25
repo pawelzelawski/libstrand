@@ -37,6 +37,23 @@ offload_item_release(strand_offload_item_t *item)
                 free(item);
 }
 
+/*
+ * Release both references after a completed item cannot be injected because
+ * its home scheduler is shutting down.  RESULT_CLAIMED prevents cancellation
+ * from releasing the fiber reference, so this path owns both references.
+ */
+static void
+offload_item_release_shutdown(strand_offload_item_t *item)
+{
+        int prev;
+
+        prev = atomic_fetch_sub_explicit(&item->refcount, 2,
+                                         memory_order_acq_rel);
+        STRAND_DEBUG_ASSERT(prev == 2);
+        if (prev == 2)
+                free(item);
+}
+
 /* ---------------------------------------------------------------------------
  * offload_thread_worker - body of each offload pool thread.
  *
@@ -140,6 +157,9 @@ offload_thread_worker(void *varg)
                                     f->stack_size, f->valgrind_stack_id);
                                 strand_fiber_tsan_destroy(f);
                                 free(f);
+                                offload_item_release_shutdown(item);
+                        } else {
+                                /* Release offload-thread-side refcount. */
                                 offload_item_release(item);
                         }
                         /*
@@ -164,11 +184,11 @@ offload_thread_worker(void *varg)
                         }
                         }
 #endif
+                } else {
+                        /* Release offload-thread-side refcount. */
+                        offload_item_release(item);
                 }
                 /* else: CANCELLED won; result_slot not written; no inject. */
-
-                /* Release offload-thread-side refcount. */
-                offload_item_release(item);
 		/* Drop the scheduler lifetime reference acquired at submission. */
 		scheduler_inject_release(home_sched);
         }
