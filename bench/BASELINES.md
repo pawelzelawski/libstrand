@@ -4,6 +4,53 @@ Baseline numbers recorded per DEVELOPMENT.md Task 7.2.
 Numbers are reference points, not pass/fail gates.
 All benchmarks built with `-O2 -DNDEBUG` (release flags, no sanitizers).
 
+## v1.1.0 release-candidate comparison
+
+The v1.1.0 candidate was sampled three times on the same Fedora x86_64
+machine as the Linux reference above: AMD Ryzen 7 4800H (16 online CPUs),
+kernel `7.1.9-200.fc44.x86_64`, Clang 22.1.8, `-O2 -DNDEBUG`, 2026-08-25.
+The table reports `min / median / max` nanoseconds per operation.  The raw
+`make bench` output supplied the CPU and CPU-count header for every sample;
+the compiler, kernel, flags, date, and complete distribution are recorded
+here so the comparison remains reproducible.
+
+| Benchmark | v1.0.0 reference | v1.1.0 candidate (min / median / max) | Assessment |
+|---|---:|---:|---|
+| Context, single yield | 26 | 27 / 27 / 28 | Within run noise |
+| Context, ping-pong | 52 | 55 / 55 / 56 | Within run noise |
+| Context, errno | 27 | 27 / 27 / 27 | No change |
+| Context, MXCSR | 34 | 35 / 36 / 39 | Within run noise |
+| Spawn, cold | 7758 | 8081 / 8296 / 8405 | Within run noise |
+| Spawn, warm | 117 | 124 / 125 / 129 | Within run noise |
+| I/O roundtrip | 4430 | 4691 / 4725 / 4741 | Within run noise |
+| Scheduler, budget 8 | 243 | 255 / 260 / 262 | Within run noise |
+| Scheduler, budget 16 | 139 | 147 / 150 / 151 | Within run noise |
+| Scheduler, budget 32 | 87 | 94 / 95 / 97 | Within run noise |
+| Scheduler, budget 64 | 63 | 66 / 67 / 67 | Within run noise |
+| Scheduler, budget 128 | 50 | 52 / 52 / 52 | Within run noise |
+| Scheduler, budget 256 | 43 | 46 / 46 / 47 | Within run noise |
+| Multiworker, 1 worker | 11748 | 10759 / 10997 / 11068 | No regression indicated |
+| Multiworker, 2 workers | 11437 | 12327 / 12623 / 12724 | Host-scheduling variance |
+| Multiworker, 3 workers | 11313 | 11590 / 11826 / 13873 | Host-scheduling variance |
+| Multiworker, 4 workers | 13838 | 11892 / 12218 / 12698 | No regression indicated |
+| Multiworker, 5 workers | 12089 | 11209 / 11321 / 11806 | No regression indicated |
+| Multiworker, 6 workers | 12590 | 12786 / 14444 / 15076 | Host-scheduling variance |
+| Multiworker, 7 workers | 11559 | 11613 / 12414 / 13090 | Host-scheduling variance |
+| Multiworker, 8 workers | 13237 | 12913 / 13877 / 14527 | Host-scheduling variance |
+| Offload, pool 1 | 18554 | 17470 / 18734 / 18957 | No regression indicated |
+| Offload, pool 2 | 18205 | 17448 / 18938 / 19824 | Host-scheduling variance |
+| Offload, pool 4 | 18055 | 17632 / 17971 / 18805 | No regression indicated |
+| Offload, pool 8 | 19150 | 18750 / 19338 / 19508 | No regression indicated |
+| Offload, pool 16 | 17821 | 18670 / 19370 / 20560 | Host-scheduling variance |
+| Cross-worker wakeup | 7897 | 7813 / 8184 / 8248 | Host-scheduling variance |
+
+Multiworker, offload, and cross-worker results are sensitive to host
+scheduling.  No material regression is established by these samples; changes
+in the higher-concurrency cases are within their three-run spread.  The fixes
+prioritise memory safety and liveness; no performance-driven redesign was
+made.  Re-run this suite on the release machine if the compiler, kernel, power
+policy, or benchmark implementation changes.
+
 ---
 
 ## Linux x86_64
@@ -222,4 +269,3 @@ Notes:
 Notes:
 - 3.0 µs cross-worker wakeup - meets the < 5 µs design target.
 - OpenBSD kqueue + pipe path is ~2.6× faster than Linux epoll + eventfd.
-

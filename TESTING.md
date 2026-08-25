@@ -686,6 +686,20 @@ flags. They are not part of `make test` - they do not have pass/fail criteria
 at this stage. Their purpose is to establish baselines and detect regressions
 between versions.
 
+### 8.0 v1.1.0 release-candidate evidence
+
+The release-candidate status is intentionally incomplete until all supported
+targets have reported results.  The local Linux x86_64 commands required for
+the candidate are `make dev`, `make test`, `make test-tsan`, `make valgrind`,
+`make release`, `make lint`, and `make examples`; the task hand-off records
+their exact outcome.  The release-profile and real-clock suites are additional
+evidence and are run by CI.
+
+OpenBSD amd64 owner-run evidence on 2026-08-25 passed `make dev`, `make test`
+(107/107), `make release`, `make lint`, `make test-real-clock`,
+`make test-release` (106/106), and `make examples`.  The final release record
+is `CHANGELOG.md`.
+
 ### 8.1 What Is Measured
 
 | Benchmark | Metric | Notes |
