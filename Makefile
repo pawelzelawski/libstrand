@@ -73,8 +73,9 @@ HAVE_VALGRIND != if $(CC) -include valgrind/valgrind.h -x c /dev/null -c \
 CFLAGS_DEV     = $(CFLAGS_COMMON) $(CFLAGS_OS)				\
                  -O1 -g -Werror					\
                  $(SANITIZERS)						\
-                 -DSTRAND_DEBUG						\
-                 -DSTRAND_TEST_CLOCK
+				 -DSTRAND_DEBUG
+
+CFLAGS_TEST_LIB = $(CFLAGS_DEV) -DSTRAND_TEST_CLOCK
 
 CFLAGS_TSAN    = $(CFLAGS_COMMON) $(CFLAGS_OS)				\
                  -O1 -g							\
@@ -91,7 +92,7 @@ CFLAGS_REAL    = $(CFLAGS_COMMON) $(CFLAGS_OS)				\
                  -DSTRAND_DEBUG
 
 CFLAGS_RELEASE = $(CFLAGS_COMMON) $(CFLAGS_OS) -O2 -DNDEBUG
-CFLAGS_TEST    = $(CFLAGS_DEV)
+CFLAGS_TEST    = $(CFLAGS_TEST_LIB)
 
 LDFLAGS = -lpthread
 
@@ -128,6 +129,8 @@ REL_DIR         = $(BUILD_DIR)/rel
 BUILD_TESTS_DIR = $(BUILD_DIR)/tests
 VG_DIR          = $(BUILD_DIR)/vg
 LIB_DEV         = $(BUILD_DIR)/libstrand.a
+TEST_DIR        = $(BUILD_DIR)/test
+LIB_TEST        = $(TEST_DIR)/libstrand.a
 LIB_RELEASE     = $(REL_DIR)/libstrand.a
 LIB_VG          = $(VG_DIR)/libstrand.a
 TEST_BIN        = $(BUILD_TESTS_DIR)/run_tests
@@ -155,7 +158,7 @@ ASM_OBJ_TSAN != if [ -n "$(ASM_SRC)" ]; then echo "$(TSAN_DIR)/strand_context_as
 
 all: dev
 
-# Development build with ASan/UBSan (Linux) - also builds test binary
+# Development build with ASan/UBSan (Linux) and real monotonic time.
 dev: $(LIB_DEV) $(TEST_BIN)
 
 # Release - optimised static library
@@ -172,14 +175,24 @@ test-release:
 
 # Public examples compile with only the installed-header include path.
 EXAMPLES_DIR = $(BUILD_DIR)/examples
-EXAMPLE_BINS = $(EXAMPLES_DIR)/guest_mode
+EXAMPLE_BINS = $(EXAMPLES_DIR)/guest_mode $(EXAMPLES_DIR)/scope_fanout \
+               $(EXAMPLES_DIR)/worker_mode
 
 examples: $(EXAMPLE_BINS)
+	@for example in $(EXAMPLE_BINS); do $$example; done
 
 $(EXAMPLES_DIR)/guest_mode: examples/guest_mode.c $(LIB_RELEASE)
 	@mkdir -p $(EXAMPLES_DIR)
 	$(CC) $(CFLAGS_RELEASE) $(INCLUDES) examples/guest_mode.c \
 	    $(LIB_RELEASE) $(LDFLAGS) -o $@
+
+$(EXAMPLES_DIR)/scope_fanout: examples/scope_fanout.c $(LIB_RELEASE)
+	@mkdir -p $(EXAMPLES_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(INCLUDES) examples/scope_fanout.c $(LIB_RELEASE) $(LDFLAGS) -o $@
+
+$(EXAMPLES_DIR)/worker_mode: examples/worker_mode.c $(LIB_RELEASE)
+	@mkdir -p $(EXAMPLES_DIR)
+	$(CC) $(CFLAGS_RELEASE) $(INCLUDES) examples/worker_mode.c $(LIB_RELEASE) $(LDFLAGS) -o $@
 
 # Test suite - ASan/UBSan build
 # LSAN (LeakSanitizer) is disabled here: its tracer process uses ptrace to
@@ -412,11 +425,25 @@ $(LIB_RELEASE): $(LIB_SRCS) $(ASM_SRC)
 
 # --- Test binary (ASan/UBSan build) -----------------------------------------
 
-$(TEST_BIN): $(LIB_DEV) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c tests/test_harness.h
+$(TEST_BIN): $(LIB_TEST) tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c tests/test_harness.h
 	@mkdir -p $(BUILD_TESTS_DIR)
 	$(CC) $(CFLAGS_TEST) $(INCLUDES) -I tests/ -I src/              \
-	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c $(LIB_DEV) $(LDFLAGS) \
+	    tests/run_tests.c tests/test_layer1.c tests/test_layer2.c tests/test_layer3.c tests/test_layer4.c tests/test_layer5.c tests/test_integration.c $(LIB_TEST) $(LDFLAGS) \
 	    -o $(TEST_BIN)
+
+$(LIB_TEST): $(LIB_SRCS) $(ASM_SRC)
+	@mkdir -p $(TEST_DIR)
+	$(CC) $(CFLAGS_TEST_LIB) $(INCLUDES) -c src/strand_context.c -o $(TEST_DIR)/strand_context.o
+	$(CC) $(CFLAGS_TEST_LIB) $(INCLUDES) -c src/strand_fiber.c -o $(TEST_DIR)/strand_fiber.o
+	$(CC) $(CFLAGS_TEST_LIB) $(INCLUDES) -c src/strand_sched.c -o $(TEST_DIR)/strand_sched.o
+	$(CC) $(CFLAGS_TEST_LIB) $(INCLUDES) -c src/strand_poller.c -o $(TEST_DIR)/strand_poller.o
+	$(CC) $(CFLAGS_TEST_LIB) $(INCLUDES) -c src/strand_inject.c -o $(TEST_DIR)/strand_inject.o
+	$(CC) $(CFLAGS_TEST_LIB) $(INCLUDES) -c src/strand_runtime.c -o $(TEST_DIR)/strand_runtime.o
+	$(CC) $(CFLAGS_TEST_LIB) $(INCLUDES) -c src/strand_offload.c -o $(TEST_DIR)/strand_offload.o
+	$(CC) $(CFLAGS_TEST_LIB) $(INCLUDES) -c src/strand_scope.c -o $(TEST_DIR)/strand_scope.o
+	test -z "$(ASM_SRC)" || $(CC) $(CFLAGS_TEST_LIB) -c $(ASM_SRC) -o $(TEST_DIR)/strand_context_asm.o
+	ar rcs $(LIB_TEST) $(TEST_DIR)/strand_context.o $(TEST_DIR)/strand_fiber.o $(TEST_DIR)/strand_sched.o $(TEST_DIR)/strand_poller.o $(TEST_DIR)/strand_inject.o $(TEST_DIR)/strand_runtime.o $(TEST_DIR)/strand_offload.o $(TEST_DIR)/strand_scope.o
+	test -z "$(ASM_SRC)" || ar qs $(LIB_TEST) $(TEST_DIR)/strand_context_asm.o
 
 # --- Valgrind test binary (no sanitizers) -----------------------------------
 

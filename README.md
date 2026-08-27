@@ -32,6 +32,11 @@ make install    # install to /usr/local (or PREFIX=...)
 The build produces `build/libstrand.a` and the public header is
 `include/strand.h`.
 
+`make dev` produces a sanitizer-debug library with real monotonic time.
+`make test` uses a separate deterministic-clock test archive.  LeakSanitizer
+is disabled for that test run because it cannot scan guarded fiber stacks;
+use `make valgrind` on Linux for leak checking.
+
 ## Quick Start - Worker Mode
 
 The primary usage pattern: the runtime owns worker threads; the host
@@ -111,6 +116,10 @@ until it returns `STRAND_SCHED_IDLE` before blocking again. This handles timer
 expiry and ensures that a budget-limited pass cannot leave runnable fibers
 stranded behind the host poll. See `examples/guest_mode.c` and
 ARCHITECTURE.md §4.3.
+
+Working public-header-only programs are available in `examples/guest_mode.c`,
+`examples/worker_mode.c`, and `examples/scope_fanout.c`; `make examples`
+builds and runs them.
 
 ## Performance
 

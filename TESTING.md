@@ -763,34 +763,22 @@ Actual results on specific hardware will differ.
 
 ## 9. Test Coverage Tracking
 
-Track coverage manually. Update after each phase. A cell is marked done only
-when the test passes cleanly with no Valgrind or ASan errors on both platforms.
+The named cases below are the coverage inventory.  The authoritative execution
+evidence is the current Linux and OpenBSD gate output plus the configured CI
+jobs, not a manually maintained per-cell matrix.  Run `make test`,
+`make test-real-clock`, `make test-release`, `make test-tsan`, `make valgrind`,
+`make lint`, and `make examples` as applicable to the platform.
 
-### Unit Test Coverage
+The test files map to the implementation layers as follows:
 
-| Module | Test file | Written | Valgrind clean | ASan clean | TSan clean | OpenBSD |
-|---|---|---|---|---|---|---|
-| Context switch (x86_64) | test_layer1.c | - | - | - | - | - |
-| Context switch (AArch64) | test_layer1.c | - | - | - | - | - |
-| Stack alloc/guard pages | test_layer1.c | - | - | - | - | - |
-| Fiber scheduler (advance) | test_layer2.c | - | - | - | - | - |
-| Fiber scheduler (run/stop) | test_layer2.c | - | - | - | - | - |
-| Timer heap | test_layer2.c | - | - | - | - | - |
-| Stack cache | test_layer2.c | - | - | - | - | - |
-| Fiber handle ABA | test_layer2.c | - | - | - | - | - |
-| Fiber-local storage | test_layer2.c | - | - | - | - | - |
-| I/O parking (epoll/kqueue) | test_layer3.c | - | - | - | - | - |
-| Re-arm readiness check | test_layer3.c | - | - | - | - | - |
-| I/O cancellation | test_layer3.c | - | - | - | - | - |
-| Error/hangup/EOF delivery | test_layer3.c | - | - | - | - | - |
-| Inject queue | test_layer4.c | - | - | - | - | - |
-| Worker registry/round-robin | test_layer4.c | - | - | - | - | - |
-| Offload pool | test_layer4.c | - | - | - | - | - |
-| Offload CAS outcomes | test_layer4.c | - | - | - | - | - |
-| Scope lifecycle | test_layer5.c | - | - | - | - | - |
-| Walk reference rule | test_layer5.c | - | - | - | - | - |
-| Error propagation | test_layer5.c | - | - | - | - | - |
-| Integration tests | test_integration.c | - | - | - | - | - |
+| Test file | Coverage |
+|---|---|
+| `test_layer1.c` | Context switching, registers, stack allocation, and guard pages |
+| `test_layer2.c` | Scheduler, timers, cache, handles, and fiber-local storage |
+| `test_layer3.c` | epoll/kqueue parking, re-arm, cancellation, and close/error delivery |
+| `test_layer4.c` | Inject queue, workers, runtime, and offload pool |
+| `test_layer5.c` | Scope lifecycle, cancellation walk, ownership, and errors |
+| `test_integration.c` | Cross-layer end-to-end behaviour |
 
 ### Key Correctness Test Cases
 
@@ -835,7 +823,7 @@ when the test passes cleanly with no Valgrind or ASan errors on both platforms.
 | Offload CANCELLED wins: result_slot not written | test_layer4.c | ARCHITECTURE.md §6.6 |
 | Offload refcount released exactly once (both outcomes) | test_layer4.c | ARCHITECTURE.md §6.6 |
 | Offload EAGAIN when pool full | test_layer4.c | ARCHITECTURE.md §6.5 |
-| Inject queue never drops on overflow (backoff) | test_layer4.c | ARCHITECTURE.md §6.3 |
+| Inject queue returns `STRAND_EAGAIN` on overflow | test_layer4.c | ARCHITECTURE.md §6.3 |
 | Scope ACTIVE → COMPLETED direct (no failure) | test_layer5.c | ARCHITECTURE.md §7.3 |
 | Scope CANCELLING → COMPLETED shortcut | test_layer5.c | ARCHITECTURE.md §7.3 |
 | Walk reference prevents premature free | test_layer5.c | ARCHITECTURE.md §7.3 |

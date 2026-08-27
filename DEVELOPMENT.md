@@ -2,8 +2,8 @@
 
 ## Status Overview
 
-**Current Phase**: Phase 7 - Hardening, Benchmarks, and Release
-**Next Task**: Phase 7.5 - Final quality pass
+**Current Phase**: v1.2.0 corrective maintenance
+**Next Task**: Validate and release the corrective changes when approved.
 
 ### Phase Summary
 
@@ -15,7 +15,7 @@
 | 4 | Layer 3: I/O Integration | DONE | 31/31 | Tasks 4.1-4.5 done; Linux + OpenBSD clean |
 | 5 | Layer 4: Multi-Worker Runtime | DONE | 67/67 | Tasks 5.1-5.8 done; Linux + OpenBSD clean |
 | 6 | Layer 5: Scopes and Coordination | DONE | 83/83 | Tasks 6.1-6.9 done; closure validation complete on Linux + OpenBSD |
-| 7 | Hardening, Benchmarks, and Release | IN PROGRESS | 101/101 | Tasks 7.1-7.4 done; 7.5-7.6 remaining |
+| 7 | Hardening, Benchmarks, and Release | DONE | v1.1.0 | Released 2026-08-25; follow-up fixes tracked in CHANGELOG.md |
 
 ### Quality Milestones
 
@@ -683,8 +683,8 @@ to a worker never migrate. Host-thread `strand_fiber_spawn` distributes across
 workers via round-robin. Cross-worker cancellation is delivered via the inject
 queue. The offload pool runs blocking functions on plain OS threads and
 delivers results back to the originating fiber. Both RESULT_CLAIMED and
-CANCELLED CAS outcomes are exercised and correct. Inject queue overflow uses
-exponential backoff and never drops items.
+CANCELLED CAS outcomes are exercised and correct. Inject queue overflow is
+fail-fast and returns `STRAND_EAGAIN`.
 
 **Reference documents**:
 - ARCHITECTURE.md §6 - full Layer 4 specification
@@ -706,7 +706,7 @@ exponential backoff and never drops items.
 - Implement bounded MPSC ring buffer in `src/strand_inject.c`:
   - Capacity configured at scheduler init (default: 4 × max fiber count)
   - `inject_queue_push_release`: enqueue with release memory ordering;
-    exponential backoff spin on full - never drops. Add `ATOMIC:` comment.
+    return `STRAND_EAGAIN` when full or closed. Add `ATOMIC:` comment.
   - `inject_queue_pop_acquire`: dequeue with acquire memory ordering.
     Add `ATOMIC:` comment.
   - `inject_queue_drain`: move all queued items to run queue - called in
@@ -812,8 +812,8 @@ File: `tests/test_layer4.c`
   work item freed exactly once (use Valgrind to confirm no double-free or leak)
 - `test_offload_arg_outlives_cancel`: cancel fiber while offload running;
   verify offload thread still accesses arg correctly after cancel
-- `test_inject_queue_overflow_backoff`: fill inject queue; verify subsequent
-  push blocks briefly then succeeds (does not drop item)
+- `test_inject_queue_full_returns`: fill inject queue; verify a subsequent
+  enqueue returns `STRAND_EAGAIN` without blocking.
 
 ### Phase 5 Completion Criteria
 
@@ -821,8 +821,8 @@ File: `tests/test_layer4.c`
 - [x] RESULT_CLAIMED and CANCELLED CAS outcomes both exercised - M13 confirmed
 - [x] Refcount freed exactly once in both CAS outcomes (Valgrind confirms)
 - [x] Round-robin and explicit override worker selection correct
-- [x] Inject queue never drops items - overflow backoff confirmed
-- [x] Valgrind clean; ASan/UBSan clean on both platforms
+- [x] Inject queue fails fast with `STRAND_EAGAIN` when full
+- [x] Valgrind clean; ASan/UBSan clean on Linux
 - [x] TSan clean - inject queue acquire/release ordering verified
 
 ---

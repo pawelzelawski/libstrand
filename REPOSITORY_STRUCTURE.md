@@ -222,8 +222,8 @@ src/
 │
 ├── strand_inject.c     # Inject queue: bounded MPSC queue, one per worker.
 │                       # Fixed-capacity ring buffer allocated at scheduler init.
-│                       # inject_queue_push(): enqueue with exponential backoff
-│                       #   on full - never drops items silently.
+│                       # inject_queue_push(): fail fast with STRAND_EAGAIN
+│                       #   when full or closed.
 │                       #   Release memory ordering on enqueue.
 │                       # inject_queue_pop(): acquire memory ordering on dequeue.
 │                       #   Establishes happens-before with result_slot writes
@@ -418,7 +418,7 @@ tests/
 │                       #   result_slot not written.
 │                       # Offload arg lifetime: arg remains valid until fn returns
 │                       #   even after fiber cancellation.
-│                       # Inject queue overflow: backoff blocks briefly, never drops.
+│                       # Inject queue overflow: fail-fast STRAND_EAGAIN.
 │
 ├── test_layer5.c       # Layer 5: scopes, handles, fiber-local storage.
 │                       # Scope lifecycle: all four state transitions.

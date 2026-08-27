@@ -87,7 +87,7 @@
  */
 
 #define STRAND_VERSION_MAJOR 1
-#define STRAND_VERSION_MINOR 1
+#define STRAND_VERSION_MINOR 2
 #define STRAND_VERSION_PATCH 0
 
 /* ===========================================================================
@@ -777,13 +777,27 @@ int strand_fiber_offload(strand_scheduler_t *sched,
  */
 
 /*
+ * strand_scope_create - allocate an opaque scope control block.
+ *
+ * Pass the returned scope to strand_scope_open from a running fiber.  After
+ * strand_scope_wait returns, release it with strand_scope_destroy.  Do not
+ * destroy a scope after strand_scope_abandon: abandonment transfers ownership
+ * to the runtime.
+ *
+ * Returns a new scope or NULL on allocation failure.
+ *
+ * Callable from: any thread.
+ */
+strand_scope_t *strand_scope_create(void);
+
+/*
  * strand_scope_open - initialise a scope control block.
  *
  * Sets the scope to SCOPE_ACTIVE with OWNER_CALLER and records the
  * calling fiber as the parent.
  *
  * sched: scheduler handle.
- * scope: caller-allocated scope control block (stack or heap).
+ * scope: control block returned by strand_scope_create.
  *
  * Returns STRAND_OK on success.
  * Returns STRAND_ERR_WRONGCTX if called from a host thread.
@@ -792,6 +806,17 @@ int strand_fiber_offload(strand_scheduler_t *sched,
  * See ARCHITECTURE.md §7.1, §7.2.
  */
 int strand_scope_open(strand_scheduler_t *sched, strand_scope_t *scope);
+
+/*
+ * strand_scope_destroy - release a caller-owned scope.
+ *
+ * scope must have been returned by strand_scope_create and must be unopened
+ * or completed through strand_scope_wait.  Do not call this after
+ * strand_scope_abandon.
+ *
+ * Callable from: any thread after the scope is no longer in use.
+ */
+void strand_scope_destroy(strand_scope_t *scope);
 
 /*
  * strand_scope_spawn - spawn a scope-tracked child fiber.

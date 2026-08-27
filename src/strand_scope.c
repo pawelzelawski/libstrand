@@ -21,6 +21,18 @@
 
 static void scope_walk_cancel(strand_scheduler_t *sched, strand_scope_t *scope);
 
+strand_scope_t *
+strand_scope_create(void)
+{
+	return (calloc(1, sizeof(strand_scope_t)));
+}
+
+void
+strand_scope_destroy(strand_scope_t *scope)
+{
+	free(scope);
+}
+
 static __attribute__((noinline)) strand_fiber_t *
 scope_current_fiber(strand_scheduler_t *sched)
 {

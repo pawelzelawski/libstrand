@@ -208,23 +208,21 @@ libstrand is **not** aimed at:
 
 ## Current Status
 
-**Architecture phase complete.** The full five-layer architecture has been
-designed and reviewed. No code has been written yet.
-
-**In progress**: documentation phase - producing the specification documents 
-that will drive implementation.
+**v1.2.0 development.** The five-layer runtime is implemented and v1.1.0 is
+released. Current work corrects the public scope allocation contract and keeps
+development artefacts safe for embedders.
 
 
 | Phase | Name | Status |
 |---|---|---|
 | - | Architecture | COMPLETE |
-| - | Documentation | IN PROGRESS |
-| 1 | Layer 1: Execution Contexts | NOT STARTED |
-| 2 | Layer 2: Fiber Scheduler | NOT STARTED |
-| 3 | Layer 3: I/O Integration | NOT STARTED |
-| 4 | Layer 4: Multi-Worker Runtime | NOT STARTED |
-| 5 | Layer 5: Scopes and Coordination Primitives | NOT STARTED |
-| 6 | Hardening, Benchmarks, and Release | NOT STARTED |
+| - | Documentation | MAINTAINED WITH IMPLEMENTATION |
+| 1 | Layer 1: Execution Contexts | COMPLETE |
+| 2 | Layer 2: Fiber Scheduler | COMPLETE |
+| 3 | Layer 3: I/O Integration | COMPLETE |
+| 4 | Layer 4: Multi-Worker Runtime | COMPLETE |
+| 5 | Layer 5: Scopes and Coordination Primitives | COMPLETE |
+| 6 | Hardening, Benchmarks, and Release | COMPLETE (v1.1.0) |
 
 ## Relationship to Existing Libraries
 
@@ -278,4 +276,3 @@ ISC License. Simple, permissive, compatible with OpenBSD philosophy.
 | TESTING.md | Implementer primary, reviewer secondary | Test strategy, unit and integration test catalogue, sanitizer testing, platform testing, CI approach |
 
 ---
-

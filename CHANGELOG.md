@@ -1,9 +1,17 @@
 # Changelog
 
-## v1.1.0 (release candidate)
+## v1.2.0
 
-This entry describes the release candidate only.  It is not a tag or a
-release announcement; final platform and CI evidence remains required.
+- Make `make dev` produce a real-clock debug archive; deterministic time is
+  now confined to the test-linked archive.
+- Add public opaque-scope allocation through `strand_scope_create()` and
+  `strand_scope_destroy()`, plus public-header-only scope and worker examples.
+- OpenBSD amd64 validation passed: dev, test (107/107), release, lint,
+  real-clock, release-profile (106/106), and examples.
+
+## v1.1.0
+
+Released 2026-08-25 as `v1.1.0`.
 
 ### Fixed
 

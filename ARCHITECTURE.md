@@ -927,7 +927,8 @@ spawned under that scope have completed. This eliminates the use-after-free
 class of bug that arises when fibers outlive the state they reference.
 
 **Scope operations:**
-- `strand_scope_open(scope)` - initialise scope, set OWNER_CALLER
+- `strand_scope_create()` - allocate an opaque caller-owned control block
+- `strand_scope_open(scope)` - initialise a created scope, set OWNER_CALLER
 - `strand_scope_spawn(scope, fn, arg)` - spawn a child fiber under this scope.
   Child fibers spawned through `strand_scope_spawn` use
   `strand_scope_fiber_fn_t` (returns `int`). Return 0 for success, non-zero
@@ -940,6 +941,7 @@ class of bug that arises when fibers outlive the state they reference.
 - `strand_scope_cancel(scope)` - initiate cancellation; non-terminal
 - `strand_scope_abandon(scope)` - transfer ownership to runtime; terminal for
   the caller
+- `strand_scope_destroy(scope)` - release an unopened or completed scope
 
 **`strand_scope_open` from a host thread is forbidden.** The host thread has
 no fiber context and cannot call `strand_scope_wait`.
@@ -1049,12 +1051,10 @@ The scope pointer is invalid for the caller after this call. Children continue
 running. When `live_child_count` reaches zero and lifecycle reaches
 `SCOPE_COMPLETED`, the runtime frees the control block.
 
-**Allocation requirement for `strand_scope_abandon`:** The control block must
-be heap-allocated. Stack-allocated scope control blocks are valid only when
-`strand_scope_wait` is used exclusively and the scope is destroyed before the
-stack unwinds. Passing a stack-allocated control block to
-`strand_scope_abandon` is undefined behaviour. Debug builds assert that the
-scope pointer is not within the current fiber's stack range.
+**Allocation requirement:** Public callers obtain an opaque control block from
+`strand_scope_create`. After `strand_scope_wait`, they release it with
+`strand_scope_destroy`. `strand_scope_abandon` transfers ownership to the
+runtime, so it must not be followed by `strand_scope_destroy`.
 
 ### 7.5 Error Propagation
 
@@ -1183,8 +1183,8 @@ stack consumes one VMA. The stack cache bounds VMA count to the peak watermark
 by caching stacks rather than unmapping them after each fiber completes. The
 cache must have a configurable hard cap to prevent unbounded VMA accumulation.
 
-Stack cache hard cap, reclamation policy, and default stack size: **TBD -
-see §13.**
+The implemented cache defaults are a 64-stack hard cap, an 8-stack idle floor,
+and 64 KiB usable stacks; §13 describes the reclamation policy.
 
 ### 10.3 fork() and exec()
 

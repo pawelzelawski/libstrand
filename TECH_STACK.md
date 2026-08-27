@@ -269,10 +269,8 @@ libstrand/
 └── tools/            ← optional developer tools
 ```
 
-The output of `make` is a static library (`libstrand.a`) and optionally a
-shared library (`libstrand.so`). Embedders link against `libstrand.a` and
-include `include/strand.h`. The shared library target exists for
-distributions that prefer dynamic linking.
+The output of `make` is a static library (`libstrand.a`). Embedders link
+against `libstrand.a` and include `include/strand.h`.
 
 ### 5.2 Compiler
 
