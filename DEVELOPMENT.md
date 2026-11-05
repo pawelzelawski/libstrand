@@ -2,10 +2,11 @@
 
 ## Status Overview
 
-**Current Phase**: v1.2.0 corrective maintenance
-**Next Task**: Review the cancellation/reuse fix and proposed commit message.
+**Current Phase**: v1.2.1 corrective maintenance
+**Next Task**: Track further maintenance reports while preserving platform parity.
 Linux gates and owner-run OpenBSD amd64 dev/test (109/109), release, lint,
-real-clock, release-profile (108/108), and examples have passed.
+real-clock, release-profile (108/108), and examples have passed. GitHub CI for
+the cancellation/reuse fix passed on Linux and OpenBSD, both amd64 and arm64.
 
 ### Phase Summary
 

@@ -88,7 +88,7 @@
 
 #define STRAND_VERSION_MAJOR 1
 #define STRAND_VERSION_MINOR 2
-#define STRAND_VERSION_PATCH 0
+#define STRAND_VERSION_PATCH 1
 
 /* ===========================================================================
  * Opaque types

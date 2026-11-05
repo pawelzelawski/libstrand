@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v1.2.1
+
+Released 2026-11-05 as `v1.2.1`.
 
 - Fix cross-thread fiber cancellation racing with descriptor reuse: generation
   checks are atomic and scheduler ownership remains immutable across reuse.
@@ -10,6 +12,7 @@
 - Owner-run OpenBSD amd64 validation passed: dev, test (109/109), release,
   lint, real-clock, release-profile (108/108), and examples. Linux validation
   is recorded in TESTING.md.
+- GitHub CI passed on Linux and OpenBSD, both amd64 and arm64.
 
 ## v1.2.0
 

@@ -383,8 +383,11 @@ clang-tidy and cppcheck both completed successfully.
 The owner also supplied a successful follow-up run of `make test-real-clock &&
 make test-release && make examples`. The release-profile suite passed 108/108,
 and all three public examples compiled and ran. These results complete the
-OpenBSD amd64 gate set for this fix. OpenBSD sanitizer coverage and a release
-are not claimed.
+OpenBSD amd64 gate set for this fix. OpenBSD sanitizer coverage is not claimed.
+
+GitHub [CI run 42027193918](https://github.com/pawelzelawski/libstrand/actions/runs/42027193918)
+passed for implementation commit `cbdc1b2` on all four configured platforms:
+Linux amd64, Linux arm64, OpenBSD amd64, and OpenBSD arm64.
 
 ### 3.4 Memory Discipline Check
 

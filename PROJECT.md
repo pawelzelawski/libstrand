@@ -208,9 +208,9 @@ libstrand is **not** aimed at:
 
 ## Current Status
 
-**v1.2.0 development.** The five-layer runtime is implemented and v1.1.0 is
-released. Current work corrects the public scope allocation contract and keeps
-development artefacts safe for embedders.
+**v1.2.1.** The five-layer runtime and public scope allocation API are
+implemented. This patch fixes cross-thread cancellation during fiber descriptor
+reuse while preserving the public API and handle layout.
 
 
 | Phase | Name | Status |
