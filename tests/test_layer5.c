@@ -107,29 +107,28 @@ push_root_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg)
         size_t          sz;
 
         sz = STRAND_DEFAULT_STACK_SIZE;
-        f  = fiber_alloc(&sched->dead_pool);
-        if (f == NULL)
-                return (-1);
+	f = fiber_alloc(&sched->dead_pool, sched);
+	if (f == NULL)
+		return (-1);
 
-        base = sched_stack_alloc(sched, sz, &vg_id);
-        if (base == NULL) {
-                fiber_free(&sched->dead_pool, f);
-                return (-1);
-        }
+	base = sched_stack_alloc(sched, sz, &vg_id);
+	if (base == NULL) {
+		fiber_free(&sched->dead_pool, f);
+		return (-1);
+	}
 
-        f->stack_base        = (char *)base + page_size();
-        f->stack_size        = sz;
-        f->valgrind_stack_id = vg_id;
-        f->entry_fn          = fn;
-        f->entry_arg         = arg;
-        f->home_sched        = sched;
-        strand_context_init(&f->context,
-                            (char *)f->stack_base + sz,
-                            strand_fiber_entry_start, f);
-        strand_fiber_tsan_init(f);
-        atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
-        run_queue_push(sched, f);
-        return (0);
+	f->stack_base = (char *)base + page_size();
+	f->stack_size = sz;
+	f->valgrind_stack_id = vg_id;
+	f->entry_fn = fn;
+	f->entry_arg = arg;
+
+	strand_context_init(&f->context, (char *)f->stack_base + sz,
+	                    strand_fiber_entry_start, f);
+	strand_fiber_tsan_init(f);
+	atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
+	run_queue_push(sched, f);
+	return (0);
 }
 
 /*

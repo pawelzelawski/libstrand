@@ -334,6 +334,58 @@ TSan is particularly important for:
 - Phase 5 (Layer 5): scope atomic field access patterns
 - Phase 7: integration tests with real multi-worker scenarios
 
+The Layer 4 `test_cancel_during_descriptor_reuse` regression publishes child
+handles under a mutex, then cancels from the host while the worker recycles the
+same descriptor through normal and detached spawns. Cancellation runs outside
+the publication mutex so TSan can detect metadata races. It verifies actual
+descriptor reuse and accepts only success, stale-handle, and queue-full results.
+`test_cancel_queued_before_descriptor_reuse` separately verifies that an old
+queued cancel cannot affect the replacement fiber.
+
+#### Cancellation/reuse fix: Linux and OpenBSD validation (2026-11-05)
+
+Local Linux x86_64 validation used Clang 22.1.8 and Valgrind 3.27.1. All commands
+used `BUILD_DIR=build/cancel-fix`; the initial `make -B dev` forced a rebuild.
+
+| Gate | Result |
+|---|---|
+| `make dev`, `make release` | PASS |
+| `make test` (ASan/UBSan) | 113/113 PASS |
+| `make test-real-clock` | PASS |
+| `make test-release` | 111/111 PASS |
+| `make test-tsan` | 113/113 PASS; no race reports |
+| `make valgrind` | 113/113 PASS; zero errors, zero bytes allocated at exit |
+| `make lint` (clang-tidy and cppcheck) | PASS |
+| `make examples`, `make tools`, `make bench` | PASS |
+| `clang-format --dry-run --Werror` on changed code, `git diff --check` | PASS |
+
+The new Layer 4 regressions were also run against an isolated copy of the
+original `71ead1a` library: `test_cancel_during_descriptor_reuse` failed and TSan
+reported metadata races. An independent public-API reproducer against the fixed
+library completed 300,000 TSan cancel calls without race reports and three
+optimized runs of two million calls each without `STRAND_ERR_WRONGCTX` or other
+unexpected results. Queue-full results were counted separately.
+
+Per-target logs and exit codes are under `build/cancel-fix/quality/` (ignored
+build artifacts). Intentional assertion messages from API-misuse child tests
+remain in the logs; each suite completed successfully. Benchmark completion is
+supplemental evidence, not a performance threshold gate.
+
+The owner subsequently supplied a successful OpenBSD amd64 run on `puffy`:
+`make clean && make dev && make test && make release && make lint`.
+The debug suite passed 109/109, including both cancellation/reuse regressions.
+The four-test difference from Linux comes from six Linux-only Layer 3 tests
+versus two OpenBSD-only Layer 3 tests. The scope-abandon assertion is expected:
+`test_scope_abandon_stack_alloc_debug_assert` deliberately aborts a child and
+verifies `SIGABRT`. clang-tidy suppressed 18 diagnostics in non-user code;
+clang-tidy and cppcheck both completed successfully.
+
+The owner also supplied a successful follow-up run of `make test-real-clock &&
+make test-release && make examples`. The release-profile suite passed 108/108,
+and all three public examples compiled and ran. These results complete the
+OpenBSD amd64 gate set for this fix. OpenBSD sanitizer coverage and a release
+are not claimed.
+
 ### 3.4 Memory Discipline Check
 
 Run the static check after every phase:
@@ -801,6 +853,8 @@ The test files map to the implementation layers as follows:
 | Timer cancel wakes fiber before deadline | test_layer2.c | ARCHITECTURE.md §8.1 |
 | Stale handle returns STRAND_HANDLE_STALE | test_layer2.c | ARCHITECTURE.md §4.6 |
 | Generation increments on descriptor reuse | test_layer2.c | ARCHITECTURE.md §4.6 |
+| Concurrent cancel during normal/detached descriptor reuse | test_layer4.c | ARCHITECTURE.md §4.6 |
+| Queued stale cancellation leaves replacement fiber untouched | test_layer4.c | ARCHITECTURE.md §4.6 |
 | Stack cache reuse (no mmap on cache hit) | test_layer2.c | ARCHITECTURE.md §13 |
 | Stack cache cap (overflow freed immediately) | test_layer2.c | ARCHITECTURE.md §13.3 |
 | Idle reclamation shrinks cache to floor | test_layer2.c | ARCHITECTURE.md §13.4 |

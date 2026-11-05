@@ -336,7 +336,7 @@ t35_push_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg)
 	size_t sz;
 
 	sz = STRAND_DEFAULT_STACK_SIZE;
-	f = fiber_alloc(&sched->dead_pool);
+	f = fiber_alloc(&sched->dead_pool, sched);
 	if (f == NULL)
 		return (-1);
 
@@ -349,7 +349,6 @@ t35_push_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg)
 	f->stack_base = (char *)base + page_size();
 	f->stack_size = sz;
 	f->valgrind_stack_id = vg_id;
-	f->home_sched = sched;
 	strand_context_init(&f->context, (char *)f->stack_base + sz, fn, arg);
 	strand_fiber_tsan_init(f);
 	atomic_store_explicit(&f->state, FIBER_RUNNABLE, memory_order_relaxed);
@@ -1144,7 +1143,7 @@ test_cancel_runnable(void)
 	 * we can cancel it before it runs.
 	 */
 	sz = STRAND_DEFAULT_STACK_SIZE;
-	f = fiber_alloc(&sched->dead_pool);
+	f = fiber_alloc(&sched->dead_pool, sched);
 	if (f == NULL) {
 		strand_scheduler_destroy(sched);
 		return (1);
@@ -1158,7 +1157,7 @@ test_cancel_runnable(void)
 	f->stack_base = (char *)base + page_size();
 	f->stack_size = sz;
 	f->valgrind_stack_id = vg_id;
-	f->home_sched = sched;
+
 	atomic_init(&arg.ran, 0);
 	arg.sched = sched;
 	strand_context_init(&f->context, (char *)f->stack_base + sz,
@@ -1168,7 +1167,7 @@ test_cancel_runnable(void)
 	run_queue_push(sched, f);
 
 	handle.ptr = f;
-	handle.generation = f->generation;
+	handle.generation = atomic_load(&f->generation);
 
 	/*
 	 * Cancel before any advance - fiber is still FIBER_RUNNABLE.
@@ -1229,7 +1228,7 @@ test_stale_handle_noop(void)
 		return (1);
 
 	sz = STRAND_DEFAULT_STACK_SIZE;
-	f = fiber_alloc(&sched->dead_pool);
+	f = fiber_alloc(&sched->dead_pool, sched);
 	if (f == NULL) {
 		strand_scheduler_destroy(sched);
 		return (1);
@@ -1243,7 +1242,7 @@ test_stale_handle_noop(void)
 	f->stack_base = (char *)base + page_size();
 	f->stack_size = sz;
 	f->valgrind_stack_id = vg_id;
-	f->home_sched = sched;
+
 	arg.sched = sched;
 	strand_context_init(&f->context, (char *)f->stack_base + sz,
 	                    t38_stale_fiber_fn, &arg);
@@ -1253,7 +1252,7 @@ test_stale_handle_noop(void)
 
 	/* Capture handle before running. */
 	handle.ptr = f;
-	handle.generation = f->generation;
+	handle.generation = atomic_load(&f->generation);
 
 	/* Run the fiber - it calls t35_switch_back, which pushes the
 	 * descriptor to the dead pool (generation unchanged at this point). */
@@ -1273,7 +1272,7 @@ test_stale_handle_noop(void)
 		void *base2;
 		unsigned long vg_id2;
 
-		f2 = fiber_alloc(&sched->dead_pool);
+		f2 = fiber_alloc(&sched->dead_pool, sched);
 		if (f2 == NULL) {
 			strand_scheduler_destroy(sched);
 			return (1);
@@ -1287,7 +1286,6 @@ test_stale_handle_noop(void)
 		f2->stack_base = (char *)base2 + page_size();
 		f2->stack_size = sz;
 		f2->valgrind_stack_id = vg_id2;
-		f2->home_sched = sched;
 		strand_context_init(&f2->context, (char *)f2->stack_base + sz,
 		                    t38_stale_fiber_fn, &arg);
 		strand_fiber_tsan_init(f2);
@@ -1342,7 +1340,7 @@ test_generation_increments_on_reuse(void)
 	arg.sched = sched;
 
 	/* Allocate and run fiber A to completion. */
-	fa = fiber_alloc(&sched->dead_pool);
+	fa = fiber_alloc(&sched->dead_pool, sched);
 	if (fa == NULL) {
 		strand_scheduler_destroy(sched);
 		return (1);
@@ -1356,14 +1354,13 @@ test_generation_increments_on_reuse(void)
 	fa->stack_base = (char *)base + page_size();
 	fa->stack_size = sz;
 	fa->valgrind_stack_id = vg_id;
-	fa->home_sched = sched;
 	strand_context_init(&fa->context, (char *)fa->stack_base + sz,
 	                    t38_gen_fiber_fn, &arg);
 	strand_fiber_tsan_init(fa);
 	atomic_store_explicit(&fa->state, FIBER_RUNNABLE, memory_order_relaxed);
 	run_queue_push(sched, fa);
 
-	gen_a = fa->generation;
+	gen_a = atomic_load(&fa->generation);
 
 	/* Run A - t38_gen_fiber_fn calls t35_switch_back, returning the
 	 * descriptor to the dead pool. */
@@ -1373,12 +1370,17 @@ test_generation_increments_on_reuse(void)
 	 * Now allocate fiber B - fiber_alloc must pop fa's descriptor from the
 	 * dead pool and increment its generation.
 	 */
-	fb = fiber_alloc(&sched->dead_pool);
+	fb = fiber_alloc(&sched->dead_pool, sched);
 	if (fb == NULL) {
 		strand_scheduler_destroy(sched);
 		return (1);
 	}
-	gen_b = fb->generation;
+	gen_b = atomic_load(&fb->generation);
+	if (fb != fa || fb->home_sched != sched) {
+		fiber_free(&sched->dead_pool, fb);
+		strand_scheduler_destroy(sched);
+		return (1);
+	}
 
 	/* Return fb to the dead pool immediately - it was never fully set up. */
 	fiber_free(&sched->dead_pool, fb);

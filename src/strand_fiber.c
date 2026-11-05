@@ -268,12 +268,11 @@ sched_stack_free(strand_scheduler_t *sched, void *base, size_t stack_size,
 	stack_free(base, stack_size, vg_id);
 }
 
-
 /*
  * Dead-pool path: pops the head entry from *dead_pool, increments the
- * generation counter (ABA protection), zeros the entire descriptor, then
- * writes the new generation back.  Outstanding handles with the old
- * generation will correctly return STRAND_HANDLE_STALE.
+ * generation counter atomically (ABA protection), then zeros only the
+ * per-incarnation fields.  Ownership remains fixed for the descriptor's
+ * lifetime.  Other threads may still be validating previously issued handles.
  *
  * Fresh-alloc path: malloc() + memset to zero + generation = 1.
  *
@@ -284,23 +283,24 @@ sched_stack_free(strand_scheduler_t *sched, void *base, size_t stack_size,
  * See ARCHITECTURE.md §4.6.
  */
 strand_fiber_t *
-fiber_alloc(strand_fiber_t **dead_pool)
+fiber_alloc(strand_fiber_t **dead_pool, strand_scheduler_t *sched)
 {
 	strand_fiber_t *f;
 
 	if (dead_pool != NULL && *dead_pool != NULL) {
-		uint64_t gen;
-
 		f = *dead_pool;
 		*dead_pool = f->next;
+		STRAND_DEBUG_ASSERT(f->home_sched == sched);
 		/*
-		 * Increment generation before zeroing: any handles with the
-		 * old value will return STALE.  Store on the stack so the
-		 * memset can safely clear the whole descriptor.
+		 * SAFETY: foreign cancellers read only the persistent metadata.
+		 * Never memset the atomic generation or immutable home_sched,
+		 * even temporarily.  Only this owner resets the remaining
+		 * fields; queued requests are revalidated after allocation
+		 * completes. ATOMIC: seq_cst invalidates handles from the old
+		 * incarnation.
 		 */
-		gen = f->generation + 1;
-		memset(f, 0, sizeof(*f));
-		f->generation = gen;
+		atomic_fetch_add(&f->generation, 1);
+		memset(f, 0, offsetof(strand_fiber_t, generation));
 		return (f);
 	}
 
@@ -308,7 +308,8 @@ fiber_alloc(strand_fiber_t **dead_pool)
 	if (f == NULL)
 		return (NULL);
 	memset(f, 0, sizeof(*f));
-	f->generation = 1;
+	atomic_init(&f->generation, 1);
+	f->home_sched = sched;
 	return (f);
 }
 
@@ -349,7 +350,7 @@ fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 
 	sz = (stack_sz != 0) ? stack_sz : STRAND_DEFAULT_STACK_SIZE;
 
-	f = fiber_alloc(&sched->dead_pool);
+	f = fiber_alloc(&sched->dead_pool, sched);
 	if (f == NULL)
 		return (STRAND_ERR_NOMEM);
 
@@ -370,7 +371,6 @@ fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 
 	strand_fiber_tsan_init(f);
 
-	f->home_sched = sched;
 	atomic_store(&f->state, FIBER_NEW);
 	atomic_store(&f->state, FIBER_RUNNABLE);
 
@@ -378,7 +378,7 @@ fiber_spawn(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 
 	if (out != NULL) {
 		out->ptr = f;
-		out->generation = f->generation;
+		out->generation = atomic_load(&f->generation);
 	}
 
 	return (STRAND_OK);
@@ -452,7 +452,7 @@ strand_fiber_spawn_detached(strand_scheduler_t *sched, strand_fiber_fn_t fn,
 
 	sz = (stack_sz != 0) ? stack_sz : STRAND_DEFAULT_STACK_SIZE;
 
-	f = fiber_alloc(&sched->dead_pool);
+	f = fiber_alloc(&sched->dead_pool, sched);
 	if (f == NULL)
 		return (STRAND_ERR_NOMEM);
 
@@ -474,7 +474,6 @@ strand_fiber_spawn_detached(strand_scheduler_t *sched, strand_fiber_fn_t fn,
 
 	strand_fiber_tsan_init(f);
 
-	f->home_sched = sched;
 	atomic_store(&f->state, FIBER_NEW);
 	atomic_store(&f->state, FIBER_RUNNABLE);
 
@@ -482,7 +481,7 @@ strand_fiber_spawn_detached(strand_scheduler_t *sched, strand_fiber_fn_t fn,
 
 	if (out != NULL) {
 		out->ptr        = f;
-		out->generation = f->generation;
+		out->generation = atomic_load(&f->generation);
 	}
 
 	return (STRAND_OK);

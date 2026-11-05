@@ -439,9 +439,17 @@ typedef struct {
 } strand_fiber_handle_t;
 ```
 
-**Generation counter:** Stored in the fiber descriptor as `uint64_t`.
-Incremented when a descriptor is taken from the dead pool for reuse. Initial
-value 1 on first allocation.
+**Generation counter:** Stored in the fiber descriptor as `_Atomic uint64_t`.
+Incremented atomically with seq_cst ordering when a descriptor is taken from
+the dead pool for reuse. Initial value 1 on first allocation. The generation
+in the public handle remains a plain value copied at spawn time.
+
+**Persistent routing metadata:** `home_sched` is assigned during allocation,
+before the first handle is published, and remains immutable for the descriptor's
+lifetime. Recycling resets only the fields preceding `generation`; it never
+clears or rewrites `generation` or `home_sched` with `memset`. These are the only
+descriptor fields read by a foreign thread cancelling a fiber. Callers must
+publish handles using ordinary thread synchronization.
 
 **Why 64-bit:** At 10 million fiber creations per second a 32-bit counter
 wraps in approximately 7 minutes - achievable under benchmark conditions and
@@ -452,8 +460,16 @@ generation counter overflow as a practical concern.
 **Validation on every API use:**
 ```c
 if (handle.ptr == NULL)                          return STRAND_HANDLE_INVALID;
-if (handle.ptr->generation != handle.generation) return STRAND_HANDLE_STALE;
+if (atomic_load(&handle.ptr->generation) != handle.generation)
+    return STRAND_HANDLE_STALE;
 ```
+
+Validation does not pin an incarnation: the owner may recycle it immediately
+after a foreign caller's check. Cross-worker cancellation therefore carries the
+original handle through the inject queue and validates it again on the owner,
+which serializes cancellation with descriptor reuse. Runtime spawning snapshots
+the handle before enqueueing the fiber so a quick completion and reuse cannot
+change the generation returned to the caller.
 
 **Stale handle behaviour:** No-op. Returns `STRAND_HANDLE_STALE`. This
 applies everywhere: `strand_fiber_cancel`, sibling cancellation walks,

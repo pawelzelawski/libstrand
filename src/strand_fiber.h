@@ -77,17 +77,21 @@ void strand_fiber_tsan_bind_current(strand_fiber_t *f);
  * fiber_alloc - allocate a fiber descriptor.
  *
  * If dead_pool is non-NULL and *dead_pool is non-NULL, pops one descriptor
- * from the dead pool, increments its generation counter (ABA protection),
- * zeros the descriptor, and returns it.
- * Otherwise allocates a fresh descriptor via malloc() with generation = 1.
+ * from the dead pool, atomically increments its generation counter (ABA
+ * protection), and resets only the per-incarnation fields.  Persistent
+ * generation and home_sched metadata are never cleared on reuse.
+ * Otherwise allocates a fresh descriptor via malloc() with generation = 1
+ * and home_sched = sched.  A pool may contain only descriptors owned by
+ * sched.  Passing NULL for dead_pool forces a fresh allocation (host spawn).
  *
- * Caller must initialise all fields (context, stack, state, etc.) before
- * the fiber is made runnable.
+ * Caller must initialise the per-incarnation fields (context, stack, state,
+ * etc.) before making the fiber runnable, without changing persistent metadata.
  *
  * Returns NULL on allocation failure.
  * See ARCHITECTURE.md §4.6 for generation counter semantics.
  */
-strand_fiber_t *fiber_alloc(strand_fiber_t **dead_pool);
+strand_fiber_t *fiber_alloc(strand_fiber_t **dead_pool,
+                            strand_scheduler_t *sched);
 
 /*
  * fiber_free - return a finished fiber descriptor to the dead pool.
@@ -110,8 +114,10 @@ void fiber_free(strand_fiber_t **dead_pool, strand_fiber_t *f);
  * STRAND_HANDLE_STALE  if the descriptor has been recycled (generation
  * mismatch).
  *
- * Safe to call at any time: dead-pool descriptors are never freed, so
- * handle.ptr is always safe to dereference for the generation check.
+ * Safe while the owning scheduler remains alive: descriptors stay allocated
+ * and generation is atomic.  The caller must publish handles with normal
+ * thread synchronization.  Successful validation does not pin an incarnation;
+ * cross-worker users must revalidate on the owner before accessing its fields.
  * See ARCHITECTURE.md §4.6.
  */
 static inline int
@@ -119,7 +125,7 @@ fiber_handle_validate(strand_fiber_handle_t handle)
 {
 	if (handle.ptr == NULL)
 		return (STRAND_HANDLE_INVALID);
-	if (handle.ptr->generation != handle.generation)
+	if (atomic_load(&handle.ptr->generation) != handle.generation)
 		return (STRAND_HANDLE_STALE);
 	return (STRAND_OK);
 }

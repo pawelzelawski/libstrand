@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Fix cross-thread fiber cancellation racing with descriptor reuse: generation
+  checks are atomic and scheduler ownership remains immutable across reuse.
+- Snapshot runtime-spawn handles before enqueueing so immediate completion and
+  descriptor reuse cannot change the returned generation.
+- Add concurrent cancellation/reuse and queued stale-cancellation regressions.
+- Owner-run OpenBSD amd64 validation passed: dev, test (109/109), release,
+  lint, real-clock, release-profile (108/108), and examples. Linux validation
+  is recorded in TESTING.md.
+
 ## v1.2.0
 
 - Make `make dev` produce a real-clock debug archive; deterministic time is

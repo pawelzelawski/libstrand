@@ -46,7 +46,7 @@ push_timer_fiber(strand_scheduler_t *sched, timer_state_t *state)
 	void *base;
 	unsigned long vg_id;
 
-	fiber = fiber_alloc(&sched->dead_pool);
+	fiber = fiber_alloc(&sched->dead_pool, sched);
 	if (fiber == NULL)
 		return (-1);
 	base = sched_stack_alloc(sched, STRAND_DEFAULT_STACK_SIZE, &vg_id);
@@ -59,7 +59,6 @@ push_timer_fiber(strand_scheduler_t *sched, timer_state_t *state)
 	fiber->valgrind_stack_id = vg_id;
 	fiber->entry_fn = timer_fiber;
 	fiber->entry_arg = state;
-	fiber->home_sched = sched;
 	strand_context_init(&fiber->context,
 	                    (char *)fiber->stack_base + fiber->stack_size,
 	                    strand_fiber_entry_start, fiber);

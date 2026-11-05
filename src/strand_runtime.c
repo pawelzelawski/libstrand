@@ -13,10 +13,9 @@
  *   - Round-robin counter (_Atomic uint32_t) is accessed without the
  *     spinlock; a torn increment at worst selects a suboptimal worker, not
  *     an incorrect one.
- *   - Fiber allocation at spawn time uses fiber_alloc(NULL) (malloc) and
- *     stack_alloc() (mmap) so the target worker's dead_pool and stack_cache
- *     are never touched from the host thread.  The fiber is injected via
- *     INJECT_SPAWN; inject_queue_drain pushes it to the run queue.
+ *   - Host spawning allocates fresh descriptors and stacks with malloc and
+ *     mmap.  It never touches the target worker's dead_pool or stack_cache.
+ *     INJECT_SPAWN delivers the fiber to the worker's run queue.
  *   - CPU affinity: Linux only - pthread_setaffinity_np.  OpenBSD does not
  *     provide CPU affinity APIs; cfg->cpu_affinity is silently ignored there.
  *
@@ -364,9 +363,9 @@ strand_worker_get_scheduler(strand_worker_t *w)
  * Check shutdown/no-workers, select worker (round-robin or
  * explicit), allocate fiber on the host thread, inject INJECT_SPAWN.
  *
- * Fiber allocation uses fiber_alloc(NULL) (malloc) and stack_alloc()
- * (mmap) - both thread-safe.  The target worker's dead_pool and
- * stack_cache are never touched from the host thread.
+ * Fresh descriptor allocation (malloc) and stack_alloc() (mmap) are both
+ * thread-safe.  The target worker's dead_pool and stack_cache are never
+ * touched from the host thread.
  * See ARCHITECTURE.md §6.4.
  */
 int
@@ -379,6 +378,7 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 	void            *stack_base;
 	unsigned long    vg_id;
 	inject_item_t    item;
+	strand_fiber_handle_t handle;
 	size_t           i;
 	int              found;
 
@@ -439,11 +439,11 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 
 	/*
 	 * Allocate fiber descriptor and stack on the host thread.
-	 * fiber_alloc(NULL) uses malloc; stack_alloc uses mmap - both safe
+	 * Fresh fiber allocation uses malloc; stack_alloc uses mmap - both safe
 	 * to call from any thread.  We pass NULL for dead_pool so we never
 	 * touch the target worker's per-scheduler dead_pool.
 	 */
-	f = fiber_alloc(NULL);
+	f = fiber_alloc(NULL, target->sched);
 	if (f == NULL) {
 		scheduler_inject_release(target->sched);
 		runtime_end(rt);
@@ -463,7 +463,6 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 	f->valgrind_stack_id = vg_id;
 	f->entry_fn          = fn;
 	f->entry_arg         = arg;
-	f->home_sched        = target->sched;
 	f->scope             = NULL;
 
 	strand_context_init(&f->context,
@@ -476,6 +475,13 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 	 * visible to anyone else until it is on the run queue (after drain).
 	 */
 	atomic_store(&f->state, FIBER_RUNNABLE);
+
+	/*
+	 * SAFETY: snapshot before publication.  The worker can finish and reuse
+	 * this descriptor as soon as the inject item becomes visible.
+	 */
+	handle.ptr = f;
+	handle.generation = atomic_load(&f->generation);
 
 	/* Build and push the inject item. */
 	item.type    = INJECT_SPAWN;
@@ -504,10 +510,8 @@ strand_runtime_spawn(strand_runtime_t *rt, strand_fiber_fn_t fn,
 	}
 #endif
 
-	if (out != NULL) {
-		out->ptr        = f;
-		out->generation = f->generation;
-	}
+	if (out != NULL)
+		*out = handle;
 	scheduler_inject_release(target->sched);
 	runtime_end(rt);
 	return (STRAND_OK);

@@ -283,10 +283,10 @@ typedef enum {
  * It is NULL in non-TSan builds.
  *
  * Dead-pool recycling: when a descriptor is reused from the dead pool,
- * generation is incremented and the descriptor is zeroed (except for the
- * new generation value) before being handed to the caller.  The next
- * field is repurposed as the dead-pool link while the fiber is in the
- * pool; it is overwritten during normal use.
+ * generation is incremented atomically and only the per-incarnation fields
+ * preceding it are zeroed.  The persistent metadata at the end must never
+ * be cleared on reuse: other threads may be validating old handles.
+ * The next field is repurposed as the dead-pool link while in the pool.
  */
 typedef struct strand_fiber {
 	strand_context_t context;    /* MUST be first - offset 0 */
@@ -294,8 +294,6 @@ typedef struct strand_fiber {
 	_Atomic fiber_state_t state; /* see fiber_state_t above */
 	strand_fiber_fn_t entry_fn;  /* user entry function */
 	void *entry_arg;             /* user entry argument */
-	uint64_t
-	    generation;   /* ABA-protection counter; see ARCHITECTURE.md §4.6 */
 	void *stack_base; /* usable stack base (above guard page) */
 	size_t stack_size; /* usable stack size (excludes guard page) */
 	void
@@ -343,13 +341,17 @@ typedef struct strand_fiber {
 	 */
 	int io_result;
 	/*
+	 * Persistent metadata: fiber_alloc resets only the fields above.
+	 * CONCURRENT: generation is read by any thread cancelling a handle
+	 * and incremented only by the owner on descriptor reuse.  All accesses
+	 * are seq_cst.  See ARCHITECTURE.md §4.6.
+	 */
+	_Atomic uint64_t generation;
+	/*
 	 * home_sched - the scheduler that owns this fiber.
-	 * Set at spawn time (strand_fiber_spawn) and used by
-	 * strand_fiber_cancel to access the run queue and timer heap without
-	 * requiring the caller to supply a scheduler pointer.
-	 * This identifies the fiber's pinned
-	 * worker for cross-worker inject routing.
-	 * Zeroed by fiber_alloc on descriptor reuse; set again at next spawn.
+	 * Initialised by fiber_alloc before the first handle is published;
+	 * immutable until descriptor destruction, including dead-pool reuse.
+	 * Any thread may read it to route cancellation to the pinned worker.
 	 */
 	struct strand_scheduler *home_sched;
 } strand_fiber_t;

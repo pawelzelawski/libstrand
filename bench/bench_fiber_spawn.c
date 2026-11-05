@@ -47,7 +47,7 @@ push_root_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg)
 	size_t          sz;
 
 	sz   = STRAND_DEFAULT_STACK_SIZE;
-	f    = fiber_alloc(&sched->dead_pool);
+	f = fiber_alloc(&sched->dead_pool, sched);
 	if (f == NULL)
 		return (-1);
 	base = sched_stack_alloc(sched, sz, &vg_id);
@@ -60,7 +60,7 @@ push_root_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg)
 	f->valgrind_stack_id = vg_id;
 	f->entry_fn          = fn;
 	f->entry_arg         = arg;
-	f->home_sched        = sched;
+
 	strand_context_init(&f->context,
 	    (char *)f->stack_base + sz, strand_fiber_entry_start, f);
 	strand_fiber_tsan_init(f);

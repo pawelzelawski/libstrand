@@ -156,7 +156,7 @@ t5_push_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 	unsigned long   vg_id;
 	size_t          sz = STRAND_DEFAULT_STACK_SIZE;
 
-	f = fiber_alloc(&sched->dead_pool);
+	f = fiber_alloc(&sched->dead_pool, sched);
 	if (f == NULL)
 		return (-1);
 
@@ -171,7 +171,6 @@ t5_push_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 	f->valgrind_stack_id = vg_id;
 	f->entry_fn          = fn;
 	f->entry_arg         = arg;
-	f->home_sched        = sched;
 
 	strand_context_init(&f->context,
 	    (char *)f->stack_base + sz,
@@ -183,7 +182,7 @@ t5_push_fiber(strand_scheduler_t *sched, strand_fiber_fn_t fn, void *arg,
 
 	if (out != NULL) {
 		out->ptr        = f;
-		out->generation = f->generation;
+		out->generation = atomic_load(&f->generation);
 	}
 	return (0);
 }
@@ -202,7 +201,7 @@ test_inject_push_pop_basic(void)
 	int                   rc;
 
 	memset(&dummy, 0, sizeof(dummy));
-	dummy.generation = 42;
+	atomic_init(&dummy.generation, 42);
 
 	if (inject_queue_init(&q, 4) != 0)
 		return (1);
@@ -251,7 +250,7 @@ test_inject_fill_and_drain(void)
 
 	memset(dummies, 0, sizeof(dummies));
 	for (i = 0; i < cap; i++)
-		dummies[i].generation = (uint64_t)i;
+		atomic_init(&dummies[i].generation, (uint64_t)i);
 
 	if (inject_queue_init(&q, cap) != 0)
 		return (1);
@@ -511,6 +510,193 @@ make_test_worker(strand_runtime_t *rt)
 	    .cpu_affinity = -1,
 	};
 	return (strand_worker_start(rt, &wcfg));
+}
+
+/*
+ * A cancel queued for a completed fiber must not cancel the next incarnation
+ * if the descriptor is reused before the owner drains the queue.
+ */
+typedef struct {
+	strand_fiber_handle_t handle;
+	int rc;
+} queued_cancel_args_t;
+
+static void *
+queue_cancel_thread(void *arg)
+{
+	queued_cancel_args_t *a = arg;
+
+	a->rc = strand_fiber_cancel(a->handle);
+	return (NULL);
+}
+
+static void
+record_cancel_pending(void *arg)
+{
+	strand_scheduler_t *sched = strand_fiber_self_scheduler();
+	int *pending = arg;
+
+	*pending = atomic_load(&sched->current_fiber->cancel_pending);
+}
+
+static int
+test_cancel_queued_before_descriptor_reuse(void)
+{
+	strand_scheduler_t *sched;
+	strand_fiber_handle_t replacement;
+	queued_cancel_args_t args;
+	pthread_t thread;
+	int pending = -1;
+	int failed = 1;
+
+	sched = make_test_scheduler();
+	if (sched == NULL)
+		return (1);
+	if (strand_scheduler_spawn(sched, record_cancel_pending, &pending, 0,
+	                           &args.handle) != STRAND_OK)
+		goto cleanup;
+	(void)strand_scheduler_advance(sched, NULL);
+	if (pending != 0)
+		goto cleanup;
+	if (pthread_create(&thread, NULL, queue_cancel_thread, &args) != 0)
+		goto cleanup;
+	(void)pthread_join(thread, NULL);
+	if (args.rc != STRAND_OK)
+		goto cleanup;
+
+	pending = -1;
+	if (strand_scheduler_spawn(sched, record_cancel_pending, &pending, 0,
+	                           &replacement) != STRAND_OK)
+		goto cleanup;
+	if (replacement.ptr != args.handle.ptr ||
+	    replacement.generation != args.handle.generation + 1 ||
+	    strand_fiber_cancel(args.handle) != STRAND_HANDLE_STALE)
+		goto cleanup;
+	(void)strand_scheduler_advance(sched, NULL);
+	failed = pending != 0;
+
+cleanup:
+	strand_scheduler_destroy(sched);
+	return (failed);
+}
+
+/*
+ * Exercise the public cross-thread cancel entry while a worker recycles the
+ * same descriptor through both normal and detached spawns.  The mutex protects
+ * only the test's handle publication; cancellation deliberately runs outside
+ * it.  In TSan builds this detects unsynchronized descriptor metadata access.
+ */
+typedef struct {
+	pthread_mutex_t lock;
+	strand_fiber_handle_t published;
+	strand_fiber_handle_t first;
+	_Atomic int ready;
+	_Atomic int stop;
+	_Atomic int done;
+	unsigned int spawned;
+	unsigned int reused;
+	int failed;
+} cancel_reuse_args_t;
+
+static void
+cancel_reuse_child(void *arg)
+{
+	(void)arg;
+}
+
+static void
+cancel_reuse_producer(void *arg)
+{
+	cancel_reuse_args_t *a = arg;
+	strand_scheduler_t *sched = strand_fiber_self_scheduler();
+	strand_fiber_handle_t handle;
+	int rc;
+
+	while (!atomic_load(&a->stop)) {
+		if (a->spawned % 2 == 0)
+			rc = strand_fiber_spawn(sched, cancel_reuse_child, NULL,
+			                        0, &handle);
+		else
+			rc = strand_fiber_spawn_detached(
+			    sched, cancel_reuse_child, NULL, 0, &handle);
+		if (rc != STRAND_OK) {
+			a->failed = 1;
+			break;
+		}
+		if (a->spawned == 0)
+			a->first = handle;
+		else if (handle.ptr == a->first.ptr &&
+		         handle.generation > a->first.generation)
+			a->reused++;
+		(void)pthread_mutex_lock(&a->lock);
+		a->published = handle;
+		(void)pthread_mutex_unlock(&a->lock);
+		if (a->spawned++ == 0)
+			atomic_store(&a->ready, 1);
+		/* The child finishes before this producer runs again. */
+		strand_fiber_yield(sched);
+	}
+	atomic_store(&a->done, 1);
+}
+
+static int
+test_cancel_during_descriptor_reuse(void)
+{
+	strand_runtime_t *rt = NULL;
+	strand_worker_t *worker;
+	cancel_reuse_args_t args = {0};
+	strand_fiber_handle_t handle;
+	unsigned int i;
+	int rc;
+	int started = 0;
+	int failed = 1;
+
+	if (pthread_mutex_init(&args.lock, NULL) != 0)
+		return (1);
+	atomic_init(&args.ready, 0);
+	atomic_init(&args.stop, 0);
+	atomic_init(&args.done, 0);
+	rt = make_test_runtime();
+	if (rt == NULL)
+		goto cleanup;
+	worker = make_test_worker(rt);
+	if (worker == NULL)
+		goto cleanup;
+	if (strand_runtime_spawn(rt, cancel_reuse_producer, &args, 0, worker,
+	                         NULL) != STRAND_OK)
+		goto cleanup;
+	started = 1;
+	if (!wait_atomic_at_least(&args.ready, 1, 60000, NULL))
+		goto cleanup;
+	failed = 0;
+	for (i = 0; i < 100000; i++) {
+		(void)pthread_mutex_lock(&args.lock);
+		handle = args.published;
+		(void)pthread_mutex_unlock(&args.lock);
+		rc = strand_fiber_cancel(handle);
+		if (rc != STRAND_OK && rc != STRAND_HANDLE_STALE &&
+		    rc != STRAND_EAGAIN) {
+			failed = 1;
+			break;
+		}
+	}
+
+cleanup:
+	/* Quiesce cancellation before worker shutdown or descriptor
+	 * destruction. */
+	atomic_store(&args.stop, 1);
+	if (started) {
+		if (!wait_atomic_at_least(&args.done, 1, 60000, NULL))
+			failed = 1;
+		else if (args.failed || args.reused == 0 ||
+		         args.reused != args.spawned - 1 ||
+		         strand_fiber_cancel(args.first) != STRAND_HANDLE_STALE)
+			failed = 1;
+	}
+	if (rt != NULL)
+		strand_runtime_destroy(rt);
+	(void)pthread_mutex_destroy(&args.lock);
+	return (failed);
 }
 
 /* -------------------------------------------------------------------------
@@ -2103,6 +2289,10 @@ run_layer4_tests(void)
 	    test_inject_delivers_to_worker);
 	RUN("test_cross_worker_wakeup",
 	    test_cross_worker_wakeup);
+	RUN("test_cancel_queued_before_descriptor_reuse",
+	    test_cancel_queued_before_descriptor_reuse);
+	RUN("test_cancel_during_descriptor_reuse",
+	    test_cancel_during_descriptor_reuse);
 	RUN("test_round_robin_selection",
 	    test_round_robin_selection);
 	RUN("test_explicit_worker_override",
